@@ -28,7 +28,35 @@
       "resolution_required": "Service Worker vs Content Script方式の実装検証・決定（STT-REQ-EXT-001）",
       "reference": "requirements.md#stt-req-ext-001, docs/mvp0-known-issues.md#ask-10",
       "status": "open",
-      "created_at": "2025-10-06"
+      "created_at": "2025-10-06",
+      "resolution_actions": {
+        "service_worker_adoption": {
+          "design_updates": [
+            "meeting-minutes-stt/design.md L112-113は維持（既にService Worker前提）",
+            "meeting-minutes-core/design.md:1387-1446は維持",
+            "meeting-minutes-core/requirements.md AC-007は維持"
+          ],
+          "implementation_updates": [
+            "chrome-extension/content-script.js のWebSocket管理を service-worker.js に移動",
+            "MV3 keepalive実装（chrome.alarms/WebSocket ping 20秒間隔）",
+            "E2Eテスト（src-tauri/tests/e2e_test.rs）のService Worker検証追加"
+          ]
+        },
+        "content_script_adoption": {
+          "design_updates": [
+            "meeting-minutes-stt/design.md L112-113をContent Script中心に修正",
+            "meeting-minutes-core/design.md:1387-1446をContent Script管理に書き換え",
+            "meeting-minutes-core/requirements.md AC-007をContent Script管理に書き換え",
+            "Google Meet SPA対応（URL監視、重複注入防止）の設計を追記"
+          ],
+          "implementation_updates": [
+            "chrome-extension/content-script.jsは維持（既にWebSocket管理実装済み）",
+            "chrome-extension/service-worker.jsは維持（軽量メッセージ中継）",
+            "E2Eテストでページ遷移・再接続シナリオ追加"
+          ]
+        }
+      },
+      "post_resolution_action": "検証完了後、採用方式に応じて /kiro:spec-design meeting-minutes-stt を再実行し、設計書の整合性を確保すること"
     }
   ]
 }
