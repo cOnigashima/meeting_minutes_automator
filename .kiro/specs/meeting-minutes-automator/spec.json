@@ -1,0 +1,23 @@
+{
+  "feature_name": "meeting-minutes-automator",
+  "created_at": "2025-10-01T00:00:00Z",
+  "updated_at": "2025-10-02T00:00:00Z",
+  "language": "ja",
+  "phase": "archived-as-umbrella",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false,
+  "notes": "This spec serves as an umbrella/reference for the overall architecture. Implementation is divided into 4 sub-specs: meeting-minutes-core, meeting-minutes-stt, meeting-minutes-docs-sync, meeting-minutes-llm"
+}

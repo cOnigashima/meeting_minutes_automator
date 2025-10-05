@@ -1,0 +1,80 @@
+@startuml SEQ-001_Audio-Recording-to-Transcription
+
+title 音声録音→VAD→STT→保存の完全シーケンス
+
+actor User
+participant "RealAudioDevice" as RAD
+participant "AudioStreamBridge" as ASB
+participant "PythonSidecarManager" as PSM
+participant "VoiceActivityDetector" as VAD
+participant "WhisperSTTEngine" as WSTE
+participant "LocalStorageService" as LSS
+participant "WebSocketServer" as WSS
+participant "ChromeExtension" as CE
+
+User -> RAD : 録音開始
+activate RAD
+RAD -> RAD : OS音声API初期化\n(16kHz mono PCM)
+RAD -> ASB : 音声ストリーム開始
+activate ASB
+
+loop リアルタイム処理 (10ms間隔)
+  ASB -> ASB : 音声チャンク生成\n(320サンプル)
+  ASB -> PSM : IPC送信\n{"type": "request", "method": "process_audio"}
+  activate PSM
+  PSM -> VAD : 音声チャンク (10ms)
+  activate VAD
+
+  VAD -> VAD : webrtcvad判定\n(音声/無音)
+
+  alt 音声検出 (0.3秒連続)
+    VAD -> VAD : 発話開始イベント記録
+    VAD -> WSTE : 音声セグメント\n(部分テキスト要求)
+    activate WSTE
+    WSTE -> WSTE : faster-whisper推論\n(beam_size=1)
+    WSTE -> PSM : 部分テキスト\n{"is_final": false}
+    deactivate WSTE
+    PSM -> WSS : WebSocket配信
+    activate WSS
+    WSS -> CE : 部分テキスト表示
+    activate CE
+    CE -> CE : コンソール表示
+    deactivate CE
+    deactivate WSS
+
+    alt 無音検出 (0.5秒連続)
+      VAD -> VAD : 発話終了イベント記録
+      VAD -> WSTE : 音声セグメント確定\n(確定テキスト要求)
+      activate WSTE
+      WSTE -> WSTE : faster-whisper最終推論\n(beam_size=5, word_timestamps=true)
+      WSTE -> PSM : 確定テキスト\n{"is_final": true, "confidence": 0.95}
+      deactivate WSTE
+      PSM -> LSS : ローカル保存
+      activate LSS
+      LSS -> LSS : transcription.jsonl\n追記 (JSON Lines)
+      deactivate LSS
+      PSM -> WSS : WebSocket配信
+      activate WSS
+      WSS -> CE : 確定テキスト表示
+      activate CE
+      CE -> CE : コンソール表示
+      deactivate CE
+      deactivate WSS
+    end
+  end
+
+  deactivate VAD
+  deactivate PSM
+end
+
+User -> RAD : 録音停止
+RAD -> ASB : 音声ストリーム停止
+deactivate ASB
+ASB -> LSS : session.json保存
+activate LSS
+LSS -> LSS : セッションメタデータ書き込み
+deactivate LSS
+LSS -> User : セッション完了通知
+deactivate RAD
+
+@enduml

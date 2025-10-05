@@ -1,0 +1,49 @@
+@startuml
+' UC-001 Meeting Minutes Automator Use Cases
+skinparam usecase {
+  BackgroundColor white
+  BorderColor #0A4
+}
+skinparam actorStyle awesome
+left to right direction
+
+actor "Meeting Facilitator" as Facilitator
+actor "SRE Operator" as SRE
+actor "Google Docs API" as Docs
+
+rectangle "Meeting Minutes Automator System" as System {
+  usecase "UC-01\nStart Recording Session" as UC1
+  usecase "UC-02\nMonitor Live Transcription" as UC2
+  usecase "UC-03\nGenerate Structured Summaries" as UC3
+  usecase "UC-04\nSync Minutes to Google Docs" as UC4
+  usecase "UC-05\nManage Session Storage" as UC5
+  usecase "UC-06\nConfigure Capture & LLM Settings" as UC6
+  usecase "UC-07\nReview Structured Logs" as UC7
+}
+
+Facilitator --> UC1
+Facilitator --> UC2
+Facilitator --> UC3
+Facilitator --> UC4
+Facilitator --> UC5
+Facilitator --> UC6
+Docs <-- UC4
+SRE --> UC7
+
+UC2 ..> UC1 : <<extends>>
+UC3 ..> UC2 : <<extends>>
+UC4 ..> UC3 : <<includes>>
+UC5 ..> UC1 : <<includes>>
+
+note right of UC4
+  Delegates Docs operations to
+  Tauri Docs Sync Service; tokens
+  remain in OS keychain per security principle.
+end note
+
+note bottom of UC7
+  Requires structured JSON logs with
+  session_id/component/event fields.
+end note
+
+@enduml

@@ -1,0 +1,100 @@
+@startuml SEQ-003_Dynamic-Model-Downgrade
+
+title 動的モデルダウングレードフロー
+
+participant "ResourceMonitor" as RM
+participant "WhisperSTTEngine" as WSTE
+participant "VoiceActivityDetector" as VAD
+participant "WebSocketServer" as WSS
+participant "Tauri UI" as UI
+
+activate RM
+
+loop 30秒間隔で監視
+  RM -> RM : CPU/メモリ使用量取得\n(psutil)
+
+  alt CPU 85%を60秒以上持続
+    RM -> RM : ダウングレード判定\n(small → base)
+    RM -> VAD : 進行中セグメント確認
+    activate VAD
+    VAD --> RM : セグメント処理中
+    RM -> RM : 現セグメント完了まで待機
+
+    VAD --> RM : セグメント処理完了
+    deactivate VAD
+
+    RM -> WSTE : モデル切り替え要求\n{"model_size": "base"}
+    activate WSTE
+    WSTE -> WSTE : baseモデルロード\n(3秒以内)
+    WSTE --> RM : モデル切り替え完了
+    deactivate WSTE
+
+    RM -> WSS : UI通知\n{"type": "model_change", "message": "CPU負荷軽減のためモデルをsmall→baseに変更しました"}
+    activate WSS
+    WSS -> UI : トースト通知表示
+    activate UI
+    UI -> UI : 通知表示:\n"モデル変更: small → base"
+    deactivate UI
+    deactivate WSS
+
+    RM -> RM : ログ記録 (INFO):\n"Model downgraded: small → base (CPU)"
+
+  else メモリ4GB到達
+    RM -> RM : 緊急ダウングレード判定\n(即座にbase)
+    RM -> VAD : 進行中セグメント確認
+    activate VAD
+    VAD --> RM : セグメント処理中
+    RM -> RM : 現セグメント完了まで待機
+
+    VAD --> RM : セグメント処理完了
+    deactivate VAD
+
+    RM -> WSTE : モデル切り替え要求\n{"model_size": "base"}
+    activate WSTE
+    WSTE -> WSTE : baseモデルロード
+    WSTE --> RM : モデル切り替え完了
+    deactivate WSTE
+
+    RM -> WSS : UI通知\n{"type": "model_change", "message": "メモリ不足のためbaseモデルに変更しました"}
+    activate WSS
+    WSS -> UI : トースト通知表示
+    activate UI
+    UI -> UI : 通知表示:\n"メモリ不足のため\nbaseモデルに変更"
+    deactivate UI
+    deactivate WSS
+
+    RM -> RM : ログ記録 (WARNING):\n"Emergency downgrade: base (Memory 4GB)"
+
+  else リソース回復 (メモリ2GB未満 AND CPU 50%未満が5分継続)
+    RM -> WSS : UI通知\n{"type": "upgrade_proposal", "message": "リソースが回復しました。モデルをアップグレードしますか？ (base → small)"}
+    activate WSS
+    WSS -> UI : アップグレード提案通知
+    activate UI
+    UI -> UI : 通知表示:\n"アップグレード可能\nbase → small?"
+    UI --> WSS : ユーザー承認
+    deactivate UI
+    WSS --> RM : 承認受信
+    deactivate WSS
+
+    RM -> WSTE : モデル切り替え要求\n{"model_size": "small"}
+    activate WSTE
+    WSTE -> WSTE : smallモデルロード
+    WSTE --> RM : モデル切り替え完了
+    deactivate WSTE
+
+    RM -> RM : メモリ使用量監視継続
+  end
+end
+
+deactivate RM
+
+note right of RM
+  **ダウングレード順序**
+  large-v3 → medium → small → base → tiny
+
+  **最終手段**
+  tinyモデルでもリソース不足が継続する場合、
+  録音を一時停止
+end note
+
+@enduml

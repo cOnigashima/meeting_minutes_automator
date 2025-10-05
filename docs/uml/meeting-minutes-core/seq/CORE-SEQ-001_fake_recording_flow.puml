@@ -1,0 +1,55 @@
+@startuml
+' CORE-SEQ-001 Fake Recording Flow
+skinparam responseMessageBelowArrow true
+skinparam shadowing false
+skinparam ArrowThickness 1
+skinparam defaultFontName Courier
+
+actor User
+participant "Recording UI" as UI
+participant "Tauri Command Layer" as CMD
+participant "FakeAudioDevice" as FAD
+participant "PythonSidecarManager" as PSM
+participant "Python Sidecar" as PY
+participant "WebSocket Server" as WSS
+participant "Chrome Service Worker" as SW
+
+== App Launch ==
+CMD -> PSM : spawn_sidecar()
+activate PSM
+PSM -> PY : start process
+activate PY
+PY --> PSM : "ready" (≤10s)
+deactivate PY
+
+== Start Recording ==
+User -> UI : click "Start Recording"
+UI -> CMD : invoke start_recording()
+CMD -> FAD : start()
+FAD -> PSM : registerConsumer()
+
+loop every 100ms while recording
+  FAD -> PSM : sendDummyAudio(base64)
+  PSM -> PY : write IPC {"type":"audio"}
+  PY -> PSM : fakeTranscription("This is a fake transcription result")
+  PSM -> WSS : broadcast {text,…}
+  WSS -.-> SW : WebSocket message
+  SW -> SW : console.log(text)
+end
+
+User -> UI : click "Stop Recording"
+UI -> CMD : invoke stop_recording()
+CMD -> FAD : stop()
+FAD -> PSM : unregisterConsumer()
+PSM -> PY : write IPC {"type":"stop"}
+PY -> PSM : ack stop
+PSM -> WSS : broadcast status "stopped"
+WSS -.-> SW : WebSocket message
+
+== App Shutdown ==
+CMD -> PSM : shutdown_sidecar()
+PSM -> PY : terminate()
+PY --> PSM : exit code 0
+deactivate PSM
+
+@enduml

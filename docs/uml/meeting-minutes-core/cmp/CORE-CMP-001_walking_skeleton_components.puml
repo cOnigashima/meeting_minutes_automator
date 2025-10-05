@@ -1,0 +1,41 @@
+@startuml
+' CORE-CMP-001 Walking Skeleton Components
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+rectangle "Tauri Core" as Tauri {
+  component "Recording UI" as UI
+  component "Recording Commands" as CMD
+  component "FakeAudioDevice" as FAD
+  component "PythonSidecarManager" as PSM
+  component "WebSocketServer\n(port 9001)" as WSS
+}
+
+rectangle "Python Sidecar" as PY {
+  component "IPC Handler" as IPC
+  component "FakeProcessor\n(returns static text)" as FP
+}
+
+rectangle "Chrome Extension" as EXT {
+  component "Service Worker" as SW
+  component "Console Output" as CO
+}
+
+UI --> CMD : start/stop
+CMD --> FAD : control
+FAD --> PSM : dummy audio JSON
+PSM <--> IPC : stdin/stdout JSON
+IPC --> FP : fake transcription request
+FP --> IPC : "This is a fake transcription"
+PSM --> WSS : broadcast events
+WSS -.-> SW : WebSocket messages
+SW --> CO : console.log()
+
+note bottom of FAD
+ Generates 16-byte dummy PCM payloads every 100ms
+ and wraps them in Base64 JSON envelopes per
+ Requirement 2 (Fake audio interface).
+end note
+
+@enduml

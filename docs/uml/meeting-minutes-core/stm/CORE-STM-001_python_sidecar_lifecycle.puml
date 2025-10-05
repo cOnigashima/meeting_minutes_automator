@@ -1,0 +1,41 @@
+@startuml
+' CORE-STM-001 Python Sidecar Lifecycle
+skinparam shadowing false
+skinparam BackgroundColor white
+skinparam state {
+  StartColor #DFF0D8
+  EndColor #F2DEDE
+}
+
+[*] --> Idle
+
+state Idle {
+  [*] --> AwaitLaunch
+  AwaitLaunch --> [*]
+}
+
+Idle --> Starting : spawn_sidecar()
+Starting --> Ready : "ready" received ≤10s / log "sidecar ready"
+Starting --> Failed : timeout or spawn error / notify user
+
+Ready --> Processing : start_recording
+Ready --> Terminating : shutdown
+Ready --> Restarting : 3× health_check failure
+
+state Processing {
+  [*] --> Streaming
+  Streaming --> Streaming : process_audio / emit fake transcription
+  Streaming --> Draining : stop_recording
+  Draining --> [*] : ack stop
+}
+
+Processing --> Ready : after Draining / broadcast status stopped
+Processing --> Restarting : unrecoverable IPC error
+
+Restarting --> Starting : respawn attempt (backoff 5s/10s)
+Restarting --> Failed : retries exhausted
+
+Terminating --> [*] : process exit code 0
+Failed --> [*]
+
+@enduml

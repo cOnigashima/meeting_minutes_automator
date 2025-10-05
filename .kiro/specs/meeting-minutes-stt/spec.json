@@ -1,0 +1,23 @@
+{
+  "feature_name": "meeting-minutes-stt",
+  "created_at": "2025-10-02T01:30:00Z",
+  "updated_at": "2025-10-02T05:00:00Z",
+  "language": "ja",
+  "phase": "design-validated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false,
+  "notes": "Design validated: Critical issues resolved (Python recording prohibition via static analysis + pre-commit hooks, hybrid model distribution strategy with on-demand download + system shared path, IPC versioning with strict backward compatibility). ADRs created: ADR-001 (recording responsibility), ADR-002 (model distribution), ADR-003 (IPC versioning). CI/CD setup: pre-commit hooks + forbidden imports check script. Ready for /kiro:spec-tasks."
+}

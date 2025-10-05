@@ -1,0 +1,51 @@
+@startuml
+' CMP-001 High Level Architecture
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+rectangle "Tauri Desktop App\n(Rust + React)" as Tauri {
+  component "Frontend UI" as UI
+  component "Command Layer" as CMD
+  component "Audio Device Adapter" as ADA
+  component "Python Sidecar Manager" as PSM
+  component "Docs Sync Service" as DSS
+  component "WebSocket Server" as WSS
+  database "Encrypted SQLite\n(Local Minutes Store)" as DB
+}
+
+rectangle "Python Sidecar\n(faster-whisper pipeline)" as PY {
+  component "IPC Handler" as IPC
+  component "VAD + STT Engine" as STT
+  component "Summary Generator" as SUM
+}
+
+rectangle "Chrome Extension\n(Manifest V3)" as EXT {
+  component "Service Worker" as SW
+  component "Popup UI" as POP
+  component "Content Script" as CS
+}
+
+component "Google Docs API" as GD
+
+UI --> CMD : user actions
+CMD --> ADA : start/stop capture
+ADA --> PSM : audio frames
+PSM <--> IPC : JSON IPC (stdin/stdout)
+IPC --> STT : audio batch
+STT --> SUM : transcription
+SUM --> PSM : summaries
+PSM --> WSS : transcription + summary events
+WSS -.-> SW : WebSocket stream
+SW --> POP : state updates
+SW --> CS : document updates
+SW --> DSS : docs operations
+DSS --> GD : batchUpdate
+PSM --> DB : session data
+
+note right of DSS
+ Holds OAuth tokens in OS keychain and proxies
+ Google Docs API calls per security boundary principle.
+end note
+
+@enduml

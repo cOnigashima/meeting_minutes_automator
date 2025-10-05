@@ -1,0 +1,25 @@
+{
+  "feature_name": "meeting-minutes-docs-sync",
+  "created_at": "2025-10-02T02:15:00Z",
+  "updated_at": "2025-10-03T14:00:00Z",
+  "language": "ja",
+  "phase": "design-validated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true,
+      "reviewed": true,
+      "validated": true
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false,
+  "notes": "Design v1.3 (Critical Issues Resolved): OAuth scope corrected (documents + drive.file), MV3 Service Worker対応 (chrome.alarms + Offscreen Document), Optimistic Locking (writeControl.requiredRevisionId), Token Bucket RateLimiter, Token protection enhancements (expiry: 30min, auto-logout, security warnings), Quality improvements (paragraph style heading detection, API response-based cursor position, variable-length document ID validation). 5 domain components, 3 sequence diagrams, comprehensive error handling, 5-phase migration strategy. CRITICAL FIXES (v1.3): [Issue 1] Offscreen Document lifecycle management with ensureOffscreenDocument() pattern (onStartup/onInstalled/connect), [Issue 2] WebSocket port discovery (9001-9100 scan with 10-port chunks, 500ms timeout), [Issue 3] Backend state management with SyncStateStore in Tauri (enrich_message for docsSync field synthesis). ADRs: ADR-004 (Token Storage), ADR-005 (Offline Queue Storage), ADR-006 (Offscreen Lifecycle - pending). All 3 critical issues addressed and validated. Ready for final approval."
+}

@@ -1,0 +1,63 @@
+@startuml SEQ-002_Offline-Model-Fallback
+
+title オフラインモデルフォールバックフロー
+
+participant "PythonSidecarManager" as PSM
+participant "WhisperSTTEngine" as WSTE
+participant "ResourceMonitor" as RM
+participant "HuggingFace Hub" as HF
+database "Local Cache" as Cache
+database "Bundled Model" as Bundle
+
+PSM -> WSTE : Pythonサイドカー起動
+activate WSTE
+WSTE -> RM : システムリソース検出
+activate RM
+RM -> RM : CPU/GPU/メモリ取得
+RM -> RM : モデルサイズ決定\n(例: small)
+RM --> WSTE : model_size = "small"
+deactivate RM
+
+WSTE -> WSTE : モデル検出優先順位確認
+WSTE -> Cache : ユーザー設定パス確認\n(~/.config/meeting-minutes-automator/whisper_model_path)
+Cache --> WSTE : 設定なし
+
+WSTE -> Cache : HuggingFace Hubキャッシュ確認\n(~/.cache/huggingface/hub/models--Systran--faster-whisper-small)
+Cache --> WSTE : キャッシュなし
+
+WSTE -> HF : faster-whisper small\nダウンロード試行\n(タイムアウト10秒)
+activate HF
+
+alt ネットワーク接続可能
+  HF --> WSTE : ダウンロード成功
+  WSTE -> Cache : モデルをキャッシュに保存
+  activate Cache
+  Cache --> WSTE : 保存完了
+  deactivate Cache
+  WSTE -> PSM : "whisper_model_ready"\n{"model_size": "small"}
+else ネットワークエラー/タイムアウト
+  HF --> WSTE : ダウンロード失敗\n(タイムアウト 10秒超過)
+  deactivate HF
+  WSTE -> WSTE : ログ記録 (WARNING):\n"HuggingFace Hub download failed"
+
+  WSTE -> Bundle : バンドルbaseモデル読み込み\n([app_resources]/models/faster-whisper/base)
+  activate Bundle
+  Bundle --> WSTE : baseモデル提供
+  deactivate Bundle
+
+  WSTE -> PSM : "whisper_model_ready"\n{"model_size": "base", "offline_fallback": true}
+  WSTE -> WSTE : ログ記録 (INFO):\n"オフラインモードで起動: バンドルbaseモデル使用"
+end
+
+deactivate WSTE
+
+note right of WSTE
+  **プロキシ環境対応**
+  環境変数 HTTPS_PROXY / HTTP_PROXY を認識
+
+  **オフラインモード強制**
+  ユーザー設定で HuggingFace Hub接続を
+  完全スキップ可能
+end note
+
+@enduml

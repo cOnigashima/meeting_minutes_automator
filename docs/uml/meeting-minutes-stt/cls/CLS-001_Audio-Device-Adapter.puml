@@ -1,0 +1,94 @@
+@startuml CLS-001_Audio-Device-Adapter
+
+title AudioDeviceAdapter - クラス図
+
+interface AudioDeviceAdapter {
+  + list_devices() : Result<Vec<AudioDevice>>
+  + start_capture(device_id: &str, config: AudioConfig) : Result<AudioStream>
+  + stop_capture() : Result<()>
+}
+
+class WasapiAdapter {
+  - device_enumerator: IMMDeviceEnumerator
+  - audio_client: IAudioClient
+  + list_devices() : Result<Vec<AudioDevice>>
+  + start_capture(device_id: &str, config: AudioConfig) : Result<AudioStream>
+  + stop_capture() : Result<()>
+  - enable_loopback_mode() : Result<()>
+}
+
+class CoreAudioAdapter {
+  - device_id: AudioDeviceID
+  - audio_queue: AudioQueueRef
+  + list_devices() : Result<Vec<AudioDevice>>
+  + start_capture(device_id: &str, config: AudioConfig) : Result<AudioStream>
+  + stop_capture() : Result<()>
+  - recognize_blackhole() : Result<()>
+}
+
+class AlsaAdapter {
+  - pcm_handle: *mut snd_pcm_t
+  - device_name: String
+  + list_devices() : Result<Vec<AudioDevice>>
+  + start_capture(device_id: &str, config: AudioConfig) : Result<AudioStream>
+  + stop_capture() : Result<()>
+  - setup_pulseaudio_monitor() : Result<()>
+}
+
+class AudioDevice {
+  + id: String
+  + name: String
+  + sample_rate: u32
+  + channels: u8
+  + is_loopback: bool
+}
+
+class AudioConfig {
+  + sample_rate: u32
+  + channels: u8
+  + chunk_size: usize
+}
+
+class AudioStream {
+  + next() : Option<AudioChunk>
+  + close() : Result<()>
+}
+
+class AudioChunk {
+  + session_id: String
+  + timestamp: u64
+  + data: Vec<u8>
+  + sample_rate: u32
+}
+
+AudioDeviceAdapter <|.. WasapiAdapter : implements
+AudioDeviceAdapter <|.. CoreAudioAdapter : implements
+AudioDeviceAdapter <|.. AlsaAdapter : implements
+
+AudioDeviceAdapter --> AudioDevice : returns
+AudioDeviceAdapter --> AudioConfig : uses
+AudioDeviceAdapter --> AudioStream : returns
+AudioStream --> AudioChunk : yields
+
+note right of WasapiAdapter
+  **Windows WASAPI実装**
+  - デバイス列挙: IMMDeviceEnumerator
+  - ループバック: WASAPI loopback mode
+  - システム音声キャプチャ
+end note
+
+note right of CoreAudioAdapter
+  **macOS CoreAudio実装**
+  - デバイス列挙: AudioObjectGetPropertyData
+  - ループバック: BlackHole等の仮想デバイス認識
+  - マイク許可ダイアログ: AVCaptureDevice
+end note
+
+note right of AlsaAdapter
+  **Linux ALSA/PulseAudio実装**
+  - デバイス列挙: snd_device_name_hint
+  - ループバック: PulseAudio monitor デバイス
+  - マイク許可: PortalでOS統合
+end note
+
+@enduml

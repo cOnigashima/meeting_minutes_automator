@@ -1,0 +1,86 @@
+@startuml CMP-001_STT-Audio-Processing-Pipeline
+
+!define RECTANGLE class
+
+title STT Audio Processing Pipeline - Component Diagram
+
+package "Tauri Desktop Application (Rust)" {
+  [RealAudioDevice] <<Component>>
+  [AudioStreamBridge] <<Component>>
+  [PythonSidecarManager] <<Component>>
+  [WebSocketServer] <<Component>>
+  [LocalStorageService] <<Component>>
+
+  note right of RealAudioDevice
+    **責任**: OS固有音声API抽象化
+    **システム唯一の録音責任者**
+    - macOS: CoreAudio
+    - Windows: WASAPI
+    - Linux: ALSA/PulseAudio
+  end note
+
+  note right of AudioStreamBridge
+    **責任**: Rust→Python IPC通信層
+    - バッファキュー管理 (10秒上限)
+    - バックプレッシャー制御
+  end note
+}
+
+package "Python Sidecar Process" {
+  [VoiceActivityDetector] <<Component>>
+  [WhisperSTTEngine] <<Component>>
+  [ResourceMonitor] <<Component>>
+
+  note right of VoiceActivityDetector
+    **責任**: リアルタイム音声活動検出
+    - webrtcvad統合 (aggressiveness=2)
+    - 発話開始: 0.3秒連続音声
+    - 発話終了: 0.5秒無音
+  end note
+
+  note right of WhisperSTTEngine
+    **責任**: faster-whisper統合
+    - オフラインファースト
+    - モデル検出優先順位:
+      1. ユーザー設定
+      2. HuggingFace Hubキャッシュ
+      3. バンドルbaseモデル
+  end note
+
+  note right of ResourceMonitor
+    **責任**: リソース監視と動的モデル選択
+    - 起動時モデル選択
+    - CPU 85%/60s → ダウングレード
+    - メモリ 4GB → 即座にbase
+  end note
+}
+
+' 依存関係
+RealAudioDevice --> AudioStreamBridge : 音声ストリーム\n(16kHz mono PCM)
+AudioStreamBridge --> PythonSidecarManager : IPC経由\n音声チャンク送信
+PythonSidecarManager --> VoiceActivityDetector : 音声チャンク\n(10ms間隔)
+VoiceActivityDetector --> WhisperSTTEngine : 音声セグメント\n(部分/確定)
+WhisperSTTEngine --> PythonSidecarManager : Transcription\n(IPC Response)
+PythonSidecarManager --> WebSocketServer : 文字起こし結果
+PythonSidecarManager --> LocalStorageService : セッション保存
+ResourceMonitor --> WhisperSTTEngine : モデル切り替え
+ResourceMonitor --> WebSocketServer : UI通知
+
+' 外部依存
+database "File System" {
+  [audio.wav]
+  [transcription.jsonl]
+  [session.json]
+}
+
+LocalStorageService --> [audio.wav]
+LocalStorageService --> [transcription.jsonl]
+LocalStorageService --> [session.json]
+
+package "Chrome Extension" {
+  [ServiceWorker] <<Component>>
+}
+
+WebSocketServer --> [ServiceWorker] : WebSocket\n(JSON)
+
+@enduml

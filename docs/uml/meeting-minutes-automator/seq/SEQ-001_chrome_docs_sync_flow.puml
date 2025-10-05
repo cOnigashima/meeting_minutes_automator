@@ -1,0 +1,35 @@
+@startuml
+' SEQ-001 Chrome Extension to Google Docs Sync
+skinparam shadowing false
+skinparam ArrowThickness 1
+skinparam responseMessageBelowArrow true
+
+participant "Tauri WebSocket Server" as WSS
+participant "Chrome Service Worker" as SW
+participant "Content Script" as CS
+participant "Docs Sync Service\n(Tauri)" as DSS
+participant "OAuth Token Vault" as Vault
+participant "Google Docs API" as Docs
+
+== Realtime Update ==
+WSS -> SW : broadcast {summary}
+SW -> CS : postMessage(summary)
+CS -> SW : requestInsert(documentId, summary)
+SW -> DSS : {type:"docs_operation", insert_text}
+
+== Delegated API Call ==
+DSS -> Vault : load_token("google_oauth")
+Vault --> DSS : access_token (refresh if expired)
+DSS -> Docs : documents.batchUpdate()
+Docs --> DSS : success
+DSS --> SW : {status:"ok"}
+SW --> CS : notifySuccess()
+
+== Offline Fallback ==
+alt Service Worker offline
+  SW -> SW : queueOperation()
+else Reconnected
+  SW -> DSS : flushQueuedOperations()
+end
+
+@enduml

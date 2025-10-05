@@ -1,0 +1,48 @@
+@startuml
+' DEP-001 Logging & Telemetry Flow
+skinparam shadowing false
+skinparam BackgroundColor white
+skinparam defaultTextAlignment center
+
+actor "SRE Operator" as SRE
+
+node "Desktop (Tauri App)" as Tauri {
+  component "Tracing Logger" as Tracing
+  database "Rotating Log Files\nlogs/<yyyy-mm-dd>/session.json" as LogFiles
+  component "Metrics Aggregator\n(60s interval)" as Metrics
+}
+
+node "Python Sidecar" as Python {
+  component "structlog Async Writer" as Structlog
+}
+
+node "Chrome Extension" as Chrome {
+  component "Background Logger" as BgLogger
+}
+
+storage "Local Observability Cache" as Cache
+
+Tracing --> LogFiles : JSON records
+Metrics --> Cache : aggregated metrics
+Structlog --> Tracing : stdout JSON IPC
+BgLogger --> Tracing : WebSocket INFO/ERROR relay
+LogFiles --> SRE : secure transfer (on-demand)
+Cache --> SRE : metrics snapshot
+
+note bottom of LogFiles
+  Each entry includes session_id,
+  component, event, duration_ms,
+  pii_masked fields per design.
+end note
+
+note right of Tracing
+  Owns keychain-protected
+  OAuth tokens and enforces
+  security boundary.
+end note
+
+note right of SRE
+  Diagram owner: SRE guild.
+end note
+
+@enduml
