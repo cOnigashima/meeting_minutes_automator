@@ -7,12 +7,16 @@ use std::env;
 #[tokio::test]
 async fn ut_3_1_1_detect_from_env_variable() {
     // Test: Should detect Python from APP_PYTHON environment variable
-    // Note: This test requires APP_PYTHON to be set externally to avoid test interference
+    // Uses dynamically detected Python instead of hardcoded path
 
-    // Skip if APP_PYTHON is not set
+    // Skip if APP_PYTHON is already set
     if env::var("APP_PYTHON").is_err() {
+        // Find a valid Python executable dynamically
+        let python_path = find_valid_python().await
+            .expect("No valid Python found for testing");
+
         // Set it temporarily for this test
-        env::set_var("APP_PYTHON", "/opt/homebrew/bin/python3.12");
+        env::set_var("APP_PYTHON", &python_path);
         let result = PythonSidecarManager::detect_python_executable().await;
         env::remove_var("APP_PYTHON");
 
@@ -22,9 +26,46 @@ async fn ut_3_1_1_detect_from_env_variable() {
         }
 
         assert!(result.is_ok(), "Should detect Python from APP_PYTHON env var");
+        assert_eq!(result.unwrap().to_string_lossy(), python_path, "Should use APP_PYTHON path");
     } else {
         println!("Skipping - APP_PYTHON already set");
     }
+}
+
+/// Helper function to find a valid Python executable for testing
+async fn find_valid_python() -> Option<String> {
+    use tokio::process::Command;
+
+    // Try common Python commands in order
+    #[cfg(target_os = "windows")]
+    let candidates = vec!["python3.12", "python3.11", "python3.10", "python3.9", "python3", "python"];
+
+    #[cfg(not(target_os = "windows"))]
+    let candidates = vec!["python3.12", "python3.11", "python3.10", "python3.9", "python3"];
+
+    for cmd in candidates {
+        // Try to run the command with --version
+        if let Ok(output) = Command::new(cmd).arg("--version").output().await {
+            if output.status.success() {
+                // Find absolute path using which/where
+                #[cfg(target_os = "windows")]
+                let which_cmd = "where";
+
+                #[cfg(not(target_os = "windows"))]
+                let which_cmd = "which";
+
+                if let Ok(path_output) = Command::new(which_cmd).arg(cmd).output().await {
+                    if path_output.status.success() {
+                        if let Ok(path) = String::from_utf8(path_output.stdout) {
+                            return Some(path.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[tokio::test]

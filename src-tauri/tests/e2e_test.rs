@@ -1,9 +1,7 @@
 // E2E Integration Tests for Walking Skeleton (MVP0)
-// TDD Red State: All tests should fail with unimplemented!() panics
 
 #[cfg(test)]
 mod e2e_tests {
-    use meeting_minutes_automator_lib::*;
 
     /// E2E-8.1.1: Tauri Application Build Verification
     /// Verifies that all components compile and link correctly
@@ -72,20 +70,96 @@ mod e2e_tests {
         });
     }
 
-    /// E2E-8.1.2: Python Sidecar Manager Initialization Test (Skeleton)
-    /// Expected: Should panic with unimplemented!()
-    #[test]
-    #[should_panic(expected = "not implemented")]
-    fn test_python_sidecar_start() {
+    /// E2E-8.1.2: Python Sidecar Manager Initialization Test
+    /// Task 3.1 implemented - now tests actual functionality
+    #[tokio::test]
+    async fn test_python_sidecar_start() {
         use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let mut sidecar = PythonSidecarManager::new();
+        let mut sidecar = PythonSidecarManager::new();
 
-            // This should panic with unimplemented!()
-            sidecar.start().await.expect("Should panic before reaching here");
+        // Should start successfully
+        sidecar.start().await.expect("Sidecar should start successfully");
+
+        // Should receive ready signal
+        sidecar.wait_for_ready().await.expect("Should receive ready signal");
+
+        // Cleanup
+        sidecar.shutdown().await.expect("Shutdown should succeed");
+    }
+
+    /// E2E-8.4.1: Recording → Python IPC → Transcription Flow Test
+    /// Tests the complete flow: Audio recording → Python sidecar → IPC communication
+    #[tokio::test]
+    async fn test_recording_to_transcription_flow() {
+        use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
+        use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+        use tokio::time::{Duration, timeout};
+
+        // Start Python sidecar
+        let mut sidecar = PythonSidecarManager::new();
+        sidecar.start().await.expect("Sidecar should start");
+        sidecar.wait_for_ready().await.expect("Should receive ready signal");
+
+        let sidecar_arc = Arc::new(Mutex::new(sidecar));
+
+        // Create and start audio device
+        let mut audio_device = FakeAudioDevice::new();
+        audio_device.initialize().expect("Should initialize");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+        audio_device.start_with_callback(move |data| {
+            let _ = tx.send(data);
+        }).await.expect("Should start with callback");
+
+        // Send audio chunks to Python
+        let sidecar_clone = Arc::clone(&sidecar_arc);
+        let send_task = tokio::spawn(async move {
+            let mut count = 0;
+            while let Some(data) = rx.recv().await {
+                if count >= 2 { break; } // Send 2 chunks only
+
+                let msg = serde_json::json!({
+                    "type": "process_audio",
+                    "id": format!("chunk-{}", count),
+                    "audio_data": data
+                });
+
+                let mut s = sidecar_clone.lock().await;
+                s.send_message(msg).await.expect("Should send message");
+                count += 1;
+            }
         });
+
+        // Wait for chunks to be sent
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        audio_device.stop().expect("Should stop");
+
+        // Wait for send task to complete
+        let _ = timeout(Duration::from_secs(1), send_task).await;
+
+        // Verify responses from Python
+        let mut sidecar = sidecar_arc.lock().await;
+        for i in 0..2 {
+            let result = timeout(Duration::from_secs(1), sidecar.receive_message()).await;
+
+            match result {
+                Ok(Ok(response)) => {
+                    assert_eq!(
+                        response.get("type").and_then(|v| v.as_str()),
+                        Some("transcription_result"),
+                        "Response {} should be transcription_result", i
+                    );
+                }
+                _ => panic!("Should receive response {}", i),
+            }
+        }
+
+        // Cleanup
+        sidecar.shutdown().await.expect("Should shutdown");
     }
 
     /// Interface Type Compatibility Test
