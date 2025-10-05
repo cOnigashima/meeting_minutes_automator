@@ -606,6 +606,73 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
 
 ---
 
+### STT-REQ-EXT-001: Chrome拡張WebSocket管理方式の決定
+
+**ID**: STT-REQ-EXT-001
+
+**Objective**: ソフトウェアエンジニアとして、MVP0で未解決の設計判断（Service Worker vs Content Script WebSocket管理）を実装検証して確定したい。これにより、Real STT実装前に最適なアーキテクチャを確立できる。
+
+**Background**:
+MVP0（Walking Skeleton）では、設計書（`.kiro/specs/meeting-minutes-core/design.md:1387-1446`）がService WorkerによるWebSocket管理を要求していたが、実装時にMV3の30秒アイドル制約を考慮し、Content ScriptでWebSocket管理を実装した（`chrome-extension/service-worker.js:6-7`参照）。
+
+**設計書 vs 実装の不整合**:
+- **設計書・要件**: Service WorkerがWebSocket接続・再接続・状態管理を担当
+- **MVP0実装**: Content ScriptがWebSocket管理、Service Workerは軽量メッセージ中継のみ
+
+この設計判断は**実装時の経験的判断**であり、技術的検証データに基づいていない。MVP1開始前に両方式を実装検証し、データに基づき設計を確定する必要がある。
+
+**検証項目**:
+
+| 項目 | Service Worker方式 | Content Script方式（現在） |
+|------|-------------------|-------------------------|
+| **MV3対応** | chrome.alarms/WebSocket ping (20秒間隔) でkeepalive実装 | タブ表示中は永続（30秒制約なし） |
+| **タブライフサイクル** | 独立（タブ閉じても接続維持） | ページリフレッシュ・ナビゲーションで切断 |
+| **Google Meet SPA** | 影響なし | URL変更・iframe入れ替え時の再接続必要 |
+| **バックグラウンドタブ** | 影響なし | タイマー劣化（>1s）、WebSocket一時停止のリスク |
+| **複数タブ** | 単一接続を共有 | タブごとに新規接続 |
+| **拡張UI（Popup/Options）** | Service Workerから状態クエリ可能 | Content Scriptにアクセス不可 |
+| **リソース消費** | keepaliveによるCPU/メモリ負荷（未計測） | タブ表示時のみ負荷（未計測） |
+| **レイテンシ影響** | AC-NFR-PERF.4（<50ms）への影響（未計測） | 再接続チャーンの影響（未計測） |
+
+**未検証のリスク**:
+- Content Script永続性: Google MeetのSPA挙動（URL変更、iframe入れ替え、タブフリーズ）での接続安定性
+- Service Worker keepalive: MV3環境でのWebSocket維持の実現可能性とリソースコスト
+- 再接続チャーン: Content Script方式でのページ遷移時の文字起こしデータ損失率
+
+#### Acceptance Criteria
+
+1. **STT-REQ-EXT-001.1**: WHEN 両方式のSpike実装が完了 THEN 以下の実測データを記録すること:
+   - Service Worker方式: WebSocket維持成功率、CPU/メモリ使用率、keepalive実装パターン
+   - Content Script方式: Google Meetでのページ遷移回数、再接続発生回数、文字起こしデータ損失率
+
+2. **STT-REQ-EXT-001.2**: WHEN 実測データ分析が完了 THEN 以下を含む技術判断レポートを作成すること:
+   - AC-NFR-PERF.4（IPC latency < 50ms）への影響評価
+   - 複数タブ・拡張UI対応の実現可能性
+   - リソース消費の比較（CPU/メモリ）
+   - 推奨方式の選定根拠
+
+3. **STT-REQ-EXT-001.3**: WHEN 採用方式が決定 THEN 以下を更新すること:
+   - `.kiro/specs/meeting-minutes-core/design.md`: Chrome Extension Layer設計の修正
+   - `.kiro/specs/meeting-minutes-core/requirements.md`: AC-007の修正（Service Worker → Content Scriptまたは逆）
+   - 不採用方式のコードを削除
+
+4. **STT-REQ-EXT-001.4**: WHEN コード修正が完了 THEN E2Eテスト（`src-tauri/tests/e2e_test.rs`）を再実行し、全パス確認すること
+
+**Priority**: HIGH（Real STT実装前の設計確定が必須）
+
+**Blocking**: 本要件はMVP1設計フェーズをブロックする（`spec.json` BLOCK-001参照）
+
+**Reference**:
+- `docs/mvp0-known-issues.md#ask-10`
+- `chrome-extension/service-worker.js:6-7` (現在の判断コメント)
+- `.kiro/specs/meeting-minutes-core/design.md:1387-1446` (元の設計書)
+
+**Traceability**:
+- **Parent**: CORE-REQ-007 (Chrome拡張スケルトン)
+- **Dependency**: AC-NFR-PERF.4 (IPC latency < 50ms)
+
+---
+
 ## Revision History
 
 | Date | Version | Author | Changes |

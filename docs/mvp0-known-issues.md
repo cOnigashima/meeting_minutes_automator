@@ -259,6 +259,84 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 
 ---
 
+### Ask 10: Chrome拡張WebSocket管理の責任分担不整合
+
+**問題**:
+- **設計書（design.md:1387-1446）**: Service WorkerがWebSocket接続確立・維持・再接続を担当
+- **要件（requirements.md:152-156）**: AC-007.3〜007.7でService WorkerによるWebSocket管理を明記
+- **MVP0実装**: Content ScriptがWebSocket管理、Service Workerは軽量メッセージ中継のみ（`service-worker.js:6-7`のコメント参照）
+
+**不整合の原因**:
+設計書作成時はMV3の詳細制約を考慮せず、実装時に以下を判断：
+- MV3 Service Workerの30秒アイドル制約
+- Content Scriptの永続性（Meetタブ表示中は30秒制約なし）
+- 実装の簡易性優先
+
+この判断は**実装時の経験的判断**であり、技術的検証データに基づいていない。
+
+**専門家指摘（2025-10-06）の要約**:
+
+| 懸念事項 | 詳細 |
+|---------|------|
+| **Content Script永続性の未検証** | Chrome はページリフレッシュ・ナビゲーションでContent Scriptをアンロード。Google MeetのSPA特性（URLフラグメント変更、iframe入れ替え）で頻繁に再読み込みが発生し、WebSocket接続が切断される可能性。 |
+| **バックグラウンドタブのスロットリング** | Chromeはバックグラウンドタブを積極的にスロットリング。タイマーが1秒以上の粒度に劣化し、WebSocketが一時停止される可能性。Exponential Backoff/Heartbeatロジックが機能不全になるリスク。 |
+| **複数タブ・拡張UI対応の欠如** | Content Script方式では、複数Meetタブで重複接続が発生、Popup/Options UIから接続状態をクエリできない。Tauri側が複数同時WS接続を処理する必要がある。 |
+| **再接続チャーンの影響未測定** | ページ遷移時の再接続頻度、文字起こしデータのバースト損失率、AC-NFR-PERF.4（IPC latency < 50ms）への影響が未評価。 |
+
+**両方式のトレードオフ（検証必要）**:
+
+| 方式 | メリット | デメリット | 未検証項目 |
+|------|---------|-----------|-----------|
+| **Option A: Service Worker** | ・タブライフサイクルから独立<br>・複数タブで1接続<br>・Popup/Options UIから状態取得可 | ・MV3 keepalive実装が必要<br>・chrome.sockets API制約<br>・複雑性増加 | ・keepalive安定性<br>・リソース消費<br>・chrome.alarms実用性 |
+| **Option B: Content Script** (現在) | ・実装がシンプル<br>・Meetタブ表示中は永続<br>・MVP0で動作確認済 | ・ページリフレッシュで切断<br>・バックグラウンドタブでスロットリング<br>・複数タブで重複接続 | ・Google Meet SPA挙動<br>・再接続チャーン影響<br>・文字起こしデータ損失率 |
+
+**影響範囲**:
+- Real STT実装前に設計を確定しないと、WebSocket切断時の文字起こしデータ損失が頻発するリスク
+- AC-NFR-PERF.4（IPC latency < 50ms）達成不可の可能性
+- 拡張UI（Popup/Options）実装時の設計変更が必要
+
+**対応方針**:
+**MVP1開始時に両方式をSpike実装して実測比較** → データに基づき設計判断
+
+**MVP1 Traceability（引き継ぎ管理）**:
+
+**MVP1要件ID**: `STT-REQ-EXT-001` (Chrome拡張WebSocket管理方式の決定)
+
+**検証項目**:
+1. **Service Worker keepalive検証**:
+   - `chrome.alarms` / `chrome.runtime.onMessage` でWebSocket維持
+   - WebSocket ping (20秒間隔) での安定性
+   - リソース消費（CPU/メモリ）
+
+2. **Content Script永続性検証**:
+   - Google Meetページ遷移（URL変更、iframe入れ替え）時の挙動
+   - バックグラウンドタブでのタイマー劣化・WebSocket一時停止
+   - ロック画面/タブ切り替え時の再接続チャーン
+
+3. **要件との整合性**:
+   - AC-NFR-PERF.4（IPC latency < 50ms）への影響
+   - 複数タブシナリオ対応
+   - 拡張UI（Popup/Options）からの状態クエリ
+
+**ステータス**:
+- [x] `.kiro/specs/meeting-minutes-stt/requirements.md` にSTT-REQ-EXT-001追加
+- [x] `.kiro/specs/meeting-minutes-stt/spec.json` にBLOCK-001追加（設計フェーズをブロック）
+- [ ] MVP1でOption A（Service Worker + keepalive）実装
+- [ ] MVP1でOption B（Content Script）の制約測定
+- [ ] 実測データに基づく技術判断レポート作成
+- [ ] 設計書更新（`.kiro/specs/meeting-minutes-core/design.md`、`requirements.md`）
+- [ ] 不採用方式のコード削除
+
+**関連ファイル**:
+- `chrome-extension/service-worker.js:6-7` (現在の判断コメント)
+- `chrome-extension/content-script.js:1-226` (WebSocket管理実装)
+- `.kiro/specs/meeting-minutes-core/design.md:1387-1446` (元の設計書)
+- `.kiro/specs/meeting-minutes-core/requirements.md:152-156` (AC-007)
+- `.kiro/specs/meeting-minutes-stt/requirements.md#stt-req-ext-001` (MVP1要件)
+- `.kiro/specs/meeting-minutes-stt/spec.json` (BLOCK-001)
+
+---
+
 ## 次のアクション
 
 ### Option A: 即座対応（MVP0完全化）

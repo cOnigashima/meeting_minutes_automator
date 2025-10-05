@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tokio_tungstenite::{accept_hdr_async, tungstenite::handshake::server::{Request, Response}};
+use tokio_tungstenite::{accept_hdr_async, tungstenite::handshake::server::{Request, Response, ErrorResponse}};
 use futures_util::{StreamExt, SinkExt};
 use futures_util::stream::SplitSink;
 use tokio_tungstenite::WebSocketStream;
@@ -202,11 +202,8 @@ impl WebSocketServer {
             // Verify origin
             if !Self::verify_origin(origin) {
                 eprintln!("Rejected connection from invalid Origin: {}", origin);
-                // Return 403 Forbidden to prevent client from retrying immediately
-                return Err(http::Response::builder()
-                    .status(http::StatusCode::FORBIDDEN)
-                    .body(Some("Invalid Origin".to_string()))
-                    .unwrap());
+                // Return 403 Forbidden using ErrorResponse to properly reject the handshake
+                return Err(ErrorResponse::new(Some("Invalid Origin".to_string())));
             }
 
             Ok(response)

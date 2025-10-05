@@ -14,7 +14,8 @@
       "Bash(python3.12:*)",
       "mcp__serena__think_about_collected_information",
       "Bash(node:*)",
-      "mcp__serena__search_for_pattern"
+      "mcp__serena__search_for_pattern",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

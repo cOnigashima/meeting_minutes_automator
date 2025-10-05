@@ -19,5 +19,16 @@
     }
   },
   "ready_for_implementation": false,
-  "notes": "Design validated: Critical issues resolved (Python recording prohibition via static analysis + pre-commit hooks, hybrid model distribution strategy with on-demand download + system shared path, IPC versioning with strict backward compatibility). ADRs created: ADR-001 (recording responsibility), ADR-002 (model distribution), ADR-003 (IPC versioning). CI/CD setup: pre-commit hooks + forbidden imports check script. Ready for /kiro:spec-tasks."
+  "notes": "Design validated: Critical issues resolved (Python recording prohibition via static analysis + pre-commit hooks, hybrid model distribution strategy with on-demand download + system shared path, IPC versioning with strict backward compatibility). ADRs created: ADR-001 (recording responsibility), ADR-002 (model distribution), ADR-003 (IPC versioning). CI/CD setup: pre-commit hooks + forbidden imports check script. Ready for /kiro:spec-tasks.",
+  "blockers": [
+    {
+      "id": "BLOCK-001",
+      "description": "Chrome拡張WebSocket管理方式未決定（MVP0設計書と実装の不整合）",
+      "blocking_phase": "design",
+      "resolution_required": "Service Worker vs Content Script方式の実装検証・決定（STT-REQ-EXT-001）",
+      "reference": "requirements.md#stt-req-ext-001, docs/mvp0-known-issues.md#ask-10",
+      "status": "open",
+      "created_at": "2025-10-06"
+    }
+  ]
 }
