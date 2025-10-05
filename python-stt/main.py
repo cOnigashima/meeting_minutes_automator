@@ -1,30 +1,98 @@
+#!/usr/bin/env python3
 """
-Meeting Minutes Automator - Python STT Sidecar
-Entry point for the Python sidecar process.
-Walking Skeleton (MVP0) - Empty Implementation
+Python Sidecar Process - Walking Skeleton Implementation
+Handles stdin/stdout JSON IPC communication with Tauri backend
 """
 
 import sys
-import asyncio
-from stt_engine.ipc_handler import IpcHandler
-from stt_engine.fake_processor import FakeProcessor
-from stt_engine.lifecycle_manager import LifecycleManager
+import json
+import time
+from typing import Dict, Any
 
+def send_message(msg: Dict[str, Any]) -> None:
+    """Send JSON message to stdout"""
+    json_str = json.dumps(msg)
+    print(json_str, flush=True)
 
-async def main():
-    """Main entry point for Python sidecar process."""
-    # Initialize components (all will raise NotImplementedError for now)
-    ipc_handler = IpcHandler()
-    processor = FakeProcessor()
-    lifecycle_manager = LifecycleManager()
+def receive_message() -> Dict[str, Any]:
+    """Receive JSON message from stdin"""
+    line = sys.stdin.readline()
+    if not line:
+        return None
+    return json.loads(line.strip())
 
+def handle_ping(msg_id: str) -> Dict[str, Any]:
+    """Handle ping message"""
+    return {
+        "type": "pong",
+        "id": msg_id,
+        "timestamp": int(time.time() * 1000)
+    }
+
+def handle_process_audio(msg_id: str, audio_data: list) -> Dict[str, Any]:
+    """Handle process_audio message (Fake implementation)"""
+    # Walking Skeleton: Return fake transcription
+    fake_text = f"[Fake transcription of {len(audio_data)} bytes]"
+    return {
+        "type": "transcription_result",
+        "id": msg_id,
+        "text": fake_text,
+        "timestamp": int(time.time() * 1000)
+    }
+
+def main():
+    """Main IPC loop"""
     # Send ready signal
-    print("ready", flush=True)
+    send_message({
+        "type": "ready",
+        "timestamp": int(time.time() * 1000)
+    })
 
-    # Note: Actual implementation will be done in subsequent tasks
-    # This is just a skeleton to verify the structure compiles
-    pass
+    # IPC message loop
+    while True:
+        try:
+            msg = receive_message()
+            if msg is None:
+                break  # EOF
 
+            msg_type = msg.get("type")
+            msg_id = msg.get("id", "unknown")
+
+            if msg_type == "ping":
+                response = handle_ping(msg_id)
+                send_message(response)
+
+            elif msg_type == "process_audio":
+                audio_data = msg.get("audio_data", [])
+                response = handle_process_audio(msg_id, audio_data)
+                send_message(response)
+
+            elif msg_type == "shutdown":
+                send_message({
+                    "type": "shutdown_ack",
+                    "id": msg_id
+                })
+                break
+
+            else:
+                # Unknown message type
+                send_message({
+                    "type": "error",
+                    "id": msg_id,
+                    "message": f"Unknown message type: {msg_type}"
+                })
+
+        except json.JSONDecodeError as e:
+            send_message({
+                "type": "error",
+                "message": f"JSON decode error: {str(e)}"
+            })
+        except Exception as e:
+            send_message({
+                "type": "error",
+                "message": f"Unexpected error: {str(e)}"
+            })
+            break
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

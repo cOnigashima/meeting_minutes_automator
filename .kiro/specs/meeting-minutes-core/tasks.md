@@ -92,35 +92,43 @@
   - _Test Cases: UT-2.1.1 (初期化), UT-2.1.2 (データ生成), UT-2.1.3 (タイマー間隔), UT-2.1.4 (停止), UT-2.1.5 (16バイト検証) - すべて✅_
 
 - [ ] 3. Pythonサイドカープロセス管理機能の実装
-- [ ] 3.1 Pythonプロセス検出と起動ロジック
-  - クロスプラットフォームPython実行可能ファイル検出（macOS/Windows/Linux）
-  - **Windows対応**: py.exe検出→バージョン確認→64bit優先選択（design.mdの「Python Interpreter Detection Policy」に準拠）
-    - フォールバック: PATH内の`python3.X`を順次検索
-  - Python実行可能ファイルパス検証（`<detected> --version`コマンド実行）
-  - Pythonスクリプトパス解決（`python-stt/main.py`）
-  - エラーハンドリング: Python未検出時のユーザー通知
+- [x] 3.1 Python Interpreter Detection の実装（design.md "Python Interpreter Detection Policy"準拠）
+  - **検出アルゴリズム実装**（6段階優先順位）:
+    - ① 環境変数/設定ファイル検出（`APP_PYTHON`, `config.json`）
+    - ② 仮想環境検出（`VIRTUAL_ENV`, `CONDA_PREFIX`）
+    - ③ Windows: `py.exe -0p`によるバージョンリスト取得と64bit優先選択
+    - ④ POSIX: `python3.12` → `python3.11` → `python3.10` → `python3.9`順次検索
+    - ⑤ 最終手段: グローバル`python3`/`python`検索
+    - ⑥ バージョン検証（`3.9 ≤ version < 3.13`）と64bitアーキテクチャ確認
+  - **エラー型定義**: `PythonDetectionError` enum（5種類）
+    - `PythonNotFound`, `VersionMismatch`, `ArchitectureMismatch`, `ConfiguredPathInvalid`, `ValidationFailed`
+  - **キャッシュ機構**: 検出結果を24時間キャッシュ（設定ファイルまたはメモリ）（オプション、Walking Skeleton段階では省略可）
+  - **Pythonスクリプトパス解決**: `python-stt/main.py`の絶対パス取得
   - _Requirements: AC-003.1, AC-003.3_
-  - _Test Cases: UT-3.1.1 (Python検出), UT-3.1.2 (バージョン検証), UT-3.1.3 (パス解決), UT-3.1.4 (Windowsフォールバック)_
+  - _Test Cases: UT-3.1.1 (環境変数検出), UT-3.1.2 (仮想環境検出), UT-3.1.3 (Windows py.exe), UT-3.1.4 (POSIX PATH), UT-3.1.5 (バージョン検証), UT-3.1.6 (エラーハンドリング)_
 
-- [ ] 3.2 PythonSidecarManagerの実装
-  - `PythonSidecarManager`構造体とプロセスハンドル管理
-  - `start()`メソッド: プロセス起動とstdin/stdout確立
-  - `wait_for_ready()`メソッド: "ready"メッセージ待機（10秒タイムアウト）
-  - `send_message()`メソッド: JSON IPC メッセージ送信
-  - `receive_response()`メソッド: stdout からJSON応答読み取り
+- [x] 3.2 PythonSidecarManagerの実装
+  - `PythonSidecarManager`構造体とプロセスハンドル管理（Child, stdin, stdout フィールド）
+  - `start()`メソッド: Python検出 → プロセス起動 → stdin/stdout確立 ✅
+  - `wait_for_ready()`メソッド: "ready"メッセージ待機 ✅
+  - `send_message()`メソッド: JSON IPC メッセージ送信（改行付き） ✅
+  - `stop()`メソッド: 3秒タイムアウト付きプロセス終了 ✅
+  - Python sidecar script: `python-stt/main.py`（ready/ping/process_audio/shutdown対応） ✅
+  - ユニットテスト: 6テストすべてパス（`--test-threads=1`必須） ✅
   - _Requirements: AC-003.2_
-  - _Test Cases: UT-3.2.1 (プロセス起動), UT-3.2.2 (ready待機), IT-3.2.1 (IPC送受信)_
+  - _Test Cases: UT-3.2.1 (プロセス起動), UT-3.2.2 (ready待機), UT-3.2.3 (ハンドル管理), UT-3.2.4 (stdin/stdout), UT-3.2.5 (エラー処理), UT-3.2.6 (二重起動防止) - すべて✅_
 
-- [ ] 3.3 Graceful shutdown と強制終了処理
-  - `shutdown()`メソッド: shutdownシグナル送信と3秒待機
-  - `Drop` trait実装: プロセス終了時の確実なクリーンアップ
-  - 強制終了ロジック（SIGKILL）: 3秒タイムアウト時
-  - ゾンビプロセス防止の検証（OSレベルテスト）
-    - macOS: `ps aux | grep python` 実行後に Python プロセスが存在しないことを確認
-    - Windows: `tasklist /FI "IMAGENAME eq python.exe"` 実行後に Python プロセスが存在しないことを確認
-    - Linux: `ps aux | grep python` 実行後に Python プロセスが存在しないことを確認
+- [x] 3.3 Graceful shutdown と強制終了処理
+  - `shutdown()`メソッド: shutdownメッセージ送信 → 3秒待機 → タイムアウト時は強制終了 ✅
+  - `Drop` trait実装: プロセス終了時の確実なクリーンアップ（kill/taskkill使用） ✅
+  - 強制終了ロジック（process.kill()）: 3秒タイムアウト時 ✅
+  - ゾンビプロセス防止の検証（OSレベルテスト） ✅
+    - macOS/Linux: `ps -p <pid>`でプロセス存在チェック
+    - macOS/Linux: `ps -p <pid> -o state=`でゾンビ状態チェック
+    - Windows: `tasklist /FI "PID eq <pid>"`でプロセス存在チェック
+  - ユニットテスト: 5テストすべてパス ✅
   - _Requirements: AC-003.4, AC-003.5, AC-003.6, AC-003.7_
-  - _Test Cases: UT-3.3.1 (Graceful shutdown), UT-3.3.2 (強制終了), IT-3.3.1 (ゾンビプロセス検証)_
+  - _Test Cases: UT-3.3.1 (Graceful shutdown), UT-3.3.2 (強制終了), UT-3.3.3 (Drop cleanup), UT-3.3.4 (ゾンビプロセス検証), UT-3.3.5 (多重shutdown) - すべて✅_
 
 - [ ] 4. stdin/stdout JSON IPC通信の実装（Rust側）
 - [ ] 4.1 IPC メッセージ送受信の実装
