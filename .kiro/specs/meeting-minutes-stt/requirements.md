@@ -462,6 +462,115 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
 
 ---
 
+## MVP0 からの引き継ぎ要件
+
+このセクションは `meeting-minutes-core` (Walking Skeleton) で未実装または部分実装だった機能要件を定義します。詳細は `docs/mvp0-known-issues.md` の「MVP1 Traceability」セクション参照。
+
+### STT-REQ-IPC-004: IPC Latency Monitoring
+
+**背景**: MVP0では基本的なIPC通信のみ実装。レイテンシ計測機能が未実装（`docs/mvp0-known-issues.md` Ask 9-1）
+
+**要件**: The system shall measure and log IPC communication latency between Rust and Python processes.
+
+**受け入れ条件**:
+- **AC-IPC-004.1**: When an IPC message is sent, the system shall record a timestamp.
+- **AC-IPC-004.2**: When an IPC response is received, the system shall calculate the round-trip latency.
+- **AC-IPC-004.3**: The system shall log latency as `ipc_latency_ms` metric via structured logging (`logger.rs`).
+- **AC-IPC-004.4**: The mean IPC latency shall remain below 50ms under normal operation.
+- **AC-IPC-004.5**: The `scripts/performance_report.py` shall aggregate IPC latency metrics (min/max/mean/median/stdev).
+
+**優先度**: High（Real STT処理では長時間処理があるため、IPC性能監視が重要）
+
+**トレーサビリティ**:
+- **MVP0**: `meeting-minutes-core/tasks.md` Task 4.2（未実装）
+- **Known Issues**: `docs/mvp0-known-issues.md` Ask 9-1
+
+---
+
+### STT-REQ-IPC-005: IPC Health Check and Retry Logic
+
+**背景**: MVP0では基本的なエラー処理のみ。ヘルスチェック・リトライ機構が未実装（`docs/mvp0-known-issues.md` Ask 9-1）
+
+**要件**: The system shall implement health check and retry logic for IPC communication to handle transient failures.
+
+**受け入れ条件**:
+- **AC-IPC-005.1**: The system shall track consecutive IPC failures.
+- **AC-IPC-005.2**: When 3 consecutive IPC failures occur, the system shall initiate a retry sequence with exponential backoff.
+- **AC-IPC-005.3**: When 5 consecutive failures occur, the system shall notify the user via UI error message.
+- **AC-IPC-005.4**: The retry sequence shall use exponential backoff: 1s, 2s, 4s, 8s, 16s (max).
+- **AC-IPC-005.5**: The system shall reset the failure counter after a successful IPC response.
+
+**優先度**: High（Real STT処理時の安定性確保に必須）
+
+**トレーサビリティ**:
+- **MVP0**: `meeting-minutes-core/tasks.md` Task 4.2, 4.3（未実装）
+- **Known Issues**: `docs/mvp0-known-issues.md` Ask 9-1
+
+---
+
+### STT-REQ-LOG-001: Structured Logging Migration
+
+**背景**: MVP0では `logger.rs` 実装済みだが未使用（`println!`/`eprintln!` のまま）（`docs/mvp0-known-issues.md` Ask 9-2）
+
+**要件**: The system shall replace all `println!`/`eprintln!` calls with structured JSON logging using `logger.rs` macros.
+
+**受け入れ条件**:
+- **AC-LOG-001.1**: All Rust components shall use `log_info!`, `log_error!`, `log_warn!`, `log_debug!` macros.
+- **AC-LOG-001.2**: Key events shall be logged: recording start/stop, IPC message send/receive, WebSocket broadcast, STT processing start/complete.
+- **AC-LOG-001.3**: Error logs shall include context information (error type, component, event, details).
+- **AC-LOG-001.4**: All logs shall output in JSON format with timestamp, level, component, event, message fields.
+
+**優先度**: Medium（デバッグ効率・運用性向上）
+
+**トレーサビリティ**:
+- **MVP0**: `src-tauri/src/logger.rs` 実装済みだが未使用
+- **Known Issues**: `docs/mvp0-known-issues.md` Ask 9-2
+
+---
+
+### STT-REQ-SEC-001: IPC JSON Message Validation
+
+**背景**: MVP0では受信JSONを無条件でデシリアライズ。サイズ・フィールド検証なし（`docs/mvp0-known-issues.md` Ask 9-3）
+
+**要件**: The system shall validate all incoming IPC JSON messages for size limits and required fields before processing.
+
+**受け入れ条件**:
+- **AC-SEC-001.1**: If an IPC message exceeds 1MB size, then the system shall reject it with an error response.
+- **AC-SEC-001.2**: The system shall validate that all IPC messages contain required fields: `type` (string), `id` (string).
+- **AC-SEC-001.3**: The system shall validate message-specific required fields (e.g., `process_audio` requires `audio_data` array).
+- **AC-SEC-001.4**: If validation fails, then the system shall log a warning and send an error response to Python.
+- **AC-SEC-001.5**: The system shall not crash on malformed JSON (invalid UTF-8, syntax errors).
+
+**優先度**: High（Real STT実装前にセキュリティ要件を満たす必要がある）
+
+**トレーサビリティ**:
+- **MVP0**: `src-tauri/src/python_sidecar.rs:receive_message()` 基本的なJSONパースのみ
+- **Known Issues**: `docs/mvp0-known-issues.md` Ask 9-3
+
+---
+
+### STT-REQ-E2E-001: Chrome Extension Automated E2E Testing
+
+**背景**: MVP0ではChrome拡張部分は手動E2Eのみ（`docs/mvp0-known-issues.md` Ask 8-1）
+
+**要件**: The system shall provide automated E2E tests that verify the full flow including Chrome extension behavior.
+
+**受け入れ条件**:
+- **AC-E2E-001.1**: E2E tests shall use Puppeteer or Playwright to automate Chrome browser.
+- **AC-E2E-001.2**: E2E tests shall load the Chrome extension programmatically.
+- **AC-E2E-001.3**: E2E tests shall verify that transcription messages appear in Chrome Console output.
+- **AC-E2E-001.4**: E2E tests shall run in headless mode for CI/CD integration.
+- **AC-E2E-001.5**: E2E tests shall verify WebSocket connection establishment from Chrome extension.
+
+**優先度**: Medium（CI/CD自動化で有用だが、手動E2Eでも検証可能）
+
+**トレーサビリティ**:
+- **MVP0**: 手動E2Eテスト実施済み（`docs/platform-verification.md`）
+- **Known Issues**: `docs/mvp0-known-issues.md` Ask 8-1
+- **CI/CD Spec**: `meeting-minutes-ci` 要件 CI-REQ-E2E-001 と連携
+
+---
+
 ## Requirement Traceability Matrix
 
 本サブスペックとアンブレラ仕様（meeting-minutes-automator）の要件対応表。
@@ -481,9 +590,15 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
 | STT-NFR-003 | Compatibility | REQ-004 | クロスプラットフォーム動作 |
 | STT-NFR-004 | Security | NFR-003 | ローカル処理優先、改ざん検証 |
 | STT-NFR-005 | Logging | - | MVP1固有ログ要件 |
+| **STT-REQ-IPC-004** | **IPC Latency Monitoring** | **CORE Task 4.2** | **MVP0引き継ぎ** |
+| **STT-REQ-IPC-005** | **IPC Health Check and Retry** | **CORE Task 4.2, 4.3** | **MVP0引き継ぎ** |
+| **STT-REQ-LOG-001** | **Structured Logging Migration** | **CORE logger.rs** | **MVP0引き継ぎ** |
+| **STT-REQ-SEC-001** | **IPC JSON Validation** | **NFR-003** | **MVP0引き継ぎ** |
+| **STT-REQ-E2E-001** | **Chrome Extension Automated E2E** | **CORE Task 8.2** | **MVP0引き継ぎ** |
 
 **上流依存**:
 - **meeting-minutes-core**: CORE-REQ-004 (IPC通信プロトコルv1.0), CORE-REQ-006 (WebSocketサーバー), CORE-REQ-007 (Chrome拡張スケルトン)
+- **MVP0 Known Issues**: `docs/mvp0-known-issues.md` Ask 8-1, 9-1, 9-2, 9-3（引き継ぎ要件5件）
 
 **下流影響**:
 - **meeting-minutes-docs-sync**: STT-REQ-008のWebSocketメッセージ形式を利用
@@ -497,3 +612,4 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
 |------|---------|--------|---------|
 | 2025-10-02 | 1.0 | Claude Code | 初版作成（MVP1 Real STT要件定義） |
 | 2025-10-02 | 1.1 | Claude Code | 要件ID採番、Traceability Matrix追加、オフライン対応詳細化、動的ダウングレード統合、依存関係明示化 |
+| 2025-10-06 | 1.2 | Claude Code | **MVP0引き継ぎ要件追加**: STT-REQ-IPC-004, IPC-005, LOG-001, SEC-001, E2E-001（`docs/known-issues.md` Traceability連携） |

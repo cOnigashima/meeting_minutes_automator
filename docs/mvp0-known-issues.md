@@ -167,6 +167,98 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 
 ---
 
+## MVP1 Traceability（引き継ぎ管理）
+
+### Ask 8-1: Chrome拡張E2Eテストの欠如 → MVP1
+
+**MVP1要件ID**: `STT-REQ-E2E-001` (Chrome拡張自動E2Eテスト)
+
+**対応内容**:
+- Puppeteer/Playwright による Chrome拡張自動テスト
+- WebSocket → Chrome Console 出力の自動検証
+- CI/CD環境でのヘッドレステスト
+
+**ステータス**:
+- [x] `meeting-minutes-stt/requirements.md` に要件追加（STT-REQ-E2E-001）
+- [ ] `meeting-minutes-ci/design.md` に CI統合設計追加
+
+---
+
+### Ask 8-2: Python依存の脆弱性 → CI/CD spec
+
+**CI/CD要件ID**: `CI-REQ-ENV-001` (Python環境固定)
+
+**対応内容**:
+- GitHub Actions での Python 3.9-3.12 マトリクステスト
+- pyenv/asdf による環境固定
+- Fake Sidecar 実装（テスト用モック、optional）
+
+**ステータス**:
+- [ ] `meeting-minutes-ci/requirements.md` に要件追加
+
+---
+
+### Ask 9-1: IPCレイテンシメトリクスの欠落 → MVP1
+
+**MVP1要件ID**: `STT-REQ-IPC-004` (IPC latency monitoring)
+
+**対応内容**:
+- `PythonSidecarManager::send_message()` にタイムスタンプ記録
+- `receive_message()` でレイテンシ計算
+- `logger.rs` 経由で `ipc_latency_ms` メトリクス出力
+- `scripts/performance_report.py` での集計
+
+**ステータス**:
+- [x] `meeting-minutes-stt/requirements.md` に要件追加（STT-REQ-IPC-004, IPC-005）
+- [ ] `meeting-minutes-stt/design.md` に実装方針追加
+- [ ] `meeting-minutes-stt/tasks.md` にタスク追加（`meeting-minutes-core` Task 4.2参照）
+
+---
+
+### Ask 9-2: 構造化ログの未使用 → MVP1
+
+**MVP1要件ID**: `STT-REQ-LOG-001` (構造化ログ全面移行)
+
+**対応内容**:
+- 全 `println!`/`eprintln!` を `log_info!`/`log_error!` に置換
+- 主要イベントのログ記録（start/stop, IPC, WebSocket broadcast）
+
+**ステータス**:
+- [x] `meeting-minutes-stt/requirements.md` に要件追加（STT-REQ-LOG-001）
+- [ ] `meeting-minutes-stt/tasks.md` に Task 追加
+
+---
+
+### Ask 9-3: IPC JSONバリデーションの欠如 → MVP1
+
+**MVP1要件ID**: `STT-REQ-SEC-001` (IPC message validation)
+
+**対応内容**:
+- IPC受信メッセージのサイズ制限（1MB上限）
+- 必須フィールド検証（`type`, `id` 等）
+- スキーマバリデーション（serde_json強化）
+
+**ステータス**:
+- [x] `meeting-minutes-stt/requirements.md` に要件追加（STT-REQ-SEC-001、Real STT前に必須）
+- [ ] `meeting-minutes-stt/design.md` に実装方針追加
+
+---
+
+### Ask 9-4: クロスプラットフォーム検証の欠如 → CI/CD spec
+
+**CI/CD要件ID**: `CI-REQ-MATRIX-001` (Cross-platform test matrix)
+
+**対応内容**:
+- Windows 10+ での手動E2E実施
+- Ubuntu 20.04+ での手動E2E実施
+- GitHub Actions マトリクステスト自動化
+
+**ステータス**:
+- [ ] `meeting-minutes-ci/requirements.md` に要件追加
+- [ ] `meeting-minutes-ci/design.md` にマトリクス戦略追加
+
+---
+
 ## 次のアクション
 
 ### Option A: 即座対応（MVP0完全化）
