@@ -1216,6 +1216,28 @@ impl WebSocketServer {
 
     /// 新規接続受け入れ
     pub async fn accept_connection(&mut self) -> Result<(), ConnectionError>;
+
+    /// Origin検証実装（開発環境と本番環境で切り替え）
+    fn verify_origin(&self, origin: &str) -> bool {
+        // 基本的な許可リスト
+        if origin.starts_with("http://127.0.0.1")
+           || origin.starts_with("http://localhost") {
+            return true;
+        }
+
+        // Chrome拡張のOrigin検証
+        if origin.starts_with("chrome-extension://") {
+            // 開発環境: すべての拡張IDを許可
+            #[cfg(debug_assertions)]
+            return true;
+
+            // 本番環境: 設定ファイルの拡張IDリストと照合
+            #[cfg(not(debug_assertions))]
+            return self.allowed_extension_ids.contains(&extract_extension_id(origin));
+        }
+
+        false
+    }
 }
 
 // WebSocketメッセージ型（Tagged Union形式）

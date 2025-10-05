@@ -51,17 +51,19 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
 
 **Objective**: ソフトウェアエンジニアとして、実際の音声デバイスから音声データを取得したい。これにより、マイクまたはシステム音声のリアルタイム録音が可能になる。
 
+**※重要**: ADR-001（録音責務の一元化）に基づき、音声録音はRust側AudioDeviceAdapterのみが実行します。Python側での録音は静的解析（check_forbidden_imports.py）により禁止されています。
+
 #### Acceptance Criteria
 
-1. **STT-REQ-001.1**: WHEN Tauriアプリが起動 THEN RealAudioDevice SHALL システム上の利用可能な音声入力デバイスを列挙する
-2. **STT-REQ-001.2**: WHEN 音声デバイスリストが取得される THEN RealAudioDevice SHALL 各デバイスの名前、ID、サンプルレート、チャンネル数を含むメタデータを返す
+1. **STT-REQ-001.1**: WHEN Tauriアプリが起動 THEN RealAudioDevice (Rust) SHALL システム上の利用可能な音声入力デバイスを列挙する
+2. **STT-REQ-001.2**: WHEN 音声デバイスリストが取得される THEN RealAudioDevice (Rust) SHALL 各デバイスの名前、ID、サンプルレート、チャンネル数を含むメタデータを返す
 3. **STT-REQ-001.3**: WHEN ユーザーが設定画面で音声デバイスを選択 THEN Tauriアプリ SHALL 選択されたデバイスIDを設定に保存する
-4. **STT-REQ-001.4**: WHEN 録音開始コマンドが実行される THEN RealAudioDevice SHALL 選択された音声デバイスを初期化し、サンプルレート16kHzでモノラル音声ストリームを開始する
-5. **STT-REQ-001.5**: WHEN 音声ストリームが開始される THEN RealAudioDevice SHALL 20ms間隔で320サンプル（16kHz * 0.02秒）の音声データを生成する
-6. **STT-REQ-001.6**: WHEN 音声データが生成される THEN RealAudioDevice SHALL 音声データをPythonサイドカープロセスに送信する
-7. **STT-REQ-001.7**: WHEN 録音停止コマンドが実行される THEN RealAudioDevice SHALL 音声ストリームを停止し、デバイスリソースを解放する
-8. **STT-REQ-001.8**: IF 音声デバイス初期化が失敗 THEN RealAudioDevice SHALL エラーメッセージ「音声デバイスの初期化に失敗しました: [デバイス名]」をユーザーに通知する
-9. **STT-REQ-001.9**: IF 音声デバイス初期化が失敗 THEN RealAudioDevice SHALL 3秒間隔で最大3回まで初期化を再試行する
+4. **STT-REQ-001.4**: WHEN 録音開始コマンドが実行される THEN RealAudioDevice (Rust) SHALL 選択された音声デバイスを初期化し、サンプルレート16kHzでモノラル音声ストリームを開始する [※Rust側AudioDeviceAdapterで実装]
+5. **STT-REQ-001.5**: WHEN 音声ストリームが開始される THEN RealAudioDevice (Rust) SHALL 20ms間隔で320サンプル（16kHz * 0.02秒）の音声データを生成する [※Rust側AudioDeviceAdapterで実装]
+6. **STT-REQ-001.6**: WHEN 音声データが生成される THEN RealAudioDevice (Rust) SHALL 音声データをPythonサイドカープロセスに送信する [※stdin/stdout IPC経由]
+7. **STT-REQ-001.7**: WHEN 録音停止コマンドが実行される THEN RealAudioDevice (Rust) SHALL 音声ストリームを停止し、デバイスリソースを解放する [※Rust側AudioDeviceAdapterで実装]
+8. **STT-REQ-001.8**: IF 音声デバイス初期化が失敗 THEN RealAudioDevice (Rust) SHALL エラーメッセージ「音声デバイスの初期化に失敗しました: [デバイス名]」をユーザーに通知する [※Rust側AudioDeviceAdapterで実装]
+9. **STT-REQ-001.9**: IF 音声デバイス初期化が失敗 THEN RealAudioDevice (Rust) SHALL 3秒間隔で最大3回まで初期化を再試行する [※Rust側AudioDeviceAdapterで実装]
 
 ---
 
@@ -222,6 +224,8 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
 8. **STT-REQ-006.8**: WHEN メモリ使用量が4GB到達 THEN ResourceMonitor SHALL 即座にbaseモデルへダウングレードし、UIに「メモリ不足のためbaseモデルに変更しました」通知を表示する
 
 9. **STT-REQ-006.9**: WHEN モデルダウングレードが実行される THEN ResourceMonitor SHALL 以下の動作を保証する:
+   - **音声セグメント境界での切り替え**: 現在処理中の音声セグメントは既存モデルで完了し、次のセグメントから新モデルを適用
+   - 処理中断時間: 0秒（シームレス切り替え）
    - 進行中の音声セグメント処理は現在のモデルで完了まで継続
    - 次の音声セグメントから新しいモデルを使用
    - UI通知: トースト通知で「モデル変更: {old} → {new}」を表示
@@ -277,6 +281,11 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
      "recoverable": false
    }
    ```
+
+6. **STT-REQ-007.6**: WHEN バージョン不一致が検出される THEN IPC通信プロトコル SHALL 以下の処理を実行する:
+   - メジャーバージョン不一致（例: 1.x → 2.x）: エラー応答を返し、通信を拒否
+   - マイナーバージョン不一致（例: 1.0 → 1.1）: 警告ログを記録し、後方互換モードで処理継続（ADR-003に基づく）
+   - パッチバージョン不一致（例: 1.0.1 → 1.0.2）: 情報ログのみ記録し、通常処理継続
 
 ---
 

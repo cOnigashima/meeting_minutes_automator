@@ -93,11 +93,13 @@
 - [ ] 3. Pythonサイドカープロセス管理機能の実装
 - [ ] 3.1 Pythonプロセス検出と起動ロジック
   - クロスプラットフォームPython実行可能ファイル検出（macOS/Windows/Linux）
-  - Python実行可能ファイルパス検証（`python3 --version`コマンド実行）
+  - **Windows対応**: py.exe検出→バージョン確認→64bit優先選択（design.mdの「Python Interpreter Detection Policy」に準拠）
+    - フォールバック: PATH内の`python3.X`を順次検索
+  - Python実行可能ファイルパス検証（`<detected> --version`コマンド実行）
   - Pythonスクリプトパス解決（`python-stt/main.py`）
   - エラーハンドリング: Python未検出時のユーザー通知
   - _Requirements: AC-003.1, AC-003.3_
-  - _Test Cases: UT-3.1.1 (Python検出), UT-3.1.2 (バージョン検証), UT-3.1.3 (パス解決)_
+  - _Test Cases: UT-3.1.1 (Python検出), UT-3.1.2 (バージョン検証), UT-3.1.3 (パス解決), UT-3.1.4 (Windowsフォールバック)_
 
 - [ ] 3.2 PythonSidecarManagerの実装
   - `PythonSidecarManager`構造体とプロセスハンドル管理
@@ -180,6 +182,9 @@
 
 - [ ] 6.2 WebSocket接続管理とメッセージブロードキャスト
   - 新規接続受け入れとOriginヘッダー検証（セキュリティ要件準拠）
+  - **Origin許可ルール**: `127.0.0.1`、`localhost`、または `chrome-extension://` で始まるOriginを許可
+    - 開発環境: `chrome-extension://*`をワイルドカード許可
+    - 本番環境: 設定ファイルで特定の拡張IDのみ許可
   - 接続リスト管理（`Arc<Mutex<Vec<WebSocketConnection>>>`）
   - `broadcast()`メソッド: 全接続クライアントへのメッセージ送信
   - 接続切断検知と自動削除
@@ -198,13 +203,16 @@
 - [ ] 7. Chrome拡張スケルトンの実装
 - [ ] 7.1 Chrome拡張プロジェクト構造とManifest V3設定
   - `chrome-extension/manifest.json`作成（Manifest V3準拠）
-  - Service Worker, Content Scriptのエントリーポイント作成
+  - **Manifest V3制約**: Service Workerは一時的（30秒アイドルで終了）
+  - Content Scriptのエントリーポイント作成（WebSocket接続の永続化用）
+  - Service Workerはメッセージ転送のみ担当
   - 必要なパーミッション設定（`storage`, `notifications`）
   - 拡張パッケージングとChrome読み込み確認
   - _Requirements: AC-007.1_
   - _Test Cases: UT-7.1.1 (manifest 検証), E2E-7.1.1 (Chrome 読み込み)_
 
-- [ ] 7.2 Service WorkerのWebSocketクライアント実装
+- [ ] 7.2 Content ScriptからのWebSocket接続実装
+  - **Manifest V3対応**: Content Script内で`WebSocketClient`クラス実装（Service Workerは一時的なためNG）
   - `WebSocketClient`クラス実装（ポート9001-9100範囲スキャン）
   - 接続確立とタイムアウト処理（1秒）
   - 再接続ロジックとバックオフ戦略（1秒、2秒、4秒、8秒、最大5回）
@@ -212,14 +220,13 @@
   - _Requirements: AC-007.2, AC-007.3, AC-007.4, AC-007.5_
   - _Test Cases: UT-7.2.1 (ポートスキャン), UT-7.2.2 (再接続ロジック), IT-7.2.1 (接続確立)_
 
-- [ ] 7.3 メッセージ受信とContent Scriptへの転送
-  - `onMessage`ハンドラ実装: WebSocketメッセージパース
-  - Content Scriptへのメッセージ転送（`chrome.runtime.sendMessage`）
+- [ ] 7.3 メッセージ受信とコンソール表示
+  - `onMessage`ハンドラ実装: WebSocketメッセージパース（Content Script内）
   - Content Scriptでのコンソール表示（`console.log`）
   - ユニットテスト: メッセージハンドリング検証
   - 異常系テスト: 不正JSON受信時のエラーハンドリング検証、未知メッセージタイプ受信時のログ記録検証
   - _Requirements: AC-007.6, AC-007.7_
-  - _Test Cases: UT-7.3.1 (メッセージパース), UT-7.3.2 (転送), UT-7.3.3 (不正JSON), UT-7.3.4 (未知タイプ)_
+  - _Test Cases: UT-7.3.1 (メッセージパース), UT-7.3.2 (コンソール表示), UT-7.3.3 (不正JSON), UT-7.3.4 (未知タイプ)_
 
 - [ ] 8. E2E疎通確認とクリーンアップシーケンス
 - [ ] 8.1 全コンポーネント起動シーケンステスト
@@ -230,7 +237,8 @@
   - _Requirements: AC-008.1_
   - _Test Cases: E2E-8.1.1 (Tauri 起動), E2E-8.1.2 (Python ready), E2E-8.1.3 (WebSocket 起動), E2E-8.1.4 (Chrome 接続)_
 
-- [ ] 8.2 録音→Fake処理→WebSocket→Chrome拡張の全フローテスト
+- [ ] 8.2 録音→Fake処理→WebSocket→Chrome拡張の全フローテスト（手動E2E）
+  - **手動テスト**: Chrome拡張の自動化は複雑なため、MVP0では手動実施
   - 録音開始ボタンクリック
   - FakeAudioDevice によるダミーデータ生成開始検証
   - Python Fake Processor応答受信検証
@@ -265,7 +273,8 @@
   - Originヘッダー検証ロジック実装
   - JSON IPCメッセージバリデーション（必須フィールド、型、サイズ上限1MB）
   - セキュリティテスト: 不正Origin接続試行、不正JSONペイロード送信
-  - _Requirements: AC-NFR-SEC.1, AC-NFR-SEC.2, AC-NFR-SEC.3, AC-NFR-SEC.4_
+  - 将来拡張要件の記録: AC-NFR-SEC.5（TLS/WSSサポート）を技術負債リストまたはADRに記録
+  - _Requirements: AC-NFR-SEC.1, AC-NFR-SEC.2, AC-NFR-SEC.3, AC-NFR-SEC.4, AC-NFR-SEC.5_
   - _Test Cases: IT-9.2.1 (localhost バインド), IT-9.2.2 (Origin 検証), IT-9.2.3 (IPC バリデーション), IT-9.2.4 (不正接続)_
 
 - [ ] 9.3 クロスプラットフォーム動作検証
@@ -291,13 +300,14 @@
   - トラブルシューティングガイド作成
   - _Requirements: 全要件（ドキュメント整備）_
 
-- [ ] 10.2 CI/CDパイプライン構築
+- [ ] 10.2 CI/CDパイプライン構築（手動E2E実施）
   - GitHub Actions ワークフロー作成（`.github/workflows/test.yml`）
   - マトリクステスト設定（macOS/Windows/Linux）
-  - ユニットテスト、統合テスト、E2Eテストの自動実行
+  - ユニットテスト、統合テスト の自動実行
+  - **E2Eテスト**: Chrome拡張を含むE2Eは手動実施（自動化は複雑なためMVP0範囲外）
   - カバレッジレポート生成と閾値検証（ユニット80%、統合主要シナリオ100%）
   - _Requirements: Testing Strategy全般_
-  - _Test Cases: 全 UT-*/IT-*/E2E-* の自動実行_
+  - _Test Cases: 全 UT-*/IT-* の自動実行、E2E-* は手動_
 
 ---
 

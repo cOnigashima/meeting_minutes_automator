@@ -1,0 +1,14 @@
+{
+  "name": "meeting-minutes-automator-extension",
+  "version": "0.1.0",
+  "description": "Chrome extension for Meeting Minutes Automator",
+  "scripts": {
+    "build": "tsc && npm run copy-html",
+    "copy-html": "cp src/popup/popup.html dist/popup/",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.258",
+    "typescript": "^5.3.3"
+  }
+}

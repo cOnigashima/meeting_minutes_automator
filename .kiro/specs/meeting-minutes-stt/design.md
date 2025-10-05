@@ -393,7 +393,10 @@ sequenceDiagram
 2. **ダウングレードトリガー**:
    - CPU 85%を60秒以上持続 → 1段階ダウングレード (STT-REQ-006.7)
    - メモリ4GB到達 → 即座にbaseモデル (STT-REQ-006.8)
-3. **処理継続保証**: 進行中の音声セグメント処理は現在のモデルで完了まで継続 (STT-REQ-006.9)
+3. **音声セグメント境界での切り替え**:
+   - 現在処理中の音声セグメントは既存モデルで完了
+   - 次のセグメントから新モデルを適用
+   - 処理中断時間: 0秒（シームレス切り替え）(STT-REQ-006.9)
 4. **UI通知**: トースト通知で「モデル変更: {old} → {new}」を表示 (STT-REQ-006.9)
 5. **アップグレード提案**: リソース回復時 (メモリ2GB未満 AND CPU 50%未満が5分継続) に自動アップグレード提案 (STT-REQ-006.10)
 6. **最終手段**: tinyモデルでもリソース不足が継続する場合、録音一時停止 (STT-REQ-006.11)
@@ -453,7 +456,7 @@ flowchart TD
 - **トランザクション境界**: 単一音声セッションスコープ
 
 **重要な設計決定**:
-- **録音責務の一元化**: 音声録音はこのコンポーネントのみが担当
+- **録音責務の一元化（ADR-001準拠）**: 音声録音はRust側AudioDeviceAdapterのみが担当、Python側での録音は静的解析により禁止
 - **Python側の制約**: Pythonサイドカーは録音を行わず、Rustから送信されたバイナリストリームの受信とSTT処理のみを実施
 - **レース条件の防止**: 複数箇所での録音開始を防ぎ、単一の音声ソースを保証
 
@@ -947,6 +950,32 @@ class ResourceMonitor:
         else:
             return "tiny"  # 最低限動作保証
 
+    async def request_model_downgrade(self, new_model: ModelSize) -> None:
+        """
+        音声セグメント境界でのモデル切り替えを要求
+
+        Args:
+            new_model: 切り替え先のモデルサイズ
+
+        Note:
+            STT-REQ-006.9準拠: 現在処理中の音声セグメントは既存モデルで完了し、
+            次のセグメントから新モデルを適用（処理中断時間0秒）
+        """
+        # VADで現在処理中のセグメントがあるか確認
+        if self.stt_engine.is_processing_segment():
+            # 現在のセグメント処理完了を待機
+            await self.stt_engine.wait_for_segment_completion()
+
+        # 次のセグメントから新モデルを適用
+        await self.stt_engine.switch_model(new_model)
+
+        # UI通知
+        self._notify_model_change(self.current_model, new_model)
+
+        # 切り替え履歴をログに記録
+        log.info(f"Model switched at segment boundary: {self.current_model} → {new_model}")
+        self.current_model = new_model
+
     async def start_monitoring(self) -> None:
         """
         リソース監視開始 (30秒間隔)
@@ -1393,11 +1422,23 @@ pub async fn negotiate_protocol_version(&mut self) -> Result<String> {
             let python_version = response["result"]["version"].as_str()
                 .unwrap_or("1.0");  // デフォルト "1.0" と仮定
 
-            if !is_compatible(python_version, "1.0") {
+            // バージョン互換性チェック（STT-REQ-007.6）
+            let (python_major, python_minor) = parse_version(&python_version);
+            let (rust_major, rust_minor) = parse_version("1.0");
+
+            if python_major != rust_major {
+                // メジャーバージョン不一致: エラー応答を返し、通信を拒否
+                log::error!("Major version mismatch: Rust 1.0 vs Python {}", python_version);
                 return Err(AppError::IncompatibleProtocolVersion {
                     rust: "1.0".to_string(),
                     python: python_version.to_string(),
                 });
+            } else if python_minor != rust_minor {
+                // マイナーバージョン不一致: 警告ログを記録し、後方互換モードで処理継続
+                log::warn!("Minor version mismatch: Rust 1.0 vs Python {}, continuing in backward compatibility mode", python_version);
+            } else {
+                // パッチバージョン不一致: 情報ログのみ記録
+                log::info!("Protocol version check passed: Rust 1.0 vs Python {}", python_version);
             }
 
             Ok(python_version.to_string())
@@ -1418,11 +1459,11 @@ fn is_compatible(version1: &str, version2: &str) -> bool {
 }
 ```
 
-**後方互換性ポリシー**:
+**後方互換性ポリシー** (STT-REQ-007.6準拠):
 - **versionフィールド省略時**: デフォルトで "1.0" と仮定 (meeting-minutes-core Fake実装との互換性保証)
-- **メジャーバージョン変更** (1.0 → 2.0): 互換性なし、エラー表示
-- **マイナーバージョン変更** (1.0 → 1.1): 下位互換性保証、新フィールドは無視
-- **パッチバージョン変更** (1.0.0 → 1.0.1): 完全互換性
+- **メジャーバージョン不一致** (例: 1.x → 2.x): エラー応答を返し、通信を拒否
+- **マイナーバージョン不一致** (例: 1.0 → 1.1): 警告ログを記録し、後方互換モードで処理継続（ADR-003に基づく）
+- **パッチバージョン不一致** (例: 1.0.1 → 1.0.2): 情報ログのみ記録し、通常処理継続
 
 **Schema定義** (JSON Schema):
 

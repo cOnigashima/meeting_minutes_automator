@@ -118,16 +118,22 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 
 ## Current Implementation Status
 
-**開発フェーズ**: 仕様検証完了・実装準備中（Specification Phase）
+**開発フェーズ**: 実装フェーズ開始（Implementation Phase - 2025-10-05〜）
 
-本プロジェクトは現在、Kiro仕様駆動開発手法に基づき、**実装前の仕様策定と設計検証**を完了した段階にあります。コードベースの実装はまだ開始していませんが、以下の4つのsub-specificationに分割された詳細な要件定義と技術設計が完了しています。
+本プロジェクトは、Kiro仕様駆動開発手法に基づき、**実装フェーズ（Phase 3）**に入りました。meeting-minutes-core (MVP0 - Walking Skeleton) の Task 1.1（プロジェクト基盤セットアップ）が完了し、コードベースの構築が開始されています。
 
 ### Sub-Specifications Progress
 
-#### 📦 meeting-minutes-core (MVP0 - Walking Skeleton)
+#### 📦 meeting-minutes-core (MVP0 - Walking Skeleton) 🔵 実装中
 - **目的**: Tauri + Python + Chrome拡張の最小疎通確認（Fake実装）
-- **フェーズ**: Design Validated ✅
-- **ステータス**: タスク生成済み、実装承認待ち
+- **フェーズ**: Implementation In Progress 🔵
+- **ステータス**: Task 1.1完了、Task 1.2準備中
+- **完了した実装**:
+  - ✅ Task 1.1: プロジェクト基盤セットアップ（2025-10-05完了）
+    - Tauri 2.0プロジェクト初期化（React + TypeScript）
+    - Pythonプロジェクト構造作成（`python-stt/`）
+    - Chrome拡張プロジェクト構造作成（`chrome-extension/`）
+    - ビルド動作確認（cargo build成功: 55秒）
 - **主要成果**:
   - 3プロセス間IPC通信プロトコルの確定
   - WebSocket message type設計（Tagged Union）
@@ -136,7 +142,7 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 #### 🎤 meeting-minutes-stt (MVP1 - Real STT)
 - **目的**: faster-whisper統合、webrtcvad統合、音声デバイス管理
 - **フェーズ**: Design Validated ✅
-- **ステータス**: 設計検証完了、タスク生成準備完了
+- **ステータス**: 設計検証完了、タスク生成待ち（MVP0完了後）
 - **主要成果**:
   - ADR-001: 録音責務の一元化（Rust側のみ）
   - ADR-002: ハイブリッドモデル配布戦略
@@ -146,7 +152,7 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 #### 📄 meeting-minutes-docs-sync (MVP2 - Google Docs Sync)
 - **目的**: OAuth 2.0認証、Google Docs API統合、Named Range管理
 - **フェーズ**: Design Generated 🔵
-- **ステータス**: 設計生成完了、レビュー待ち
+- **ステータス**: 設計生成完了、検証待ち（MVP1完了後）
 - **主要成果**:
   - MV3 Service Worker対応設計（chrome.alarms + Offscreen Document）
   - Optimistic Locking戦略（writeControl.requiredRevisionId）
@@ -157,16 +163,19 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 - **フェーズ**: Not Started ⚪
 - **ステータス**: 要件定義待ち（MVP0-2完了後）
 
-### Implementation Readiness
+### Implementation Progress
 
-現在のプロジェクト状態:
+現在のプロジェクト状態（2025-10-05更新）:
 - ✅ **Steering Documents**: 製品方針、技術スタック、構造、設計原則が確定
 - ✅ **Architecture**: 3プロセスアーキテクチャとIPC通信プロトコル策定完了
 - ✅ **Quality Infrastructure**: CI/CD基盤（pre-commit hooks、静的解析）整備済み
 - ✅ **Design Validation**: 主要な技術的課題（録音責務、モデル配布、IPC等）のADR作成完了
-- 🔵 **Codebase**: 実装未開始（`src-tauri/`, `src/`, `chrome-extension/`, `python-stt/`未作成）
+- ✅ **Codebase Foundation**: プロジェクト基盤セットアップ完了
+  - `src-tauri/`, `src/`, `chrome-extension/`, `python-stt/` 作成済み
+  - 依存関係ファイル（Cargo.toml, package.json, requirements.txt）配置完了
+  - ビルド設定（tauri.conf.json, vite.config.ts）構成完了
 
-**次のステップ**: meeting-minutes-core (MVP0) のタスク承認後、Walking Skeleton実装を開始
+**次のステップ**: Task 1.2で全コンポーネントの空実装（スケルトン）を作成
 
 ---
 

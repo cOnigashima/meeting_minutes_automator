@@ -1,0 +1,11 @@
+# Meeting Minutes Automator - Python Development Dependencies
+# Walking Skeleton (MVP0)
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Code Quality (optional, can be added later)
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0

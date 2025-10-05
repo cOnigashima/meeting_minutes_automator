@@ -1,0 +1,12 @@
+# Meeting Minutes Automator - Python Production Dependencies
+# Walking Skeleton (MVP0)
+
+# Note: asyncio and queue are Python 3.9+ standard library, intentionally excluded
+# to prevent PyPI package override
+
+# Production dependencies will be added in subsequent tasks:
+# - faster-whisper (Task 2: Real STT implementation)
+# - webrtcvad (Task 2: Voice Activity Detection)
+# - etc.
+
+# For development dependencies, see requirements-dev.txt

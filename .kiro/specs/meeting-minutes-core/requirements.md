@@ -503,12 +503,94 @@ stateDiagram-v2
 
 ### Test Cases Traceability
 
-| Test Case ID | Test Type | Related Requirements | Test Location | Status |
-|--------------|-----------|----------------------|---------------|--------|
-| UT-001 | Unit | CORE-REQ-001 | `tests/unit/test_tauri_commands.rs` | Pending |
-| IT-003 | Integration | CORE-REQ-003 | `tests/integration/test_sidecar_lifecycle.rs` | Pending |
-| IT-004 | Integration | CORE-REQ-004 | `tests/integration/test_ipc.rs` | Pending |
-| E2E-008 | E2E | CORE-REQ-008 | `tests/e2e/test_full_flow.rs` | Pending |
+| Test Case ID | Test Type | Related Requirements | Task | Test Location | Status |
+|--------------|-----------|----------------------|------|---------------|--------|
+| **Skeleton Tests** |
+| E2E-8.1 | E2E | CORE-REQ-008 | 1.3 | `tests/integration/e2e_test.rs` | Pending |
+| E2E-8.2 | E2E | CORE-REQ-008 | 1.3 | `tests/integration/e2e_test.rs` | Pending |
+| E2E-8.3 | E2E | CORE-REQ-008 | 1.3 | `tests/integration/e2e_test.rs` | Pending |
+| **Fake Audio Device (Task 2)** |
+| UT-2.1.1 | Unit | CORE-REQ-002 | 2.1 | `tests/unit/audio/test_fake_device.rs` | Pending |
+| UT-2.1.2 | Unit | CORE-REQ-002 | 2.1 | `tests/unit/audio/test_fake_device.rs` | Pending |
+| UT-2.1.3 | Unit | CORE-REQ-002 | 2.1 | `tests/unit/audio/test_fake_device.rs` | Pending |
+| UT-2.1.4 | Unit | CORE-REQ-002 | 2.1 | `tests/unit/audio/test_fake_device.rs` | Pending |
+| **Python Sidecar Management (Task 3)** |
+| UT-3.1.1 | Unit | CORE-REQ-003 | 3.1 | `tests/unit/sidecar/test_python_detection.rs` | Pending |
+| UT-3.1.2 | Unit | CORE-REQ-003 | 3.1 | `tests/unit/sidecar/test_python_detection.rs` | Pending |
+| UT-3.1.3 | Unit | CORE-REQ-003 | 3.1 | `tests/unit/sidecar/test_python_detection.rs` | Pending |
+| UT-3.1.4 | Unit | CORE-REQ-003 | 3.1 | `tests/unit/sidecar/test_python_detection.rs` | Pending |
+| UT-3.2.1 | Unit | CORE-REQ-003 | 3.2 | `tests/unit/sidecar/test_manager.rs` | Pending |
+| UT-3.2.2 | Unit | CORE-REQ-003 | 3.2 | `tests/unit/sidecar/test_manager.rs` | Pending |
+| IT-3.2.1 | Integration | CORE-REQ-003 | 3.2 | `tests/integration/test_sidecar_ipc.rs` | Pending |
+| UT-3.3.1 | Unit | CORE-REQ-003 | 3.3 | `tests/unit/sidecar/test_shutdown.rs` | Pending |
+| UT-3.3.2 | Unit | CORE-REQ-003 | 3.3 | `tests/unit/sidecar/test_shutdown.rs` | Pending |
+| IT-3.3.1 | Integration | CORE-REQ-003 | 3.3 | `tests/integration/test_zombie_processes.rs` | Pending |
+| **IPC Communication (Task 4)** |
+| UT-4.1.1 | Unit | CORE-REQ-004 | 4.1 | `tests/unit/ipc/test_serialization.rs` | Pending |
+| UT-4.1.2 | Unit | CORE-REQ-004 | 4.1 | `tests/unit/ipc/test_serialization.rs` | Pending |
+| IT-4.1.1 | Integration | CORE-REQ-004 | 4.1 | `tests/integration/test_ipc.rs` | Pending |
+| UT-4.2.1 | Unit | CORE-REQ-004 | 4.2 | `tests/unit/ipc/test_error_handling.rs` | Pending |
+| UT-4.2.2 | Unit | CORE-REQ-004 | 4.2 | `tests/unit/ipc/test_health_check.rs` | Pending |
+| IT-4.2.1 | Integration | CORE-REQ-004 | 4.2 | `tests/integration/test_ipc_retry.rs` | Pending |
+| IT-4.3.1 | Integration | CORE-REQ-004 | 4.3 | `tests/integration/test_ipc.rs` | Pending |
+| IT-4.3.2 | Integration | CORE-REQ-004 | 4.3 | `tests/integration/test_ipc.rs` | Pending |
+| IT-4.3.3 | Integration | CORE-REQ-004 | 4.3 | `tests/integration/test_ipc.rs` | Pending |
+| **Python Fake Processor (Task 5)** |
+| UT-5.1.1 | Unit | CORE-REQ-005 | 5.1 | `python-stt/tests/test_ipc_handler.py` | Pending |
+| UT-5.1.2 | Unit | CORE-REQ-005 | 5.1 | `python-stt/tests/test_ipc_handler.py` | Pending |
+| UT-5.2.1 | Unit | CORE-REQ-005 | 5.2 | `python-stt/tests/test_fake_processor.py` | Pending |
+| UT-5.2.2 | Unit | CORE-REQ-005 | 5.2 | `python-stt/tests/test_fake_processor.py` | Pending |
+| UT-5.2.3 | Unit | CORE-REQ-005 | 5.2 | `python-stt/tests/test_fake_processor.py` | Pending |
+| UT-5.3.1 | Unit | CORE-REQ-005 | 5.3 | `python-stt/tests/test_lifecycle.py` | Pending |
+| UT-5.3.2 | Unit | CORE-REQ-005 | 5.3 | `python-stt/tests/test_lifecycle.py` | Pending |
+| IT-5.3.1 | Integration | CORE-REQ-005 | 5.3 | `python-stt/tests/test_integration.py` | Pending |
+| **WebSocket Server (Task 6)** |
+| UT-6.1.1 | Unit | CORE-REQ-006 | 6.1 | `tests/unit/websocket/test_server.rs` | Pending |
+| UT-6.1.2 | Unit | CORE-REQ-006 | 6.1 | `tests/unit/websocket/test_server.rs` | Pending |
+| IT-6.1.1 | Integration | CORE-REQ-006 | 6.1 | `tests/integration/test_websocket.rs` | Pending |
+| UT-6.2.1 | Unit | CORE-REQ-006 | 6.2 | `tests/unit/websocket/test_connection.rs` | Pending |
+| UT-6.2.2 | Unit | CORE-REQ-006 | 6.2 | `tests/unit/websocket/test_origin.rs` | Pending |
+| IT-6.2.1 | Integration | CORE-REQ-006 | 6.2 | `tests/integration/test_websocket_broadcast.rs` | Pending |
+| UT-6.3.1 | Unit | CORE-REQ-006 | 6.3 | `tests/unit/websocket/test_messages.rs` | Pending |
+| UT-6.3.2 | Unit | CORE-REQ-006 | 6.3 | `tests/unit/websocket/test_messages.rs` | Pending |
+| UT-6.3.3 | Unit | CORE-REQ-006 | 6.3 | `tests/unit/websocket/test_messages.rs` | Pending |
+| **Chrome Extension (Task 7)** |
+| UT-7.1.1 | Unit | CORE-REQ-007 | 7.1 | `chrome-extension/tests/test_manifest.spec.ts` | Pending |
+| E2E-7.1.1 | E2E | CORE-REQ-007 | 7.1 | Manual (Chrome loading verification) | Pending |
+| UT-7.2.1 | Unit | CORE-REQ-007 | 7.2 | `chrome-extension/tests/test_websocket_client.spec.ts` | Pending |
+| UT-7.2.2 | Unit | CORE-REQ-007 | 7.2 | `chrome-extension/tests/test_websocket_client.spec.ts` | Pending |
+| IT-7.2.1 | Integration | CORE-REQ-007 | 7.2 | `chrome-extension/tests/test_connection.spec.ts` | Pending |
+| UT-7.3.1 | Unit | CORE-REQ-007 | 7.3 | `chrome-extension/tests/test_message_handler.spec.ts` | Pending |
+| UT-7.3.2 | Unit | CORE-REQ-007 | 7.3 | `chrome-extension/tests/test_message_handler.spec.ts` | Pending |
+| UT-7.3.3 | Unit | CORE-REQ-007 | 7.3 | `chrome-extension/tests/test_message_handler.spec.ts` | Pending |
+| UT-7.3.4 | Unit | CORE-REQ-007 | 7.3 | `chrome-extension/tests/test_message_handler.spec.ts` | Pending |
+| **E2E Integration (Task 8)** |
+| E2E-8.1.1 | E2E | CORE-REQ-008 | 8.1 | `tests/e2e/test_startup.rs` | Pending |
+| E2E-8.1.2 | E2E | CORE-REQ-008 | 8.1 | `tests/e2e/test_startup.rs` | Pending |
+| E2E-8.1.3 | E2E | CORE-REQ-008 | 8.1 | `tests/e2e/test_startup.rs` | Pending |
+| E2E-8.1.4 | E2E | CORE-REQ-008 | 8.1 | `tests/e2e/test_startup.rs` | Pending |
+| E2E-8.2.1 | E2E | CORE-REQ-008 | 8.2 | Manual (Full flow test) | Pending |
+| E2E-8.2.2 | E2E | CORE-REQ-008 | 8.2 | Manual (Full flow test) | Pending |
+| E2E-8.2.3 | E2E | CORE-REQ-008 | 8.2 | Manual (Full flow test) | Pending |
+| E2E-8.2.4 | E2E | CORE-REQ-008 | 8.2 | Manual (Full flow test) | Pending |
+| E2E-8.2.5 | E2E | CORE-REQ-008 | 8.2 | Manual (Full flow test) | Pending |
+| E2E-8.3.1 | E2E | CORE-REQ-008 | 8.3 | `tests/e2e/test_cleanup.rs` | Pending |
+| E2E-8.3.2 | E2E | CORE-REQ-008 | 8.3 | `tests/e2e/test_cleanup.rs` | Pending |
+| E2E-8.3.3 | E2E | CORE-REQ-008 | 8.3 | `tests/e2e/test_cleanup.rs` | Pending |
+| E2E-8.3.4 | E2E | CORE-REQ-008 | 8.3 | `tests/e2e/test_cleanup.rs` | Pending |
+| **Non-Functional Requirements (Task 9)** |
+| IT-9.1.1 | Integration | CORE-NFR-PERF | 9.1 | `tests/integration/test_metrics.rs` | Pending |
+| IT-9.1.2 | Integration | CORE-NFR-PERF | 9.1 | `tests/integration/test_performance.rs` | Pending |
+| IT-9.2.1 | Integration | CORE-NFR-SEC | 9.2 | `tests/integration/test_security.rs` | Pending |
+| IT-9.2.2 | Integration | CORE-NFR-SEC | 9.2 | `tests/integration/test_security.rs` | Pending |
+| IT-9.2.3 | Integration | CORE-NFR-SEC | 9.2 | `tests/integration/test_security.rs` | Pending |
+| IT-9.2.4 | Integration | CORE-NFR-SEC | 9.2 | `tests/integration/test_security.rs` | Pending |
+| E2E-9.3.1 | E2E | CORE-NFR-COMP | 9.3 | Manual (macOS testing) | Pending |
+| E2E-9.3.2 | E2E | CORE-NFR-COMP | 9.3 | Manual (Windows testing) | Pending |
+| E2E-9.3.3 | E2E | CORE-NFR-COMP | 9.3 | Manual (Linux testing) | Pending |
+| UT-9.4.1 | Unit | CORE-NFR-LOG | 9.4 | `tests/unit/logging/test_format.rs` | Pending |
+| IT-9.4.1 | Integration | CORE-NFR-LOG | 9.4 | `tests/integration/test_logging.rs` | Pending |
+| IT-9.4.2 | Integration | CORE-NFR-LOG | 9.4 | `tests/integration/test_logging.rs` | Pending |
 
 ### Notes on Umbrella Spec Alignment
 
