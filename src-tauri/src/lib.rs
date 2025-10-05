@@ -6,6 +6,7 @@ pub mod python_sidecar;
 pub mod websocket;
 pub mod commands;
 pub mod state;
+pub mod logger;
 
 use state::AppState;
 use websocket::WebSocketServer;

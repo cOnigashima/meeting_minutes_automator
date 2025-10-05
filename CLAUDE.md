@@ -25,6 +25,7 @@ Kiro-style Spec Driven Development implementation using claude code slash comman
 - `meeting-minutes-core`: [MVP0] Walking Skeleton - Tauri+Python+Chrome拡張の最小疎通確認（Fake実装）（✅ tasks生成完了）
 - `meeting-minutes-stt`: [MVP1] Real STT - faster-whisper統合、webrtcvad統合、リソースベースモデル選択、音声デバイス管理、ローカルストレージ（🔵 requirements生成完了）
 - `meeting-minutes-docs-sync`: [MVP2] Google Docs同期 - OAuth 2.0認証、Google Docs API統合、Named Range管理、オフライン同期（🔵 spec初期化完了）
+- `meeting-minutes-ci`: [Infrastructure] GitHub Actions CI/CD - クロスプラットフォームテストマトリックス、コスト最適化戦略、自動リリース、セキュリティ/パフォーマンステスト（🔵 spec初期化完了）
 - `meeting-minutes-llm`: [MVP3] LLM要約 + UI - プロダクション準備（予定）
 
 ## Development Guidelines
