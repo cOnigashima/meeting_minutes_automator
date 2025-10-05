@@ -8,7 +8,8 @@
       "mcp__serena__write_memory",
       "Bash(cat:*)",
       "Bash(grep:*)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "mcp__serena__get_symbols_overview"
     ],
     "deny": [],
     "ask": []

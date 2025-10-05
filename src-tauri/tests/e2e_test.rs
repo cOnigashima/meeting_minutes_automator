@@ -14,43 +14,46 @@ mod e2e_tests {
         assert!(true, "Application compiled successfully");
     }
 
-    /// E2E-8.1.2: Component Initialization Test (Skeleton)
-    /// Expected: Should panic with unimplemented!()
+    /// E2E-8.1.2: Component Initialization Test
+    /// Task 2.1 implemented - now tests actual functionality
     #[test]
-    #[should_panic(expected = "not implemented")]
     fn test_component_initialization() {
         use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
 
         let mut audio_device = FakeAudioDevice::new();
 
-        // This should panic with unimplemented!()
-        audio_device.initialize().expect("Should panic before reaching here");
+        // Should initialize successfully
+        audio_device.initialize().expect("Initialization should succeed");
+        assert!(!audio_device.is_running(), "Device should not be running after init");
     }
 
-    /// E2E-8.2.1: Recording Start Flow Test (Skeleton)
-    /// Expected: Should panic with unimplemented!()
+    /// E2E-8.2.1: Recording Start Flow Test
+    /// Task 2.1 implemented - now tests actual functionality
     #[test]
-    #[should_panic(expected = "not implemented")]
     fn test_recording_start_flow() {
         use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
 
         let mut audio_device = FakeAudioDevice::new();
+        audio_device.initialize().expect("Initialization should succeed");
 
-        // This should panic with unimplemented!()
-        audio_device.start().expect("Should panic before reaching here");
+        // Should start successfully
+        audio_device.start().expect("Start should succeed");
+        assert!(audio_device.is_running(), "Device should be running after start");
     }
 
-    /// E2E-8.3.1: Recording Stop and Cleanup Test (Skeleton)
-    /// Expected: Should panic with unimplemented!()
+    /// E2E-8.3.1: Recording Stop and Cleanup Test
+    /// Task 2.1 implemented - now tests actual functionality
     #[test]
-    #[should_panic(expected = "not implemented")]
     fn test_recording_stop_cleanup() {
         use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
 
         let mut audio_device = FakeAudioDevice::new();
+        audio_device.initialize().expect("Initialization should succeed");
+        audio_device.start().expect("Start should succeed");
 
-        // This should panic with unimplemented!()
-        audio_device.stop().expect("Should panic before reaching here");
+        // Should stop successfully
+        audio_device.stop().expect("Stop should succeed");
+        assert!(!audio_device.is_running(), "Device should not be running after stop");
     }
 
     /// E2E-8.1.3: WebSocket Server Initialization Test (Skeleton)

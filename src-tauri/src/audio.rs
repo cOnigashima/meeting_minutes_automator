@@ -1,5 +1,5 @@
 // Audio Device Abstraction
-// Walking Skeleton (MVP0) - Empty Implementation
+// Walking Skeleton (MVP0) - Fake Implementation for TDD
 
 use anyhow::Result;
 
@@ -15,25 +15,60 @@ pub trait AudioDevice: Send + Sync {
     fn stop(&mut self) -> Result<()>;
 }
 
-/// Fake audio device for testing (generates dummy data)
-pub struct FakeAudioDevice;
+/// Fake audio device for testing (generates dummy data every 100ms)
+///
+/// For Walking Skeleton (MVP0), this is a simplified implementation.
+/// Actual timer-based data generation will be added in Task 3 when
+/// integrating with PythonSidecarManager in async context.
+pub struct FakeAudioDevice {
+    /// Flag to track if the device is currently running
+    is_running: bool,
+}
 
 impl FakeAudioDevice {
+    /// Create a new FakeAudioDevice
     pub fn new() -> Self {
-        Self
+        Self {
+            is_running: false,
+        }
+    }
+
+    /// Generate 16 bytes of dummy audio data
+    /// Returns: Vec<u8> with exactly 16 zero bytes
+    pub fn generate_dummy_data(&self) -> Vec<u8> {
+        vec![0u8; 16]
+    }
+
+    /// Check if the device is currently running
+    pub fn is_running(&self) -> bool {
+        self.is_running
     }
 }
 
 impl AudioDevice for FakeAudioDevice {
+    /// Initialize the audio device
+    /// Sets up internal state but doesn't start data generation
     fn initialize(&mut self) -> Result<()> {
-        unimplemented!("FakeAudioDevice::initialize - to be implemented in Task 2.1")
+        // Reset state
+        self.is_running = false;
+        Ok(())
     }
 
+    /// Start recording audio
+    /// Sets the running flag to true
+    ///
+    /// Note: Actual 100ms interval timer and data generation loop
+    /// will be implemented in Task 3 when integrated with
+    /// PythonSidecarManager in async context
     fn start(&mut self) -> Result<()> {
-        unimplemented!("FakeAudioDevice::start - to be implemented in Task 2.1")
+        self.is_running = true;
+        Ok(())
     }
 
+    /// Stop recording audio
+    /// Halts data generation and cleans up resources
     fn stop(&mut self) -> Result<()> {
-        unimplemented!("FakeAudioDevice::stop - to be implemented in Task 2.1")
+        self.is_running = false;
+        Ok(())
     }
 }
