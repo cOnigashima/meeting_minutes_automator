@@ -348,8 +348,28 @@ impl PythonSidecarManager {
     }
 
     /// Receive a message from Python sidecar
-    pub async fn receive_message(&mut self) -> Result<IpcMessage, PythonSidecarError> {
-        unimplemented!("PythonSidecarManager::receive_message - to be implemented in Task 4.1")
+    pub async fn receive_message(&mut self) -> Result<serde_json::Value, PythonSidecarError> {
+        use tokio::io::AsyncBufReadExt;
+
+        let stdout = self.stdout.as_mut()
+            .ok_or_else(|| PythonSidecarError::ProcessNotRunning)?;
+
+        let mut line = String::new();
+        stdout.read_line(&mut line).await
+            .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
+
+        if line.is_empty() {
+            return Err(PythonSidecarError::CommunicationFailed(
+                "EOF reached - process terminated".to_string()
+            ));
+        }
+
+        let msg: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|e| PythonSidecarError::CommunicationFailed(
+                format!("Failed to parse message: {}", e)
+            ))?;
+
+        Ok(msg)
     }
 
     /// Graceful shutdown: Send shutdown message and wait for process to exit

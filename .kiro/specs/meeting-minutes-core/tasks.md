@@ -131,14 +131,14 @@
   - _Test Cases: UT-3.3.1 (Graceful shutdown), UT-3.3.2 (強制終了), UT-3.3.3 (Drop cleanup), UT-3.3.4 (ゾンビプロセス検証), UT-3.3.5 (多重shutdown) - すべて✅_
 
 - [ ] 4. stdin/stdout JSON IPC通信の実装（Rust側）
-- [ ] 4.1 IPC メッセージ送受信の実装
-  - `IpcRequest`, `IpcResponse`型定義（umbrella spec準拠）
-  - `send_message()`でのJSON シリアライゼーションとBase64エンコーディング
-  - `receive_response()`でのJSON パースとエラーハンドリング
-  - リクエスト-レスポンスIDマッチング機構
-  - **メトリクス記録**: IPC レイテンシ計測ポイント実装 (`ipc_latency_ms` メトリクス記録)
-  - _Requirements: AC-004.1, AC-004.2, AC-004.5, AC-NFR-PERF.4_
-  - _Test Cases: UT-4.1.1 (JSON シリアライズ), UT-4.1.2 (Base64 エンコード), IT-4.1.1 (送受信)_
+- [x] 4.1 IPC メッセージ送受信の実装（Walking Skeleton簡略版）
+  - `send_message()`: JSON シリアライゼーション + 改行付き送信 ✅ (Task 3.2で実装済み)
+  - `receive_message()`: JSON パース + エラーハンドリング ✅
+  - Python側実装: ping/pong、process_audio (Fake)、shutdown、error応答 ✅
+  - ユニットテスト: 4テストすべてパス ✅
+  - _Walking Skeleton Note_: Base64エンコーディング、メトリクス記録、リクエスト-レスポンスIDマッチング機構はMVP1以降で実装
+  - _Requirements: AC-004.1, AC-004.2 (部分実装)_
+  - _Test Cases: UT-4.1.1 (ping/pong), UT-4.1.2 (process_audio), UT-4.1.3 (複数メッセージ), UT-4.1.4 (未知タイプエラー) - すべて✅_
 
 - [ ] 4.2 IPC エラーハンドリングとリトライロジック
   - JSON パースエラー時のエラーログ記録
