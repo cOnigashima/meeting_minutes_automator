@@ -176,11 +176,16 @@ mod e2e_tests {
         let json = serde_json::to_string(&ipc_msg).expect("Should serialize");
         assert!(json.contains("Ready") || json.contains("ready"));
 
-        // Test WebSocket message serialization
+        // Test WebSocket message serialization with all required fields
         let ws_msg = WebSocketMessage::Connected {
+            message_id: "msg-1".to_string(),
             session_id: "test-123".to_string(),
+            timestamp: 1234567890,
         };
         let json = serde_json::to_string(&ws_msg).expect("Should serialize");
         assert!(json.contains("connected") || json.contains("Connected"));
+        assert!(json.contains("message_id"));
+        assert!(json.contains("session_id"));
+        assert!(json.contains("timestamp"));
     }
 }

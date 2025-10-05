@@ -27,7 +27,9 @@ async fn it_websocket_server_client_connection() {
     if let Message::Text(text) = msg {
         let json: serde_json::Value = serde_json::from_str(&text).expect("Invalid JSON");
         assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("connected"));
-        assert!(json.get("session_id").is_some());
+        assert!(json.get("session_id").is_some(), "session_id missing");
+        assert!(json.get("message_id").is_some(), "message_id missing");
+        assert!(json.get("timestamp").is_some(), "timestamp missing");
     } else {
         panic!("Expected text message");
     }
@@ -56,6 +58,8 @@ async fn it_websocket_server_broadcast() {
 
     // Broadcast transcription message
     let broadcast_msg = WebSocketMessage::Transcription {
+        message_id: "test-msg-1".to_string(),
+        session_id: "test-session".to_string(),
         text: "Test transcription".to_string(),
         timestamp: 12345,
     };
@@ -99,6 +103,8 @@ async fn it_websocket_server_multiple_broadcasts() {
     // Send 3 broadcasts
     for i in 0..3 {
         let msg = WebSocketMessage::Transcription {
+            message_id: format!("msg-{}", i),
+            session_id: "test-session".to_string(),
             text: format!("Message {}", i),
             timestamp: i as u64,
         };

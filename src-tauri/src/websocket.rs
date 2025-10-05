@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::{accept_hdr_async, tungstenite::handshake::server::{Request, Response}};
 use futures_util::{StreamExt, SinkExt};
 use futures_util::stream::SplitSink;
 use tokio_tungstenite::WebSocketStream;
@@ -15,20 +15,35 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 
 /// WebSocket message types for Chrome extension communication
+/// All messages include: message_id, session_id, timestamp for traceability
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WebSocketMessage {
     /// Connection established
     #[serde(rename = "connected")]
-    Connected { session_id: String },
+    Connected {
+        message_id: String,
+        session_id: String,
+        timestamp: u64,
+    },
 
     /// Transcription result
     #[serde(rename = "transcription")]
-    Transcription { text: String, timestamp: u64 },
+    Transcription {
+        message_id: String,
+        session_id: String,
+        text: String,
+        timestamp: u64,
+    },
 
     /// Error message
     #[serde(rename = "error")]
-    Error { message: String },
+    Error {
+        message_id: String,
+        session_id: String,
+        message: String,
+        timestamp: u64,
+    },
 }
 
 type WsWriter = SplitSink<WebSocketStream<TcpStream>, Message>;
@@ -44,6 +59,8 @@ pub struct WebSocketServer {
     shutdown_tx: Option<mpsc::Sender<()>>,
     server_handle: Option<JoinHandle<()>>,
     connections: Arc<Mutex<Vec<Arc<WebSocketConnection>>>>,
+    session_id: String,
+    message_id_counter: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl WebSocketServer {
@@ -53,7 +70,17 @@ impl WebSocketServer {
             shutdown_tx: None,
             server_handle: None,
             connections: Arc::new(Mutex::new(Vec::new())),
+            session_id: uuid::Uuid::new_v4().to_string(),
+            message_id_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// Get current timestamp in milliseconds
+    fn timestamp() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
     }
 
     /// Start the WebSocket server
@@ -80,6 +107,8 @@ impl WebSocketServer {
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         let connections = Arc::clone(&self.connections);
+        let session_id = self.session_id.clone();
+        let message_id_counter = Arc::clone(&self.message_id_counter);
 
         // Spawn server task
         let handle = tokio::spawn(async move {
@@ -88,8 +117,10 @@ impl WebSocketServer {
                     accept_result = listener.accept() => {
                         if let Ok((stream, _)) = accept_result {
                             let conn_list = Arc::clone(&connections);
+                            let sess_id = session_id.clone();
+                            let msg_counter = Arc::clone(&message_id_counter);
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(stream, conn_list).await {
+                                if let Err(e) = Self::handle_connection(stream, conn_list, sess_id, msg_counter).await {
                                     eprintln!("WebSocket connection error: {:?}", e);
                                 }
                             });
@@ -108,12 +139,63 @@ impl WebSocketServer {
         Ok(())
     }
 
+    /// Verify Origin header (AC-NFR-SEC.2)
+    fn verify_origin(origin: &str) -> bool {
+        // Allow empty origin (for local testing clients that don't send Origin)
+        if origin.is_empty() {
+            return true;
+        }
+
+        // Allow localhost
+        if origin.starts_with("http://127.0.0.1")
+            || origin.starts_with("http://localhost")
+            || origin.starts_with("https://127.0.0.1")
+            || origin.starts_with("https://localhost") {
+            return true;
+        }
+
+        // Allow Chrome extensions (development: all, production: configured list)
+        if origin.starts_with("chrome-extension://") {
+            #[cfg(debug_assertions)]
+            return true;  // Development: allow all extension IDs
+
+            #[cfg(not(debug_assertions))]
+            {
+                // Production: check against configured allowed IDs
+                // TODO: Load from config file
+                let allowed_ids = vec![];  // Empty for now - configure in production
+                allowed_ids.iter().any(|id| origin.starts_with(&format!("chrome-extension://{}", id)))
+            }
+        }
+
+        false
+    }
+
     /// Handle a WebSocket connection
     async fn handle_connection(
         stream: TcpStream,
         connections: Arc<Mutex<Vec<Arc<WebSocketConnection>>>>,
+        session_id: String,
+        message_id_counter: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<()> {
-        let ws_stream = accept_async(stream).await?;
+        // Accept with Origin header validation
+        let ws_stream = accept_hdr_async(stream, |req: &Request, mut response: Response| {
+            // Get Origin header
+            let origin = req
+                .headers()
+                .get("Origin")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            // Verify origin
+            if !Self::verify_origin(origin) {
+                eprintln!("Rejected connection from invalid Origin: {}", origin);
+                *response.status_mut() = http::StatusCode::FORBIDDEN;
+                return Err(http::Response::new(Some("Invalid Origin".to_string())));
+            }
+
+            Ok(response)
+        }).await?;
         let (writer, mut reader) = ws_stream.split();
 
         let conn = Arc::new(WebSocketConnection {
@@ -126,9 +208,16 @@ impl WebSocketServer {
             conns.push(Arc::clone(&conn));
         }
 
-        // Send connected message
+        // Send connected message with all required fields
+        let message_id = {
+            let id = message_id_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            format!("ws-{}", id)
+        };
+
         let connected_msg = WebSocketMessage::Connected {
-            session_id: uuid::Uuid::new_v4().to_string(),
+            message_id,
+            session_id,
+            timestamp: Self::timestamp(),
         };
         let json = serde_json::to_string(&connected_msg)?;
         let mut writer_guard = conn.writer.lock().await;
@@ -154,15 +243,29 @@ impl WebSocketServer {
     }
 
     /// Broadcast a message to all connected clients
+    /// Includes performance metrics logging (AC-NFR-PERF.4)
     pub async fn broadcast(&self, message: WebSocketMessage) -> Result<()> {
+        let start = std::time::Instant::now();
+
         let json = serde_json::to_string(&message)?;
         let msg = Message::Text(json);
 
         let conns = self.connections.lock().await;
+        let conn_count = conns.len();
+
         for conn in conns.iter() {
             let mut writer = conn.writer.lock().await;
-            let _ = writer.send(msg.clone()).await;
+            if let Err(e) = writer.send(msg.clone()).await {
+                eprintln!("Broadcast send error: {:?}", e);
+            }
         }
+
+        // Log performance metrics (AC-NFR-PERF.4)
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        println!(
+            r#"{{"metric":"websocket_broadcast_ms","value":{},"timestamp":{},"session_id":"{}","connections":{}}}"#,
+            elapsed_ms, Self::timestamp(), self.session_id, conn_count
+        );
 
         Ok(())
     }
