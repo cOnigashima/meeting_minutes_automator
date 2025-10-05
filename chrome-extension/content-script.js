@@ -52,9 +52,19 @@ class WebSocketClient {
         this.connected = true;
         this.reconnectAttempts = 0;
         console.log(`[Meeting Minutes] ✅ Connected to WebSocket server on port ${port}`);
-        
-        // Save successful port
-        chrome.storage.local.set({ lastPort: port });
+
+        // Save connection state (AC-007.5)
+        chrome.storage.local.set({
+          lastPort: port,
+          connectionStatus: 'connected',
+          lastAttempt: Date.now(),
+          lastError: null
+        }, () => {
+          // Log saved state for verification
+          chrome.storage.local.get(null, (items) => {
+            console.log('[Meeting Minutes] 📦 Storage saved:', items);
+          });
+        });
       };
 
       this.ws.onmessage = (event) => {
@@ -64,13 +74,36 @@ class WebSocketClient {
       this.ws.onerror = (error) => {
         clearTimeout(timeout);
         console.error(`[Meeting Minutes] WebSocket error on port ${port}:`, error);
+
+        // Save error state (AC-007.5)
+        chrome.storage.local.set({
+          connectionStatus: 'error',
+          lastAttempt: Date.now(),
+          lastError: error.type || 'WebSocket error'
+        }, () => {
+          // Log saved state for verification
+          chrome.storage.local.get(null, (items) => {
+            console.log('[Meeting Minutes] 📦 Storage saved (error):', items);
+          });
+        });
       };
 
       this.ws.onclose = () => {
         clearTimeout(timeout);
         this.connected = false;
         console.log(`[Meeting Minutes] WebSocket connection closed`);
-        
+
+        // Save disconnected state (AC-007.5)
+        chrome.storage.local.set({
+          connectionStatus: 'disconnected',
+          lastAttempt: Date.now()
+        }, () => {
+          // Log saved state for verification
+          chrome.storage.local.get(null, (items) => {
+            console.log('[Meeting Minutes] 📦 Storage saved (disconnected):', items);
+          });
+        });
+
         // Attempt reconnection
         this.reconnect();
       };

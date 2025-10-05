@@ -161,6 +161,11 @@ impl WebSocketServer {
             return true;
         }
 
+        // Allow Google Meet (for Content Script execution context)
+        if origin.starts_with("https://meet.google.com") {
+            return true;
+        }
+
         // Allow Chrome extensions (development: all, production: configured list)
         if origin.starts_with("chrome-extension://") {
             #[cfg(debug_assertions)]
@@ -186,7 +191,7 @@ impl WebSocketServer {
         message_id_counter: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<()> {
         // Accept with Origin header validation
-        let ws_stream = accept_hdr_async(stream, |req: &Request, mut response: Response| {
+        let ws_stream = accept_hdr_async(stream, |req: &Request, response: Response| {
             // Get Origin header
             let origin = req
                 .headers()
@@ -197,8 +202,11 @@ impl WebSocketServer {
             // Verify origin
             if !Self::verify_origin(origin) {
                 eprintln!("Rejected connection from invalid Origin: {}", origin);
-                *response.status_mut() = http::StatusCode::FORBIDDEN;
-                return Err(http::Response::new(Some("Invalid Origin".to_string())));
+                // Return 403 Forbidden to prevent client from retrying immediately
+                return Err(http::Response::builder()
+                    .status(http::StatusCode::FORBIDDEN)
+                    .body(Some("Invalid Origin".to_string()))
+                    .unwrap());
             }
 
             Ok(response)
