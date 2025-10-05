@@ -31,12 +31,11 @@ def handle_ping(msg_id: str) -> Dict[str, Any]:
 
 def handle_process_audio(msg_id: str, audio_data: list) -> Dict[str, Any]:
     """Handle process_audio message (Fake implementation)"""
-    # Walking Skeleton: Return fake transcription
-    fake_text = f"[Fake transcription of {len(audio_data)} bytes]"
+    # Walking Skeleton: Return fixed fake transcription (Task 5.2 requirement)
     return {
         "type": "transcription_result",
         "id": msg_id,
-        "text": fake_text,
+        "text": "This is a fake transcription result",
         "timestamp": int(time.time() * 1000)
     }
 

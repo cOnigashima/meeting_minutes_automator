@@ -9,6 +9,8 @@ pub mod state;
 
 use state::AppState;
 use websocket::WebSocketServer;
+use python_sidecar::PythonSidecarManager;
+use audio::FakeAudioDevice;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -21,18 +23,47 @@ pub fn run() {
             // Get AppHandle for use in async task
             let app_handle = app.handle().clone();
 
-            // Start WebSocket server asynchronously
-            // AC-006.1: WHEN Tauri app starts THEN start WebSocket server
+            // Initialize all components asynchronously
+            // AC-003.2: Start Python sidecar process
+            // AC-006.1: Start WebSocket server
             tauri::async_runtime::spawn(async move {
-                let mut ws_server = WebSocketServer::new();
+                let app_state = app_handle.state::<AppState>();
 
+                // 1. Start Python sidecar
+                let mut sidecar = PythonSidecarManager::new();
+                match sidecar.start().await {
+                    Ok(_) => {
+                        println!("[Meeting Minutes] ✅ Python sidecar started");
+
+                        // Wait for ready signal
+                        match sidecar.wait_for_ready().await {
+                            Ok(_) => {
+                                println!("[Meeting Minutes] ✅ Python sidecar ready");
+                                let sidecar_arc = Arc::new(tokio::sync::Mutex::new(sidecar));
+                                app_state.set_python_sidecar(sidecar_arc);
+                            }
+                            Err(e) => {
+                                eprintln!("[Meeting Minutes] ❌ Python sidecar ready timeout: {:?}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[Meeting Minutes] ❌ Failed to start Python sidecar: {:?}", e);
+                    }
+                }
+
+                // 2. Initialize FakeAudioDevice
+                let audio_device = FakeAudioDevice::new();
+                println!("[Meeting Minutes] ✅ FakeAudioDevice initialized");
+                let device_arc = Arc::new(tokio::sync::Mutex::new(audio_device));
+                app_state.set_audio_device(device_arc);
+
+                // 3. Start WebSocket server
+                let mut ws_server = WebSocketServer::new();
                 match ws_server.start().await {
                     Ok(port) => {
                         println!("[Meeting Minutes] ✅ WebSocket server started on port {}", port);
-
-                        // Store server in AppState
                         let server_arc = Arc::new(tokio::sync::Mutex::new(ws_server));
-                        let app_state = app_handle.state::<AppState>();
                         app_state.set_websocket_server(server_arc);
                     }
                     Err(e) => {
