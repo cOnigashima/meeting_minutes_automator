@@ -54,20 +54,21 @@ mod e2e_tests {
         assert!(!audio_device.is_running(), "Device should not be running after stop");
     }
 
-    /// E2E-8.1.3: WebSocket Server Initialization Test (Skeleton)
-    /// Expected: Should panic with unimplemented!()
-    #[test]
-    #[should_panic(expected = "not implemented")]
-    fn test_websocket_server_start() {
+    /// E2E-8.1.3: WebSocket Server Initialization Test
+    /// Task 6.1 implemented - now tests actual functionality
+    #[tokio::test]
+    async fn test_websocket_server_start() {
         use meeting_minutes_automator_lib::websocket::WebSocketServer;
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let mut ws_server = WebSocketServer::new();
+        let mut ws_server = WebSocketServer::new();
 
-            // This should panic with unimplemented!()
-            ws_server.start().await.expect("Should panic before reaching here");
-        });
+        // Should start successfully
+        let port = ws_server.start().await.expect("Should start successfully");
+
+        assert!(port >= 9001 && port <= 9100, "Port should be in range 9001-9100");
+
+        // Cleanup
+        ws_server.stop().await.expect("Should stop successfully");
     }
 
     /// E2E-8.1.2: Python Sidecar Manager Initialization Test
