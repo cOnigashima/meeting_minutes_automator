@@ -176,7 +176,7 @@ mod e2e_tests {
         let json = serde_json::to_string(&ipc_msg).expect("Should serialize");
         assert!(json.contains("Ready") || json.contains("ready"));
 
-        // Test WebSocket message serialization with all required fields
+        // Test WebSocket message serialization with all required fields (camelCase)
         let ws_msg = WebSocketMessage::Connected {
             message_id: "msg-1".to_string(),
             session_id: "test-123".to_string(),
@@ -184,8 +184,9 @@ mod e2e_tests {
         };
         let json = serde_json::to_string(&ws_msg).expect("Should serialize");
         assert!(json.contains("connected") || json.contains("Connected"));
-        assert!(json.contains("message_id"));
-        assert!(json.contains("session_id"));
+        // Fields should be in camelCase for Chrome extension compatibility
+        assert!(json.contains("messageId"), "JSON should contain 'messageId' (camelCase): {}", json);
+        assert!(json.contains("sessionId"), "JSON should contain 'sessionId' (camelCase): {}", json);
         assert!(json.contains("timestamp"));
     }
 }

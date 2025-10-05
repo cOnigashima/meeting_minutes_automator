@@ -12,7 +12,8 @@
       "mcp__serena__get_symbols_overview",
       "Bash(RUST_BACKTRACE=1 cargo test --test unit_tests ut_3_1_1_detect_from_env_variable -- --nocapture)",
       "Bash(python3.12:*)",
-      "mcp__serena__think_about_collected_information"
+      "mcp__serena__think_about_collected_information",
+      "Bash(node:*)"
     ],
     "deny": [],
     "ask": []

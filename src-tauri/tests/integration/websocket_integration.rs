@@ -27,8 +27,9 @@ async fn it_websocket_server_client_connection() {
     if let Message::Text(text) = msg {
         let json: serde_json::Value = serde_json::from_str(&text).expect("Invalid JSON");
         assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("connected"));
-        assert!(json.get("session_id").is_some(), "session_id missing");
-        assert!(json.get("message_id").is_some(), "message_id missing");
+        // Fields are in camelCase for Chrome extension compatibility
+        assert!(json.get("sessionId").is_some(), "sessionId missing (camelCase)");
+        assert!(json.get("messageId").is_some(), "messageId missing (camelCase)");
         assert!(json.get("timestamp").is_some(), "timestamp missing");
     } else {
         panic!("Expected text message");

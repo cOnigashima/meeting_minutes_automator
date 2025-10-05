@@ -15,14 +15,17 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 
 /// WebSocket message types for Chrome extension communication
-/// All messages include: message_id, session_id, timestamp for traceability
+/// All messages include: messageId, sessionId, timestamp for traceability
+/// JSON fields are serialized in camelCase for Chrome extension compatibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WebSocketMessage {
     /// Connection established
     #[serde(rename = "connected")]
     Connected {
+        #[serde(rename = "messageId")]
         message_id: String,
+        #[serde(rename = "sessionId")]
         session_id: String,
         timestamp: u64,
     },
@@ -30,7 +33,9 @@ pub enum WebSocketMessage {
     /// Transcription result
     #[serde(rename = "transcription")]
     Transcription {
+        #[serde(rename = "messageId")]
         message_id: String,
+        #[serde(rename = "sessionId")]
         session_id: String,
         text: String,
         timestamp: u64,
@@ -39,7 +44,9 @@ pub enum WebSocketMessage {
     /// Error message
     #[serde(rename = "error")]
     Error {
+        #[serde(rename = "messageId")]
         message_id: String,
+        #[serde(rename = "sessionId")]
         session_id: String,
         message: String,
         timestamp: u64,
