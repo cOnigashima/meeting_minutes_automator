@@ -1,6 +1,6 @@
 ---
-description: Create comprehensive technical design for a specification  
-allowed-tools: Bash, Glob, Grep, LS, Read, Write, Edit, MultiEdit, Update, WebSearch, WebFetch
+description: Create comprehensive technical design for a specification with Serena symbolic code analysis
+allowed-tools: Bash, Glob, Grep, LS, Read, Write, Edit, MultiEdit, Update, WebSearch, WebFetch, mcp__serena__list_dir, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__search_for_pattern
 argument-hint: <feature-name> [-y]
 ---
 

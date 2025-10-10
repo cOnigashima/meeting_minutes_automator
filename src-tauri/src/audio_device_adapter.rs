@@ -4,6 +4,9 @@
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
+use std::thread::JoinHandle;
 
 // OS-specific imports
 #[cfg(target_os = "macos")]
@@ -14,6 +17,37 @@ use cpal::traits::{DeviceTrait, HostTrait};
 
 #[cfg(target_os = "linux")]
 use cpal::traits::{DeviceTrait, HostTrait};
+
+// ============================================================================
+// Audio Device Events (Task 2.5 - Device Disconnection Detection)
+// ============================================================================
+
+/// Audio device event types for monitoring device health
+/// Requirement: STT-REQ-004.9, STT-REQ-004.10, STT-REQ-004.11
+#[derive(Debug, Clone)]
+pub enum AudioDeviceEvent {
+    /// Stream error from cpal error callback
+    /// Fired when cpal reports a stream error (device error, buffer underrun, etc.)
+    StreamError(String),
+
+    /// No audio data received (liveness watchdog timeout)
+    /// Fired when audio callback hasn't been called for longer than threshold
+    Stalled { elapsed_ms: u64 },
+
+    /// Device disappeared from enumeration
+    /// Fired when device polling detects the device is no longer available
+    DeviceGone { device_id: String },
+}
+
+/// Event sender type for audio device events
+pub type AudioEventSender = mpsc::Sender<AudioDeviceEvent>;
+
+/// Event receiver type for audio device events
+pub type AudioEventReceiver = mpsc::Receiver<AudioDeviceEvent>;
+
+// ============================================================================
+// Audio Device Metadata
+// ============================================================================
 
 /// Audio device metadata
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -70,17 +104,46 @@ pub trait AudioDeviceAdapter: Send + Sync {
 
     /// Check if currently recording
     fn is_recording(&self) -> bool;
+
+    /// Check microphone permission status
+    /// Requirement: STT-REQ-004.1, STT-REQ-004.2
+    /// Returns Ok(()) if permission is granted, Err with user-friendly message if denied
+    fn check_permission(&self) -> Result<()>;
 }
 
 // ============================================================================
 // OS-Specific Implementations
 // ============================================================================
 
-/// macOS CoreAudio adapter
+/// macOS CoreAudio adapter with device monitoring
+/// Task 2.5: Device disconnection detection and auto-reconnect
 #[cfg(target_os = "macos")]
 pub struct CoreAudioAdapter {
+    /// Recording state
     is_recording: bool,
-    stream_handle: Option<std::thread::JoinHandle<()>>,
+
+    /// Currently recording device ID (for monitoring)
+    device_id: Option<String>,
+
+    /// Stream thread handle (stream lives in this thread)
+    stream_thread: Option<JoinHandle<()>>,
+
+    /// Last callback timestamp (for liveness monitoring)
+    last_callback: Arc<Mutex<Instant>>,
+
+    /// Event sender for device events
+    event_tx: Option<AudioEventSender>,
+
+    /// Liveness watchdog thread handle
+    watchdog_handle: Option<JoinHandle<()>>,
+
+    /// Device polling thread handle
+    polling_handle: Option<JoinHandle<()>>,
+
+    /// Shutdown senders for all threads
+    stream_shutdown_tx: Option<mpsc::Sender<()>>,
+    watchdog_shutdown_tx: Option<mpsc::Sender<()>>,
+    polling_shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -88,8 +151,104 @@ impl CoreAudioAdapter {
     pub fn new() -> Self {
         Self {
             is_recording: false,
-            stream_handle: None,
+            device_id: None,
+            stream_thread: None,
+            last_callback: Arc::new(Mutex::new(Instant::now())),
+            event_tx: None,
+            watchdog_handle: None,
+            polling_handle: None,
+            stream_shutdown_tx: None,
+            watchdog_shutdown_tx: None,
+            polling_shutdown_tx: None,
         }
+    }
+
+    /// Set event sender for device monitoring
+    /// Must be called before start_recording to enable monitoring
+    pub fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
+    }
+
+    /// Start liveness watchdog thread (Task 2.5: STT-REQ-004.9)
+    /// Monitors last_callback timestamp and fires Stalled event if threshold exceeded
+    /// Returns shutdown sender for thread coordination
+    fn start_watchdog(&mut self) -> mpsc::Sender<()> {
+        let last_cb = Arc::clone(&self.last_callback);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+        let event_tx = self.event_tx.clone();
+
+        let handle = std::thread::spawn(move || {
+            const CHECK_INTERVAL_MS: u64 = 250;
+            const STALL_THRESHOLD_MS: u128 = 1200;
+
+            loop {
+                // Check for shutdown signal
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_millis(CHECK_INTERVAL_MS));
+
+                let elapsed = last_cb.lock().unwrap().elapsed();
+
+                if elapsed.as_millis() > STALL_THRESHOLD_MS {
+                    if let Some(tx) = &event_tx {
+                        tx.send(AudioDeviceEvent::Stalled {
+                            elapsed_ms: elapsed.as_millis() as u64
+                        }).ok();
+                    }
+                    eprintln!("⚠️ Audio stream stalled: {}ms since last callback", elapsed.as_millis());
+                    break;  // Stop watchdog on stall detection
+                }
+            }
+        });
+
+        self.watchdog_handle = Some(handle);
+        shutdown_tx
+    }
+
+    /// Start device polling thread (Task 2.5: STT-REQ-004.9)
+    /// Periodically checks if device still exists, fires DeviceGone event if not found
+    /// Returns shutdown sender for thread coordination
+    fn start_device_polling(&mut self) -> mpsc::Sender<()> {
+        let device_id = self.device_id.clone().unwrap();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+        let event_tx = self.event_tx.clone();
+
+        let handle = std::thread::spawn(move || {
+            const POLL_INTERVAL_SEC: u64 = 3;
+
+            loop {
+                // Check for shutdown signal
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SEC));
+
+                // Check device existence
+                let host = cpal::default_host();
+                let exists = host.input_devices()
+                    .ok()
+                    .and_then(|mut devices| {
+                        devices.find(|d| d.name().ok().as_ref() == Some(&device_id))
+                    })
+                    .is_some();
+
+                if !exists {
+                    if let Some(tx) = &event_tx {
+                        tx.send(AudioDeviceEvent::DeviceGone {
+                            device_id: device_id.clone()
+                        }).ok();
+                    }
+                    eprintln!("🔌 Device disconnected: {}", device_id);
+                    break;
+                }
+            }
+        });
+
+        self.polling_handle = Some(handle);
+        shutdown_tx
     }
 }
 
@@ -134,14 +293,25 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
             .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
 
         let config = device.default_input_config()?;
-        let _sample_rate = config.sample_rate().0;
-        let _channels = config.channels() as usize;
 
-        // Spawn thread to manage stream
-        let handle = std::thread::spawn(move || {
+        // Liveness tracking (Task 2.5)
+        let last_cb = Arc::clone(&self.last_callback);
+        *last_cb.lock().unwrap() = Instant::now();
+
+        // Error event channel (Task 2.5)
+        let event_tx_clone = self.event_tx.clone();
+
+        // Create shutdown channel for stream thread
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        // Spawn stream thread (Task 2.5: reliable cleanup)
+        let stream_thread = std::thread::spawn(move || {
             let stream = device.build_input_stream(
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // Update liveness timestamp (Task 2.5)
+                    *last_cb.lock().unwrap() = Instant::now();
+
                     // Convert f32 samples to 16kHz mono PCM
                     // For now, just pass through (full resampling in later task)
                     let pcm_data: Vec<u8> = data.iter()
@@ -154,19 +324,35 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 
                     callback(pcm_data);
                 },
-                |err| eprintln!("Audio stream error: {:?}", err),
+                move |err| {
+                    // Send error event (Task 2.5: STT-REQ-004.9)
+                    if let Some(tx) = &event_tx_clone {
+                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err))).ok();
+                    }
+                    eprintln!("❌ Audio stream error: {:?}", err);
+                },
             );
 
             if let Ok(stream) = stream {
                 use cpal::traits::StreamTrait;
                 if stream.play().is_ok() {
-                    // Keep stream alive
-                    std::thread::park();
+                    // Wait for shutdown signal
+                    shutdown_rx.recv().ok();
+                    // Stream will be dropped here (reliable cleanup)
                 }
             }
         });
 
-        self.stream_handle = Some(handle);
+        self.stream_thread = Some(stream_thread);
+        self.stream_shutdown_tx = Some(shutdown_tx);
+
+        // Store device_id for monitoring
+        self.device_id = Some(device_id.to_string());
+
+        // Start watchdog & polling (Task 2.5)
+        self.watchdog_shutdown_tx = Some(self.start_watchdog());
+        self.polling_shutdown_tx = Some(self.start_device_polling());
+
         self.is_recording = true;
         Ok(())
     }
@@ -176,18 +362,64 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
             return Ok(());
         }
 
-        if let Some(handle) = self.stream_handle.take() {
-            handle.thread().unpark();
-            // Don't wait for join in production (could hang)
-            // handle.join().ok();
+        // Signal all threads to stop (Task 2.5: reliable cleanup)
+        if let Some(tx) = self.stream_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
+        if let Some(tx) = self.watchdog_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
+        if let Some(tx) = self.polling_shutdown_tx.take() {
+            tx.send(()).ok();
         }
 
+        // Join stream thread (stream will be dropped)
+        if let Some(handle) = self.stream_thread.take() {
+            handle.join().ok();
+        }
+
+        // Join watchdog thread (Task 2.5)
+        if let Some(handle) = self.watchdog_handle.take() {
+            handle.join().ok();
+        }
+
+        // Join polling thread (Task 2.5)
+        if let Some(handle) = self.polling_handle.take() {
+            handle.join().ok();
+        }
+
+        // Reset state
         self.is_recording = false;
+        self.device_id = None;
+
         Ok(())
     }
 
     fn is_recording(&self) -> bool {
         self.is_recording
+    }
+
+    fn check_permission(&self) -> Result<()> {
+        // On macOS, cpal will trigger the OS permission dialog automatically
+        // when attempting to enumerate devices. We verify permission by attempting
+        // to enumerate devices. If successful, permission is granted.
+        let host = cpal::default_host();
+
+        match host.input_devices() {
+            Ok(mut devices) => {
+                // Try to access at least one device
+                if devices.next().is_some() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                }
+            }
+            Err(e) => {
+                // Device enumeration failed - likely permission denied
+                eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
+                Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+            }
+        }
     }
 }
 
@@ -195,7 +427,15 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 #[cfg(target_os = "windows")]
 pub struct WasapiAdapter {
     is_recording: bool,
-    stream_handle: Option<std::thread::JoinHandle<()>>,
+    device_id: Option<String>,
+    stream_thread: Option<JoinHandle<()>>,
+    last_callback: Arc<Mutex<Instant>>,
+    event_tx: Option<AudioEventSender>,
+    watchdog_handle: Option<JoinHandle<()>>,
+    polling_handle: Option<JoinHandle<()>>,
+    stream_shutdown_tx: Option<mpsc::Sender<()>>,
+    watchdog_shutdown_tx: Option<mpsc::Sender<()>>,
+    polling_shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
 #[cfg(target_os = "windows")]
@@ -203,8 +443,86 @@ impl WasapiAdapter {
     pub fn new() -> Self {
         Self {
             is_recording: false,
-            stream_handle: None,
+            device_id: None,
+            stream_thread: None,
+            last_callback: Arc::new(Mutex::new(Instant::now())),
+            event_tx: None,
+            watchdog_handle: None,
+            polling_handle: None,
+            stream_shutdown_tx: None,
+            watchdog_shutdown_tx: None,
+            polling_shutdown_tx: None,
         }
+    }
+
+    pub fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
+    }
+
+    fn start_watchdog(&mut self) -> mpsc::Sender<()> {
+        let last_cb = Arc::clone(&self.last_callback);
+        let event_tx = self.event_tx.clone();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(250));
+
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                let elapsed = last_cb.lock().unwrap().elapsed();
+                if elapsed > Duration::from_millis(1200) {
+                    if let Some(tx) = &event_tx {
+                        tx.send(AudioDeviceEvent::Stalled {
+                            elapsed_ms: elapsed.as_millis() as u64,
+                        }).ok();
+                    }
+                }
+            }
+        });
+
+        self.watchdog_handle = Some(handle);
+        shutdown_tx
+    }
+
+    fn start_device_polling(&mut self) -> mpsc::Sender<()> {
+        let device_id = self.device_id.clone();
+        let event_tx = self.event_tx.clone();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(3));
+
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                if let Some(ref dev_id) = device_id {
+                    let host = cpal::default_host();
+                    let device_exists = host.input_devices()
+                        .ok()
+                        .and_then(|mut devices| {
+                            devices.find(|d| d.name().ok().as_ref() == Some(&dev_id))
+                        })
+                        .is_some();
+
+                    if !device_exists {
+                        if let Some(tx) = &event_tx {
+                            tx.send(AudioDeviceEvent::DeviceGone {
+                                device_id: dev_id.clone(),
+                            }).ok();
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.polling_handle = Some(handle);
+        shutdown_tx
     }
 }
 
@@ -241,6 +559,8 @@ impl AudioDeviceAdapter for WasapiAdapter {
             return Err(anyhow!("Already recording"));
         }
 
+        self.device_id = Some(device_id.to_string());
+
         let host = cpal::default_host();
 
         let device = host.input_devices()?
@@ -249,10 +569,20 @@ impl AudioDeviceAdapter for WasapiAdapter {
 
         let config = device.default_input_config()?;
 
-        let handle = std::thread::spawn(move || {
+        // Initialize liveness timestamp
+        let last_cb = Arc::clone(&self.last_callback);
+        *last_cb.lock().unwrap() = Instant::now();
+
+        let event_tx_clone = self.event_tx.clone();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let stream_thread = std::thread::spawn(move || {
             let stream = device.build_input_stream(
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // Update liveness timestamp
+                    *last_cb.lock().unwrap() = Instant::now();
+
                     let pcm_data: Vec<u8> = data.iter()
                         .map(|&sample| {
                             let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
@@ -263,18 +593,26 @@ impl AudioDeviceAdapter for WasapiAdapter {
 
                     callback(pcm_data);
                 },
-                |err| eprintln!("Audio stream error: {:?}", err),
+                move |err| {
+                    eprintln!("Audio stream error: {:?}", err);
+                    if let Some(tx) = &event_tx_clone {
+                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err))).ok();
+                    }
+                },
             );
 
             if let Ok(stream) = stream {
                 use cpal::traits::StreamTrait;
                 if stream.play().is_ok() {
-                    std::thread::park();
+                    shutdown_rx.recv().ok();
                 }
             }
         });
 
-        self.stream_handle = Some(handle);
+        self.stream_thread = Some(stream_thread);
+        self.stream_shutdown_tx = Some(shutdown_tx);
+        self.watchdog_shutdown_tx = Some(self.start_watchdog());
+        self.polling_shutdown_tx = Some(self.start_device_polling());
         self.is_recording = true;
         Ok(())
     }
@@ -284,16 +622,43 @@ impl AudioDeviceAdapter for WasapiAdapter {
             return Ok(());
         }
 
-        if let Some(handle) = self.stream_handle.take() {
-            handle.thread().unpark();
-        }
+        // Signal all threads to stop
+        if let Some(tx) = self.stream_shutdown_tx.take() { tx.send(()).ok(); }
+        if let Some(tx) = self.watchdog_shutdown_tx.take() { tx.send(()).ok(); }
+        if let Some(tx) = self.polling_shutdown_tx.take() { tx.send(()).ok(); }
+
+        // Join all threads
+        if let Some(handle) = self.stream_thread.take() { handle.join().ok(); }
+        if let Some(handle) = self.watchdog_handle.take() { handle.join().ok(); }
+        if let Some(handle) = self.polling_handle.take() { handle.join().ok(); }
 
         self.is_recording = false;
+        self.device_id = None;
         Ok(())
     }
 
     fn is_recording(&self) -> bool {
         self.is_recording
+    }
+
+    fn check_permission(&self) -> Result<()> {
+        // On Windows, microphone access is managed through Settings > Privacy > Microphone
+        // WASAPI will automatically handle permission. We verify by attempting device enumeration.
+        let host = cpal::default_host();
+
+        match host.input_devices() {
+            Ok(mut devices) => {
+                if devices.next().is_some() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                }
+            }
+            Err(e) => {
+                eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
+                Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+            }
+        }
     }
 }
 
@@ -301,7 +666,15 @@ impl AudioDeviceAdapter for WasapiAdapter {
 #[cfg(target_os = "linux")]
 pub struct AlsaAdapter {
     is_recording: bool,
-    stream_handle: Option<std::thread::JoinHandle<()>>,
+    device_id: Option<String>,
+    stream_thread: Option<JoinHandle<()>>,
+    last_callback: Arc<Mutex<Instant>>,
+    event_tx: Option<AudioEventSender>,
+    watchdog_handle: Option<JoinHandle<()>>,
+    polling_handle: Option<JoinHandle<()>>,
+    stream_shutdown_tx: Option<mpsc::Sender<()>>,
+    watchdog_shutdown_tx: Option<mpsc::Sender<()>>,
+    polling_shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -309,8 +682,86 @@ impl AlsaAdapter {
     pub fn new() -> Self {
         Self {
             is_recording: false,
-            stream_handle: None,
+            device_id: None,
+            stream_thread: None,
+            last_callback: Arc::new(Mutex::new(Instant::now())),
+            event_tx: None,
+            watchdog_handle: None,
+            polling_handle: None,
+            stream_shutdown_tx: None,
+            watchdog_shutdown_tx: None,
+            polling_shutdown_tx: None,
         }
+    }
+
+    pub fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
+    }
+
+    fn start_watchdog(&mut self) -> mpsc::Sender<()> {
+        let last_cb = Arc::clone(&self.last_callback);
+        let event_tx = self.event_tx.clone();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(250));
+
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                let elapsed = last_cb.lock().unwrap().elapsed();
+                if elapsed > Duration::from_millis(1200) {
+                    if let Some(tx) = &event_tx {
+                        tx.send(AudioDeviceEvent::Stalled {
+                            elapsed_ms: elapsed.as_millis() as u64,
+                        }).ok();
+                    }
+                }
+            }
+        });
+
+        self.watchdog_handle = Some(handle);
+        shutdown_tx
+    }
+
+    fn start_device_polling(&mut self) -> mpsc::Sender<()> {
+        let device_id = self.device_id.clone();
+        let event_tx = self.event_tx.clone();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(3));
+
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                if let Some(ref dev_id) = device_id {
+                    let host = cpal::default_host();
+                    let device_exists = host.input_devices()
+                        .ok()
+                        .and_then(|mut devices| {
+                            devices.find(|d| d.name().ok().as_ref() == Some(&dev_id))
+                        })
+                        .is_some();
+
+                    if !device_exists {
+                        if let Some(tx) = &event_tx {
+                            tx.send(AudioDeviceEvent::DeviceGone {
+                                device_id: dev_id.clone(),
+                            }).ok();
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.polling_handle = Some(handle);
+        shutdown_tx
     }
 }
 
@@ -347,6 +798,8 @@ impl AudioDeviceAdapter for AlsaAdapter {
             return Err(anyhow!("Already recording"));
         }
 
+        self.device_id = Some(device_id.to_string());
+
         let host = cpal::default_host();
 
         let device = host.input_devices()?
@@ -355,10 +808,20 @@ impl AudioDeviceAdapter for AlsaAdapter {
 
         let config = device.default_input_config()?;
 
-        let handle = std::thread::spawn(move || {
+        // Initialize liveness timestamp
+        let last_cb = Arc::clone(&self.last_callback);
+        *last_cb.lock().unwrap() = Instant::now();
+
+        let event_tx_clone = self.event_tx.clone();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let stream_thread = std::thread::spawn(move || {
             let stream = device.build_input_stream(
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // Update liveness timestamp
+                    *last_cb.lock().unwrap() = Instant::now();
+
                     let pcm_data: Vec<u8> = data.iter()
                         .map(|&sample| {
                             let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
@@ -369,18 +832,26 @@ impl AudioDeviceAdapter for AlsaAdapter {
 
                     callback(pcm_data);
                 },
-                |err| eprintln!("Audio stream error: {:?}", err),
+                move |err| {
+                    eprintln!("Audio stream error: {:?}", err);
+                    if let Some(tx) = &event_tx_clone {
+                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err))).ok();
+                    }
+                },
             );
 
             if let Ok(stream) = stream {
                 use cpal::traits::StreamTrait;
                 if stream.play().is_ok() {
-                    std::thread::park();
+                    shutdown_rx.recv().ok();
                 }
             }
         });
 
-        self.stream_handle = Some(handle);
+        self.stream_thread = Some(stream_thread);
+        self.stream_shutdown_tx = Some(shutdown_tx);
+        self.watchdog_shutdown_tx = Some(self.start_watchdog());
+        self.polling_shutdown_tx = Some(self.start_device_polling());
         self.is_recording = true;
         Ok(())
     }
@@ -390,16 +861,43 @@ impl AudioDeviceAdapter for AlsaAdapter {
             return Ok(());
         }
 
-        if let Some(handle) = self.stream_handle.take() {
-            handle.thread().unpark();
-        }
+        // Signal all threads to stop
+        if let Some(tx) = self.stream_shutdown_tx.take() { tx.send(()).ok(); }
+        if let Some(tx) = self.watchdog_shutdown_tx.take() { tx.send(()).ok(); }
+        if let Some(tx) = self.polling_shutdown_tx.take() { tx.send(()).ok(); }
+
+        // Join all threads
+        if let Some(handle) = self.stream_thread.take() { handle.join().ok(); }
+        if let Some(handle) = self.watchdog_handle.take() { handle.join().ok(); }
+        if let Some(handle) = self.polling_handle.take() { handle.join().ok(); }
 
         self.is_recording = false;
+        self.device_id = None;
         Ok(())
     }
 
     fn is_recording(&self) -> bool {
         self.is_recording
+    }
+
+    fn check_permission(&self) -> Result<()> {
+        // On Linux, microphone access is typically managed by PulseAudio/PipeWire
+        // We verify permission by attempting device enumeration
+        let host = cpal::default_host();
+
+        match host.input_devices() {
+            Ok(mut devices) => {
+                if devices.next().is_some() {
+                    Ok(())
+                } else {
+                    Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                }
+            }
+            Err(e) => {
+                eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
+                Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+            }
+        }
     }
 }
 

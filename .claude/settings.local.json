@@ -17,7 +17,11 @@
       "mcp__serena__search_for_pattern",
       "WebSearch",
       "SlashCommand(/kiro:spec-status:*)",
-      "Bash(cargo clean:*)"
+      "Bash(cargo clean:*)",
+      "mcp__serena__list_memories",
+      "mcp__serena__read_memory",
+      "Bash(cargo:*)",
+      "mcp__serena__find_symbol"
     ],
     "deny": [],
     "ask": []

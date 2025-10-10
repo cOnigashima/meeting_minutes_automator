@@ -1,6 +1,6 @@
 ---
-description: Analyze implementation gap between requirements and existing codebase
-allowed-tools: Bash, Glob, Grep, Read, Write, Edit, MultiEdit, WebSearch, WebFetch
+description: Analyze implementation gap between requirements and existing codebase with Serena symbolic code analysis
+allowed-tools: Bash, Glob, Grep, Read, Write, Edit, MultiEdit, WebSearch, WebFetch, mcp__serena__list_dir, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__search_for_pattern
 argument-hint: <feature-name>
 ---
 

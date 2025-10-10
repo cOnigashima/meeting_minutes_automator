@@ -1,16 +1,86 @@
 // Tauri Commands
 // Walking Skeleton (MVP0) - Recording Commands Implementation
+// MVP1 - Audio Device Event Monitoring
 
 use crate::state::AppState;
 use crate::websocket::WebSocketMessage;
 use crate::audio::AudioDevice;
-use tauri::State;
+use crate::audio_device_adapter::AudioDeviceEvent;
+use tauri::{State, Manager, AppHandle, Emitter};
 use std::sync::Arc;
+
+/// Monitor audio device events and notify UI
+/// MVP1 - STT-REQ-004.9/10/11
+async fn monitor_audio_events(app: AppHandle) {
+    let state = app.state::<AppState>();
+
+    // Take the receiver (can only be done once)
+    let rx = match state.take_audio_event_rx() {
+        Some(rx) => rx,
+        None => {
+            eprintln!("[Meeting Minutes] ⚠️ Audio event receiver not available");
+            return;
+        }
+    };
+
+    // Monitor events
+    while let Ok(event) = rx.recv() {
+        match event {
+            AudioDeviceEvent::StreamError(err) => {
+                eprintln!("[Meeting Minutes] ❌ Stream error: {}", err);
+
+                // Emit to frontend
+                if let Err(e) = app.emit("audio-device-error", serde_json::json!({
+                    "type": "stream_error",
+                    "message": format!("音声ストリームエラー: {}", err),
+                })) {
+                    eprintln!("[Meeting Minutes] Failed to emit stream error: {:?}", e);
+                }
+            }
+            AudioDeviceEvent::Stalled { elapsed_ms } => {
+                eprintln!("[Meeting Minutes] ⚠️ Audio device stalled: {} ms", elapsed_ms);
+
+                // Emit to frontend
+                if let Err(e) = app.emit("audio-device-error", serde_json::json!({
+                    "type": "stalled",
+                    "message": "音声デバイスが応答しません",
+                    "elapsed_ms": elapsed_ms,
+                })) {
+                    eprintln!("[Meeting Minutes] Failed to emit stalled event: {:?}", e);
+                }
+            }
+            AudioDeviceEvent::DeviceGone { device_id } => {
+                eprintln!("[Meeting Minutes] ❌ Device disconnected: {}", device_id);
+
+                // Emit to frontend - STT-REQ-004.10
+                if let Err(e) = app.emit("audio-device-error", serde_json::json!({
+                    "type": "device_gone",
+                    "message": "音声デバイスが切断されました",
+                    "device_id": device_id,
+                })) {
+                    eprintln!("[Meeting Minutes] Failed to emit device gone: {:?}", e);
+                }
+
+                // Stop recording automatically
+                // TODO: Implement auto-reconnect (STT-REQ-004.11)
+                {
+                    let state = app.state::<AppState>();
+                    let is_recording = state.is_recording.lock().unwrap();
+                    if *is_recording {
+                        drop(is_recording);
+                        eprintln!("[Meeting Minutes] 🛑 Stopping recording due to device disconnection");
+                        // Note: Actual stop will be triggered by frontend or timeout
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Start recording command
 /// Starts FakeAudioDevice and processes audio data through Python sidecar
 #[tauri::command]
-pub async fn start_recording(state: State<'_, AppState>) -> Result<String, String> {
+pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     // Check if already recording
     {
         let is_recording = state.is_recording.lock().unwrap();
@@ -104,6 +174,13 @@ pub async fn start_recording(state: State<'_, AppState>) -> Result<String, Strin
             }
         });
     }).await.map_err(|e| e.to_string())?;
+
+    // Start monitoring audio device events - MVP1 STT-REQ-004.9/10/11
+    // Note: Event monitoring will start when CoreAudioAdapter is used (not FakeAudioDevice)
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        monitor_audio_events(app_clone).await;
+    });
 
     println!("[Meeting Minutes] ✅ Recording started");
     Ok("Recording started".to_string())

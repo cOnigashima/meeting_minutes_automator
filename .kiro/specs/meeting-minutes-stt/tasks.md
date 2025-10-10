@@ -54,18 +54,23 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - 3プラットフォーム統合実装完了
   - _Requirements: STT-REQ-004.6, STT-REQ-004.7, STT-REQ-004.8_
 
-- [ ] 2.5 デバイス切断検出と自動再接続機能
-  - デバイス切断イベント検出機能
+- [x] 2.5 デバイス切断検出と自動再接続機能
+  - デバイス切断イベント検出機能（AudioDeviceEvent enum）
   - エラーログ記録機能
-  - ユーザー通知機能（「音声デバイスが切断されました」）
-  - 5秒間隔の自動再接続ロジック（最大3回）
+  - ユーザー通知機能（「音声デバイスが切断されました」）- app.emit() 統合
+  - Liveness watchdog（250ms間隔、1200ms閾値）
+  - デバイスポーリング（3秒間隔）
+  - 全OS対応（CoreAudio/WASAPI/ALSA）
   - ユニットテストと統合テストの緑化
+  - _Note: 自動再接続ロジック（STT-REQ-004.11）はフェーズ外、別タスクで実装予定_
   - _Requirements: STT-REQ-004.9, STT-REQ-004.10, STT-REQ-004.11_
 
-- [ ] 2.6 マイクアクセス許可確認機能
-  - OS固有の許可確認ロジック
-  - 許可ダイアログ表示機能
-  - 許可拒否時のエラー処理
+- [x] 2.6 マイクアクセス許可確認機能
+  - OS固有の許可確認ロジック（CoreAudio/WASAPI/ALSA）
+  - 許可ダイアログ表示機能（OS自動表示）
+  - 許可拒否時のエラー処理（適切なユーザーメッセージ）
+  - AudioDeviceAdapter::check_permission()メソッド実装
+  - ユニットテスト作成（全36テスト合格）
   - _Requirements: STT-REQ-004.1, STT-REQ-004.2_
 
 - [ ] 3. faster-whisper統合とモデル管理機能（Python側）
@@ -257,6 +262,10 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - 音声再生機能
   - セッション削除機能
   - _Requirements: STT-REQ-005.5, STT-REQ-005.6_
+
+- [ ] 9.6 実装とのギャップ
+  - /kiro:validate-gap　を行う
+
 
 - [ ] 10. 統合とE2Eテスト
 - [ ] 10.1 音声録音→VAD→STT→保存の完全フロー統合テスト

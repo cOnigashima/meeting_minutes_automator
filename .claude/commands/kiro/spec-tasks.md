@@ -1,6 +1,6 @@
 ---
-description: Generate implementation tasks for a specification
-allowed-tools: Read, Write, Edit, MultiEdit, Glob, Grep
+description: Generate implementation tasks for a specification with Serena symbolic code analysis
+allowed-tools: Read, Write, Edit, MultiEdit, Glob, Grep, mcp__serena__list_dir, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__search_for_pattern
 argument-hint: <feature-name> [-y]
 ---
 

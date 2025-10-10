@@ -451,6 +451,103 @@ flowchart TD
 **信頼性要件**:
 - デバイス切断検出から5秒以内に録音を安全に停止 (STT-NFR-002.2)
 
+#### Task 2.5 実装詳細: イベント駆動デバイス監視アーキテクチャ
+
+**設計判断の背景**:
+
+当初の単純なアプローチ（cpalエラーコールバックのみ）には以下の問題がありました：
+
+1. **StreamError::DeviceNotAvailable依存の危険性**: CoreAudio/PulseAudioは無音になるだけでエラーコールバックを呼ばない場合がある
+2. **Arc<Mutex<bool>>では回復不能**: `std::thread::park()`でブロックされたストリームスレッドは、フラグ変更では終了しない
+3. **トレイトAPI変更の破壊的影響**: 戻り値型変更はMVP0との互換性を失う
+4. **MVP1仕様違反**: ログ出力だけではSTT-REQ-004.10（ユーザー通知）を満たさない
+
+**採用アーキテクチャ: 3層検出メカニズム**
+
+```rust
+// イベント定義
+pub enum AudioDeviceEvent {
+    StreamError(String),           // cpalエラーコールバック
+    Stalled { elapsed_ms: u64 },   // Liveness watchdog検出
+    DeviceGone { device_id: String }, // デバイスポーリング検出
+}
+```
+
+**検出メカニズム詳細**:
+
+1. **Stream Error Callback** (cpalネイティブ)
+   - cpalのエラーコールバックで`StreamError`イベント送信
+   - 即座に検出できる場合に有効
+
+2. **Liveness Watchdog** (250ms間隔チェック)
+   - チェック間隔: 250ms
+   - ストール閾値: 1200ms（最後の音声コールバックからの経過時間）
+   - `last_callback: Arc<Mutex<Instant>>`を監視
+   - 音声コールバックが呼ばれなくなったら`Stalled`イベント送信
+   - **無音になるケースを確実に検出**
+
+3. **Device Polling** (3秒間隔)
+   - ポーリング間隔: 3秒
+   - `cpal::Host::input_devices()`でデバイス存在確認
+   - デバイスが消えたら`DeviceGone`イベント送信
+   - **物理切断を確実に検出**
+
+**信頼性の高いクリーンアップ**:
+
+```rust
+pub struct CoreAudioAdapter {
+    stream_thread: Option<JoinHandle<()>>,      // ストリームスレッド
+    watchdog_handle: Option<JoinHandle<()>>,    // Watchdogスレッド
+    polling_handle: Option<JoinHandle<()>>,     // ポーリングスレッド
+
+    stream_shutdown_tx: Option<mpsc::Sender<()>>,   // 各スレッド用
+    watchdog_shutdown_tx: Option<mpsc::Sender<()>>, // shutdownチャネル
+    polling_shutdown_tx: Option<mpsc::Sender<()>>,
+
+    last_callback: Arc<Mutex<Instant>>,  // Liveness監視用
+    event_tx: Option<AudioEventSender>,  // イベント送信用
+}
+```
+
+**重要なポイント**:
+- **Streamはスレッドローカルに保持**: `Arc<Mutex<Stream>>`によるSync制約を回避
+- **3つの独立したshutdownチャネル**: 各スレッドを確実に終了
+- **std::thread::park()を使わない**: `shutdown_rx.recv()`でブロック、確実にクリーンアップ
+
+**Tauri UI統合**:
+
+```rust
+// commands.rs
+async fn monitor_audio_events(app: AppHandle) {
+    let rx = state.take_audio_event_rx().unwrap();
+
+    while let Ok(event) = rx.recv() {
+        match event {
+            AudioDeviceEvent::DeviceGone { device_id } => {
+                app.emit("audio-device-error", json!({
+                    "type": "device_gone",
+                    "message": "音声デバイスが切断されました",
+                })).ok();
+            }
+            // ... other events
+        }
+    }
+}
+```
+
+**クロスプラットフォーム一貫性**:
+- CoreAudioAdapter (macOS)
+- WasapiAdapter (Windows)
+- AlsaAdapter (Linux)
+
+すべて同じイベント駆動パターンを採用。
+
+**Phase外として延期**:
+- **STT-REQ-004.11（自動再接続ロジック）**: 現在の実装はイベント検出・通知基盤のみ提供
+- 5秒タイマー、最大3回リトライは将来のタスクで実装予定
+
+**参照**: `serena/memories/task_2_5_device_monitoring_design.md`
+
 ---
 
 ## Components and Interfaces
