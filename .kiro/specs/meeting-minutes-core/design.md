@@ -1382,61 +1382,69 @@ class FakeProcessor:
 
 ### Chrome Extension Layer
 
-#### Service Worker
+> **Note**: ADR-004により、Content Script方式を正式採用。Service Workerは軽量メッセージリレーのみ担当。
+> 詳細: `.kiro/specs/meeting-minutes-core/adrs/ADR-004-chrome-extension-websocket-management.md`
+
+#### Content Script
 
 **Responsibility & Boundaries**:
-- **Primary Responsibility**: WebSocket接続確立・維持、メッセージ受信・Content Scriptへの転送
-- **Domain Boundary**: Chrome拡張バックグラウンド処理層
-- **Data Ownership**: WebSocket接続状態、最終受信メッセージID
-- **Transaction Boundary**: メッセージ受信からContent Script転送までのアトミック性保証
+- **Primary Responsibility**: WebSocket接続確立・維持、メッセージ受信・表示
+- **Domain Boundary**: Chrome拡張コンテンツスクリプト層（Google Meetページ内で動作）
+- **Data Ownership**: WebSocket接続状態、最終成功ポート番号（chrome.storage.local経由）
+- **Transaction Boundary**: WebSocketメッセージ受信から表示までのアトミック性保証
 
 **Dependencies**:
-- **Inbound**: Tauri WebSocketServer
-- **Outbound**: Content Script
-- **External**: Chrome Extension API (chrome.storage.local, chrome.runtime)
+- **Inbound**: Tauri WebSocketServer（直接接続）
+- **Outbound**: Browser Console、chrome.storage.local
+- **External**: Chrome Extension API (chrome.storage, chrome.runtime)
 
 **Contract Definition**:
 
 ```typescript
-// Service Worker WebSocketクライアント
+// Content Script WebSocketクライアント（実装済み）
 class WebSocketClient {
   private ws: WebSocket | null = null;
   private reconnectAttempts: number = 0;
+  private portRange = { start: 9001, end: 9100 };
+  private currentPort: number = this.portRange.start;
 
   async connect(): Promise<void> {
-    // ポート9001-9100を順次試行
-    for (let port = 9001; port <= 9100; port++) {
-      try {
-        this.ws = new WebSocket(`ws://localhost:${port}`);
-        await this.waitForConnection();
-        break;
-      } catch (error) {
-        // 次のポートを試行
-      }
+    // chrome.storage.localから最後の成功ポートを復元
+    const stored = await chrome.storage.local.get(['lastPort']);
+    if (stored.lastPort) {
+      this.currentPort = stored.lastPort;
     }
+
+    // ポート9001-9100を順次試行（ポートスキャン）
+    await this.tryConnect(this.currentPort);
   }
 
-  private async waitForConnection(): Promise<void> {
-    // 接続確立待機（1秒タイムアウト）
-  }
+  async tryConnect(port: number): Promise<void> {
+    const url = `ws://127.0.0.1:${port}`;
+    this.ws = new WebSocket(url);
 
-  onMessage(handler: (message: WebSocketMessage) => void): void {
-    this.ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      handler(message);
+    // 1秒タイムアウトで次のポートへ
+    const timeout = setTimeout(() => {
+      if (this.ws.readyState !== WebSocket.OPEN) {
+        this.ws.close();
+        this.tryNextPort();
+      }
+    }, 1000);
+
+    this.ws.onopen = () => {
+      clearTimeout(timeout);
+      this.connected = true;
+      this.reconnectAttempts = 0;
+      // 成功ポートを記録
+      chrome.storage.local.set({ lastPort: port });
     };
   }
 
   // 再接続シーケンス（Requirement 7.4準拠）
   async reconnect(): Promise<void> {
-    const backoffDelays = [0, 1000, 2000, 4000, 8000];  // 0秒、1秒、2秒、4秒、8秒
+    const backoffDelays = [1000, 2000, 4000, 8000, 16000];  // エクスポネンシャルバックオフ
     if (this.reconnectAttempts >= 5) {
-      // 5回連続失敗で接続失敗通知
-      chrome.notifications.create({
-        type: 'basic',
-        title: '接続エラー',
-        message: 'Tauriアプリへの接続に失敗しました。'
-      });
+      console.error('[Meeting Minutes] Connection failed after 5 attempts');
       return;
     }
     await new Promise(resolve => setTimeout(resolve, backoffDelays[this.reconnectAttempts]));
@@ -1452,31 +1460,43 @@ class WebSocketClient {
 
 ---
 
-#### Content Script
+#### Service Worker
 
 **Responsibility & Boundaries**:
-- **Primary Responsibility**: Service Workerから受信したメッセージをコンソールに表示
-- **Domain Boundary**: Chrome拡張コンテンツスクリプト層
-- **Data Ownership**: なし（表示のみ）
+- **Primary Responsibility**: 軽量メッセージリレー、拡張機能のライフサイクル管理
+- **Domain Boundary**: Chrome拡張バックグラウンド処理層（MV3制約により30秒で終了）
+- **Data Ownership**: なし（ステートレス）
 - **Transaction Boundary**: なし
 
 **Dependencies**:
-- **Inbound**: Service Worker
-- **Outbound**: Browser Console
-- **External**: console API
+- **Inbound**: Content Script（将来的な拡張用）
+- **Outbound**: Content Script（将来的な拡張用）
+- **External**: Chrome Extension API (chrome.runtime)
 
 **Contract Definition**:
 
 ```typescript
-// Content Script メッセージハンドラ
-chrome.runtime.onMessage.addListener((message: WebSocketMessage) => {
-  if (message.msg_type === 'Transcription') {
-    console.log(`Transcription: ${message.payload.text}`);
+// Service Worker: 軽量メッセージリレーのみ（実装済み）
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    console.log('[Meeting Minutes] First install - ready to use on Google Meet');
   }
+});
+
+// 将来的なメッセージリレー用（現在は使用されていない）
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  switch (message.action) {
+    case 'ping':
+      sendResponse({ status: 'pong' });
+      break;
+    default:
+      sendResponse({ status: 'unknown' });
+  }
+  return true; // Keep channel open for async response
 });
 ```
 
-- **Preconditions**: Service Workerが起動済み
+- **Preconditions**: Chrome 116以降、Manifest V3準拠
 - **Postconditions**: メッセージ受信後、コンソールに表示
 - **Invariants**: なし（ステートレス）
 

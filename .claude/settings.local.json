@@ -15,7 +15,8 @@
       "mcp__serena__think_about_collected_information",
       "Bash(node:*)",
       "mcp__serena__search_for_pattern",
-      "WebSearch"
+      "WebSearch",
+      "SlashCommand(/kiro:spec-status:*)"
     ],
     "deny": [],
     "ask": []

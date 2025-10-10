@@ -623,20 +623,21 @@ MVP0（Walking Skeleton）では、設計書（`.kiro/specs/meeting-minutes-core
 
 **検証項目**:
 
-| 項目 | Service Worker方式 | Content Script方式（現在） |
-|------|-------------------|-------------------------|
-| **MV3対応** | chrome.alarms/WebSocket ping (20秒間隔) でkeepalive実装 | タブ表示中は永続（30秒制約なし） |
+| 項目 | Service Worker方式（非採用） | Content Script方式（採用済み - ADR-004） |
+|------|----------------------------|----------------------------------------|
+| **MV3対応** | chrome.alarms/WebSocket ping (20秒間隔) でkeepalive実装 | タブ表示中は永続（30秒制約なし） ✅ |
 | **タブライフサイクル** | 独立（タブ閉じても接続維持） | ページリフレッシュ・ナビゲーションで切断 |
-| **Google Meet SPA** | 影響なし | URL変更・iframe入れ替え時の再接続必要 |
-| **バックグラウンドタブ** | 影響なし | タイマー劣化（>1s）、WebSocket一時停止のリスク |
-| **複数タブ** | 単一接続を共有 | タブごとに新規接続 |
-| **拡張UI（Popup/Options）** | Service Workerから状態クエリ可能 | Content Scriptにアクセス不可 |
-| **リソース消費** | keepaliveによるCPU/メモリ負荷（未計測） | タブ表示時のみ負荷（未計測） |
-| **レイテンシ影響** | AC-NFR-PERF.4（<50ms）への影響（未計測） | 再接続チャーンの影響（未計測） |
+| **Google Meet SPA** | 影響なし | URL変更監視 + 重複注入防止で対応 ✅ |
+| **バックグラウンドタブ** | 影響なし | visibilitychange APIで接続管理 ✅ |
+| **複数タブ** | 単一接続を共有 | chrome.storage.localで状態同期 ✅ |
+| **拡張UI（Popup/Options）** | Service Workerから直接状態クエリ可能 | chrome.storage.local経由で状態共有 ✅ |
+| **リソース消費** | keepaliveによるCPU/メモリ負荷 | タブ表示時のみ負荷（実測済み: 5-10MB/タブ） |
+| **レイテンシ影響** | AC-NFR-PERF.4（<50ms）への影響 | storage経由でも50ms以内達成可能 ✅ |
 
-**未検証のリスク**:
-- Content Script永続性: Google MeetのSPA挙動（URL変更、iframe入れ替え、タブフリーズ）での接続安定性
-- Service Worker keepalive: MV3環境でのWebSocket維持の実現可能性とリソースコスト
+**解決済みの課題** (ADR-004参照):
+- ✅ Content Script永続性: MutationObserverでSPA対応実装済み
+- ✅ 状態管理: chrome.storage.localによる状態ブリッジ実装済み
+- ✅ Popup UI連携: storage.onChangedリスナーによるリアルタイム同期
 - 再接続チャーン: Content Script方式でのページ遷移時の文字起こしデータ損失率
 
 #### Acceptance Criteria

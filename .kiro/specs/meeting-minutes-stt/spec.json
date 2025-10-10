@@ -27,8 +27,12 @@
       "blocking_phase": "design",
       "resolution_required": "Service Worker vs Content Script方式の実装検証・決定（STT-REQ-EXT-001）",
       "reference": "requirements.md#stt-req-ext-001, docs/mvp0-known-issues.md#ask-10",
-      "status": "open",
+      "status": "resolved",
       "created_at": "2025-10-06",
+      "resolved_at": "2025-10-10",
+      "resolution_adopted": "content_script_adoption",
+      "resolution_rationale": "MVP0実装で検証済み、WebSocket接続の安定性とMV3制約回避を重視。詳細はADR-004参照。",
+      "resolution_reference": ".kiro/specs/meeting-minutes-core/adrs/ADR-004-chrome-extension-websocket-management.md",
       "resolution_actions": {
         "service_worker_adoption": {
           "design_updates": [
@@ -56,7 +60,7 @@
           ]
         }
       },
-      "post_resolution_action": "検証完了後、採用方式に応じて /kiro:spec-design meeting-minutes-stt を再実行し、設計書の整合性を確保すること"
+      "post_resolution_action": "設計書の整合性確認済み。meeting-minutes-stt のタスク生成が可能。"
     }
   ]
 }

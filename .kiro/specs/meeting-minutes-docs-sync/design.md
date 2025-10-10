@@ -1622,6 +1622,246 @@ type QueueItem = {
 
 ---
 
+### State Management Architecture
+
+#### 統合状態スキーマ (ADR-005準拠)
+
+本機能は、`.kiro/specs/meeting-minutes-core/adrs/ADR-005-state-management-mechanism.md`で定義された統合状態管理アーキテクチャに準拠します。
+
+```typescript
+// DocsExtensionState: ADR-005のExtensionStateを継承
+interface DocsExtensionState extends ExtensionState {
+  // === Core States (継承) ===
+  connection: {
+    connected: boolean;
+    port: number | null;
+    lastConnectedAt: number;
+    reconnectCount: number;
+  };
+
+  recording: {
+    isActive: boolean;
+    startedAt: number | null;
+    tabId: string | null;
+    meetingId: string | null;
+  };
+
+  transcription: {
+    lastSegment: string | null;
+    totalSegments: number;
+    language: string;
+    confidence: number;
+  };
+
+  error: {
+    hasError: boolean;
+    message: string | null;
+    code: string | null;
+    timestamp: number | null;
+  };
+
+  // === Docs Sync Specific States ===
+  docsSync: {
+    // Authentication & document
+    authenticated: boolean;
+    documentId: string | null;
+    documentTitle: string | null;
+
+    // Sync status
+    syncStatus: 'idle' | 'syncing' | 'offline' | 'error';
+    lastSyncAt: number;
+    syncErrorMessage: string | null;
+
+    // Offline queue
+    offlineQueue: {
+      segments: TranscriptSegment[];
+      sizeBytes: number;
+      maxSizeBytes: number; // 5MB default
+      oldestSegmentAt: number;
+    };
+
+    // Named range tracking
+    namedRanges: {
+      transcriptCursor: string | null;
+      summarySection: string | null;
+      lastUpdatedAt: number;
+    };
+  };
+
+  // OAuth token management
+  auth: {
+    accessToken: string | null;
+    refreshToken: string | null;
+    expiresAt: number;
+    scope: string[];
+    isRefreshing: boolean;
+  };
+}
+```
+
+#### Popup UI データフロー
+
+```mermaid
+sequenceDiagram
+    participant CS as Content Script
+    participant Storage as chrome.storage.local
+    participant SW as Service Worker<br/>(State Bridge)
+    participant Popup as Popup UI
+
+    Note over CS,Popup: 状態更新フロー
+    CS->>Storage: updateState(docsSync)
+    Storage-->>SW: onChanged event
+    Storage-->>Popup: onChanged event
+    Popup->>Popup: UI更新
+
+    Note over CS,Popup: コマンド実行フロー
+    Popup->>SW: sendMessage(command)
+    SW->>CS: relay command
+    CS->>Storage: updateState(result)
+    Storage-->>Popup: onChanged event
+```
+
+#### 状態管理レイヤーの責務
+
+| Layer | Component | 責務 | 状態の読み書き |
+|-------|-----------|------|--------------|
+| **Writer** | Content Script | WebSocket状態、録音状態 | Write Only |
+| **Writer** | AuthManager | OAuth認証状態、トークン | Write Only |
+| **Writer** | SyncManager | 同期状態、オフラインキュー | Write Only |
+| **Reader** | Popup UI | 全状態の表示 | Read Only |
+| **Bridge** | Service Worker | コマンドリレー、状態集約 | Read/Write |
+| **Storage** | chrome.storage.local | 永続化層 | - |
+
+#### パフォーマンス考慮事項
+
+> **重要**: chrome.storage.localはドット記法による部分更新をサポートしません。
+> 必ずトップレベルのキー単位でオブジェクト全体を更新してください。
+
+```javascript
+// 正しい実装パターン
+class DocsSyncStateManager {
+  // 同期状態の更新（オブジェクト全体を更新）
+  static async updateSyncStatus(status: 'idle' | 'syncing' | 'offline' | 'error') {
+    // 1. 既存の状態を取得
+    const { docsSync = {} } = await chrome.storage.local.get(['docsSync']);
+
+    // 2. イミュータブルに更新
+    const updated = {
+      ...docsSync,
+      syncStatus: status,
+      lastSyncAt: Date.now()
+    };
+
+    // 3. オブジェクト全体を保存
+    await chrome.storage.local.set({ docsSync: updated });
+  }
+
+  // オフラインキューへの追加
+  static async updateOfflineQueue(segment: TranscriptSegment) {
+    // 既存の docsSync 状態全体を取得
+    const { docsSync = {} } = await chrome.storage.local.get(['docsSync']);
+
+    const queue = docsSync.offlineQueue || {
+      segments: [],
+      sizeBytes: 0,
+      maxSizeBytes: 5 * 1024 * 1024,
+      oldestSegmentAt: null
+    };
+
+    const segmentSize = JSON.stringify(segment).length;
+
+    // サイズチェック
+    if (queue.sizeBytes + segmentSize > queue.maxSizeBytes) {
+      throw new Error('OFFLINE_QUEUE_FULL');
+    }
+
+    // イミュータブルに更新
+    const updatedQueue = {
+      segments: [...queue.segments, segment],
+      sizeBytes: queue.sizeBytes + segmentSize,
+      maxSizeBytes: queue.maxSizeBytes,
+      oldestSegmentAt: queue.oldestSegmentAt || Date.now()
+    };
+
+    // docsSync 全体を更新
+    const updatedDocsSync = {
+      ...docsSync,
+      offlineQueue: updatedQueue
+    };
+
+    await chrome.storage.local.set({ docsSync: updatedDocsSync });
+  }
+
+  // 複数プロパティの一括更新
+  static async batchUpdate(updates: Partial<DocsSyncState>) {
+    const { docsSync = {} } = await chrome.storage.local.get(['docsSync']);
+    const updated = { ...docsSync, ...updates };
+    await chrome.storage.local.set({ docsSync: updated });
+  }
+}
+```
+
+#### イベント通知パターン
+
+```javascript
+// Popup UIでの状態監視
+class PopupStateObserver {
+  constructor() {
+    this.subscribeToStateChanges();
+  }
+
+  subscribeToStateChanges() {
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace !== 'local') return;
+
+      // docsSyncオブジェクト全体の変更を検知
+      if (changes['docsSync']) {
+        const docsSync = changes['docsSync'].newValue;
+        if (!docsSync) return;
+
+        // 同期状態の更新
+        if (docsSync.syncStatus) {
+          this.updateSyncStatusUI(docsSync.syncStatus);
+        }
+
+        // オフラインキューの更新
+        if (docsSync.offlineQueue) {
+          const queue = docsSync.offlineQueue;
+          this.updateQueueStatusUI(queue);
+
+          // 容量警告
+          const usagePercent = (queue.sizeBytes / queue.maxSizeBytes) * 100;
+          if (usagePercent > 80) {
+            this.showWarning(`オフラインキューが${Math.floor(usagePercent)}%に達しています`);
+          }
+        }
+      }
+
+      // authオブジェクトの変更を検知
+      if (changes['auth']) {
+        const auth = changes['auth'].newValue;
+        if (auth) {
+          this.updateAuthStatusUI(auth.accessToken !== null);
+        }
+      }
+    });
+  }
+
+  async getCurrentState() {
+    // 初期状態の取得
+    const state = await chrome.storage.local.get([
+      'connection',
+      'recording',
+      'docsSync',
+      'auth'
+    ]);
+    return state as DocsExtensionState;
+  }
+}
+```
+
+---
+
 ### Physical Data Model
 
 #### Chrome Storage (`chrome.storage.local`)

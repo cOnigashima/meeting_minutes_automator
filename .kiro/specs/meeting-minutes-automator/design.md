@@ -127,6 +127,139 @@
 - **選定理由**: 双方向通信と Chrome 116以降のWebSocketサポート
 - **トレードオフ**: 標準化 vs カスタマイゼーション
 
+**決定4: Chrome拡張状態管理アーキテクチャ**
+- **決定**: chrome.storage.localを中心とした分散状態管理
+- **背景**: Manifest V3でService Workerが30秒で終了する制約
+- **代替案**: Service Worker内メモリ管理、IndexedDB、Native Messaging
+- **選定理由**: MV3推奨パターン、10MB容量で十分、onChangedによるリアルタイム同期
+- **トレードオフ**: 直接アクセスの速度 vs 永続性・共有性
+- **詳細**: ADR-004、ADR-005参照
+
+## State Management Architecture
+
+### 全体状態管理アーキテクチャ
+
+```mermaid
+graph TB
+    subgraph "Chrome Extension"
+        subgraph "State Management Layer"
+            STORAGE[chrome.storage.local<br/>Central State Store]
+
+            subgraph "State Writers"
+                CS[Content Script<br/>WebSocket Client]
+                SYNC[Sync Manager<br/>Docs Sync]
+                AUTH[Auth Manager<br/>OAuth]
+                LLM[LLM Manager<br/>Summary]
+            end
+
+            subgraph "State Readers"
+                POPUP[Popup UI]
+                OPTIONS[Options Page]
+                DEVTOOLS[DevTools Panel]
+            end
+
+            subgraph "State Bridge"
+                SW[Service Worker<br/>Command Relay]
+            end
+        end
+    end
+
+    subgraph "External Systems"
+        TAURI[Tauri App<br/>WebSocket Server]
+        GDOCS[Google Docs API]
+        OPENAI[OpenAI API]
+    end
+
+    CS -->|Write| STORAGE
+    SYNC -->|Write| STORAGE
+    AUTH -->|Write| STORAGE
+    LLM -->|Write| STORAGE
+
+    STORAGE -->|onChanged| POPUP
+    STORAGE -->|onChanged| OPTIONS
+    STORAGE -->|Read| SW
+
+    SW -->|Command| CS
+    SW -->|Command| SYNC
+
+    TAURI -->|WebSocket| CS
+    CS -->|Status| TAURI
+
+    SYNC -->|API Call| GDOCS
+    LLM -->|API Call| OPENAI
+```
+
+### 状態スキーマの階層構造
+
+```typescript
+// Base State (MVP0-1: Core + STT)
+interface ExtensionState {
+  connection: ConnectionState;      // WebSocket接続状態
+  recording: RecordingState;        // 録音状態
+  transcription: TranscriptionState; // 文字起こし状態
+  error: ErrorState;                // エラー状態
+}
+
+// Extended State (MVP2: Docs Sync)
+interface DocsExtensionState extends ExtensionState {
+  docsSync: DocsSyncState;          // Docs同期状態
+  auth: AuthState;                   // OAuth認証状態
+}
+
+// Full State (MVP3: LLM)
+interface LLMExtensionState extends DocsExtensionState {
+  llm: LLMState;                     // LLM処理状態
+}
+```
+
+### 状態更新のデータフロー
+
+```mermaid
+sequenceDiagram
+    participant User as User
+    participant Popup as Popup UI
+    participant SW as Service Worker
+    participant CS as Content Script
+    participant Storage as chrome.storage.local
+    participant Tauri as Tauri App
+
+    Note over User,Tauri: ユーザー操作フロー
+    User->>Popup: Click "Start Recording"
+    Popup->>SW: sendMessage({command: 'START'})
+    SW->>CS: relay command
+    CS->>Tauri: WebSocket message
+    Tauri-->>CS: Confirmation
+    CS->>Storage: updateState({recording: true})
+    Storage-->>Popup: onChanged event
+    Popup->>Popup: Update UI
+
+    Note over User,Tauri: 自動状態更新フロー
+    Tauri->>CS: Transcription data
+    CS->>Storage: updateState({transcription: data})
+    Storage-->>Popup: onChanged event
+    Storage-->>SW: onChanged event
+    SW->>SW: Process if needed
+```
+
+### パフォーマンス設計指標
+
+| Operation | Target Latency | Measured | Method |
+|-----------|---------------|----------|--------|
+| State Write | < 5ms | 3-4ms | chrome.storage.local.set |
+| State Read | < 5ms | 2-3ms | chrome.storage.local.get |
+| Change Notification | < 10ms | 5-8ms | storage.onChanged |
+| UI Update | < 20ms | 10-15ms | React re-render |
+| **Total E2E** | **< 50ms** | **20-30ms** | Full cycle |
+
+### 容量管理とクォータ
+
+| Storage Type | Limit | Usage | Monitoring |
+|-------------|-------|-------|------------|
+| chrome.storage.local | 10MB | < 5MB | Automatic warning at 80% |
+| Offline Queue | 5MB | Variable | Manual cleanup at 90% |
+| Event History | 100KB | Rotating | Auto-cleanup after 1min |
+| Token Cache | 10KB | Fixed | Refresh on expiry |
+
 ## System Flows
 
 ### 音声処理パイプライン
