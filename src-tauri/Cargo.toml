@@ -33,5 +33,6 @@ http = "1.3.1"
 
 # Audio device management (MVP1 - Real STT)
 # Cross-platform audio input/output for macOS, Windows, Linux
-cpal = "0.15"
+# Using 0.13.5 to avoid coreaudio-sys 0.2.17 edition2024 issue
+cpal = "0.13.5"
 

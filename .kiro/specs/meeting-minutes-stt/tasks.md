@@ -23,7 +23,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: 全要件, STT-REQ-LOG-001_
 
 - [ ] 2. 実音声デバイス管理機能の実装（Rust側）
-- [ ] 2.1 AudioDeviceAdapter trait とOS別実装のスケルトン作成
+- [x] 2.1 AudioDeviceAdapter trait とOS別実装のスケルトン作成
   - 失敗するユニットテストを作成（デバイス列挙、録音開始/停止）
   - AudioDeviceAdapter traitの定義
   - WasapiAdapter（Windows）、CoreAudioAdapter（macOS）、AlsaAdapter（Linux）の空実装

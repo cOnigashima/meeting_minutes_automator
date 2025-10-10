@@ -16,7 +16,8 @@
       "Bash(node:*)",
       "mcp__serena__search_for_pattern",
       "WebSearch",
-      "SlashCommand(/kiro:spec-status:*)"
+      "SlashCommand(/kiro:spec-status:*)",
+      "Bash(cargo clean:*)"
     ],
     "deny": [],
     "ask": []

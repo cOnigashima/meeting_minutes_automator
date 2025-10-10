@@ -1,7 +1,9 @@
 // Meeting Minutes Automator - Main Library
 // Walking Skeleton (MVP0) - WebSocket Server Integration
+// MVP1 - Real STT Implementation
 
 pub mod audio;
+pub mod audio_device_adapter;
 pub mod python_sidecar;
 pub mod websocket;
 pub mod commands;
