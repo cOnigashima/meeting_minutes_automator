@@ -10,11 +10,20 @@
 meeting-minutes-automator/
 ├── .kiro/                           # ✅ Kiro仕様駆動開発ディレクトリ
 │   ├── steering/                    # ✅ プロジェクトガイダンス文書（4ファイル）
-│   ├── specs/                       # ✅ 機能仕様書（umbrella + 4 sub-specs）
+│   ├── specs/                       # ✅ 機能仕様書（umbrella + 5 sub-specs）
+│   │   ├── meeting-minutes-automator/   # Umbrella spec
+│   │   ├── meeting-minutes-core/        # MVP0 (Walking Skeleton) ✅
+│   │   ├── meeting-minutes-stt/         # MVP1 (Real STT)
+│   │   ├── meeting-minutes-docs-sync/   # MVP2 (Google Docs Sync)
+│   │   ├── meeting-minutes-ci/          # Infrastructure (CI/CD) ✅
+│   │   └── meeting-minutes-llm/         # MVP3 (LLM Summary)
 │   └── research/                    # ✅ 技術調査資料
 ├── docs/                            # ✅ プロジェクトドキュメント
 │   ├── uml/                         # ✅ PlantUMLアーキテクチャ図
 │   └── dev/                         # ✅ 開発ガイドライン
+│       ├── coding-standards.md      # ✅ コーディング規約
+│       ├── spec-authoring.md        # ✅ 仕様作成ガイド
+│       └── chrome-storage-best-practices.md  # ✅ Chrome Storage API使い方
 ├── scripts/                         # ✅ 開発・ビルドスクリプト
 │   └── check_forbidden_imports.py   # ✅ 静的解析スクリプト
 ├── .pre-commit-config.yaml          # ✅ Pre-commitフック設定
@@ -51,18 +60,21 @@ meeting-minutes-automator/
    - 4つのsteering documents作成完了
 
 2. **Phase 2: Specification** ✅ 完了
-   - meeting-minutes-core (MVP0): Implementation Ready ✅
+   - meeting-minutes-core (MVP0): Implementation Complete ✅
    - meeting-minutes-stt (MVP1): Design Validated（Tasks生成待ち）
    - meeting-minutes-docs-sync (MVP2): Design Generated（検証待ち）
+   - meeting-minutes-ci (Infrastructure): Spec Initialized ✅
 
-3. **Phase 3: Implementation** 🔵 進行中（2025-10-05開始）
-   - Walking Skeleton実装（MVP0）開始
-   - Task 1.1完了: プロジェクト基盤セットアップ ✅
-     - Tauri 2.0プロジェクト初期化完了
-     - React + TypeScriptフロントエンド構築完了
-     - Pythonサイドカー構造作成完了
-     - Chrome拡張構造作成完了
-   - Task 1.2: スケルトン構造作成（次のステップ）
+3. **Phase 3: Implementation** ✅ MVP0完了（2025-10-10）
+   - Walking Skeleton実装（MVP0）完了 ✅
+   - E2Eフロー検証完了 ✅
+   - 主要ADR作成完了:
+     - ADR-004: Chrome拡張WebSocket管理（Content Script方式）
+     - ADR-005: chrome.storage.local状態管理メカニズム
+   - ドキュメント整備:
+     - chrome-storage-best-practices.md 作成
+     - mvp0-known-issues.md 作成
+   - 次のステップ: MVP1 (Real STT) タスク生成
 
 **参照**:
 - プロジェクト開発ガイドライン: [docs/dev/coding-standards.md](../docs/dev/coding-standards.md)

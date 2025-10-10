@@ -1,12 +1,20 @@
 # Meeting Minutes Automator - Python Production Dependencies
-# Walking Skeleton (MVP0)
+# MVP1: Real STT Implementation
 
 # Note: asyncio and queue are Python 3.9+ standard library, intentionally excluded
 # to prevent PyPI package override
 
-# Production dependencies will be added in subsequent tasks:
-# - faster-whisper (Task 2: Real STT implementation)
-# - webrtcvad (Task 2: Voice Activity Detection)
-# - etc.
+# STT Engine (MVP1)
+faster-whisper>=0.10.0
+
+# Voice Activity Detection (MVP1)
+webrtcvad>=2.0.0
+
+# Audio Processing (MVP1)
+numpy>=1.24.0
+
+# Note: sounddevice, pyaudio, soundfile are PROHIBITED by ADR-001
+# Audio recording is handled exclusively by Rust AudioDeviceAdapter
+# Static analysis (check_forbidden_imports.py) enforces this policy
 
 # For development dependencies, see requirements-dev.txt

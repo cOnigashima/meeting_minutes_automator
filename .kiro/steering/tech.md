@@ -69,8 +69,21 @@
 
 **Frontend Framework**: React + TypeScript
 - **Popup**: 拡張のメインUI
-- **Content Script**: Google Docsページ操作
-- **Service Worker**: バックグラウンド処理とWebSocket管理
+- **Content Script**: Google Docsページ操作 + **WebSocket管理**（ADR-004採用）
+- **Service Worker**: バックグラウンド処理とコマンド中継
+
+**アーキテクチャ決定**:
+- **[ADR-004: Chrome Extension WebSocket Management](../.kiro/specs/meeting-minutes-core/adrs/ADR-004-chrome-extension-websocket-management.md)**
+  - **決定**: Content ScriptでWebSocket接続を管理（Service Worker方式を却下）
+  - **理由**: MV3のService Worker 30秒制限回避、タブ単位の状態管理、接続永続性
+  - **影響**: WebSocketクライアントはContent Scriptに実装、状態はchrome.storage.localで共有
+
+**状態管理メカニズム**:
+- **[ADR-005: State Management Mechanism](../.kiro/specs/meeting-minutes-core/adrs/ADR-005-state-management-mechanism.md)**
+  - **決定**: chrome.storage.localを中心とした3層状態管理（Presentation / Bridge / Persistence）
+  - **重要**: ドット記法による部分更新は不可能 → オブジェクト全体を更新
+  - **パターン**: イミュータブル更新（既存取得→スプレッド演算子→全体保存）
+  - **参照**: [chrome-storage-best-practices.md](../../docs/dev/chrome-storage-best-practices.md)
 
 ## Backend
 
@@ -473,19 +486,32 @@ git commit -m "message"  # pre-commitフックが自動起動
 
 本プロジェクトでは、重要な技術的意思決定をADR（Architecture Decision Record）として文書化しています。
 
-**作成済みADR**（meeting-minutes-stt spec）:
+**作成済みADR**:
 
-- **[ADR-001: Recording Responsibility](.kiro/specs/meeting-minutes-stt/adrs/ADR-001-recording-responsibility.md)**
+**meeting-minutes-core (MVP0)**:
+- **[ADR-004: Chrome Extension WebSocket Management](../.kiro/specs/meeting-minutes-core/adrs/ADR-004-chrome-extension-websocket-management.md)**
+  - **決定**: Content ScriptでWebSocket接続を管理（Service Worker方式を却下）
+  - **理由**: Manifest V3のService Worker 30秒タイムアウト制限回避、タブ単位の状態管理、接続永続性
+  - **影響**: WebSocketクライアントはContent Scriptに実装、状態共有はchrome.storage.local経由
+
+- **[ADR-005: State Management Mechanism](../.kiro/specs/meeting-minutes-core/adrs/ADR-005-state-management-mechanism.md)**
+  - **決定**: chrome.storage.localを中心とした3層状態管理（Presentation / Bridge / Persistence）
+  - **理由**: Popup UIとContent Script間の疎結合、複数タブ状態の一元管理
+  - **重要**: ドット記法は使用不可（`'docsSync.syncStatus'`は文字列キーになる）→オブジェクト全体更新
+  - **影響**: イミュータブル更新パターンの採用、[chrome-storage-best-practices.md](../../docs/dev/chrome-storage-best-practices.md)の作成
+
+**meeting-minutes-stt (MVP1)**:
+- **[ADR-001: Recording Responsibility](../.kiro/specs/meeting-minutes-stt/adrs/ADR-001-recording-responsibility.md)**
   - **決定**: 音声録音はRust側`AudioDeviceAdapter`のみが担当し、Pythonサイドカーは録音を行わない
   - **理由**: レース条件防止、リソース競合回避、プロセス境界の明確化
   - **影響**: Python `requirements.txt`から`sounddevice`/`pyaudio`を削除、静的解析で使用を禁止
 
-- **[ADR-002: Model Distribution Strategy](.kiro/specs/meeting-minutes-stt/adrs/ADR-002-model-distribution-strategy.md)**
+- **[ADR-002: Model Distribution Strategy](../.kiro/specs/meeting-minutes-stt/adrs/ADR-002-model-distribution-strategy.md)**
   - **決定**: ハイブリッド配布戦略（初回起動時にオンデマンドダウンロード + システム共有パス利用）
   - **理由**: インストーラサイズ削減（1.5GB→50MB）、複数バージョン共存、ユーザー選択の自由度
   - **影響**: `~/.cache/meeting-minutes/models/`に共有保存、初回起動時にネットワーク必要
 
-- **[ADR-003: IPC Versioning](.kiro/specs/meeting-minutes-stt/adrs/ADR-003-ipc-versioning.md)**
+- **[ADR-003: IPC Versioning](../.kiro/specs/meeting-minutes-stt/adrs/ADR-003-ipc-versioning.md)**
   - **決定**: セマンティックバージョニング + 後方互換性保証（マイナーバージョンアップは互換性維持）
   - **理由**: Rust/Pythonの独立更新を可能にし、段階的なロールアウトを実現
   - **影響**: メッセージにバージョンフィールド追加、バージョン不一致時のエラーハンドリング実装

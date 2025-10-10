@@ -118,36 +118,40 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 
 ## Current Implementation Status
 
-**開発フェーズ**: 実装フェーズ開始（Implementation Phase - 2025-10-05〜）
+**開発フェーズ**: MVP0完了、MVP1準備中（2025-10-10更新）
 
-本プロジェクトは、Kiro仕様駆動開発手法に基づき、**実装フェーズ（Phase 3）**に入りました。meeting-minutes-core (MVP0 - Walking Skeleton) の Task 1.1（プロジェクト基盤セットアップ）が完了し、コードベースの構築が開始されています。
+本プロジェクトは、Kiro仕様駆動開発手法に基づき、**MVP0（Walking Skeleton）が完成**しました。3プロセス間（Tauri + Python + Chrome拡張）のE2E疎通確認が完了し、後続MVP（STT、Docs同期、LLM要約）の実装基盤が確立されました。
 
 ### Sub-Specifications Progress
 
-#### 📦 meeting-minutes-core (MVP0 - Walking Skeleton) 🔵 実装中
+#### 📦 meeting-minutes-core (MVP0 - Walking Skeleton) ✅ 完成
 - **目的**: Tauri + Python + Chrome拡張の最小疎通確認（Fake実装）
-- **フェーズ**: Implementation In Progress 🔵
-- **ステータス**: Task 1.1完了、Task 1.2準備中
+- **フェーズ**: Implementation Complete ✅
+- **完了日**: 2025-10-10
 - **完了した実装**:
-  - ✅ Task 1.1: プロジェクト基盤セットアップ（2025-10-05完了）
-    - Tauri 2.0プロジェクト初期化（React + TypeScript）
-    - Pythonプロジェクト構造作成（`python-stt/`）
-    - Chrome拡張プロジェクト構造作成（`chrome-extension/`）
-    - ビルド動作確認（cargo build成功: 55秒）
-- **主要成果**:
-  - 3プロセス間IPC通信プロトコルの確定
-  - WebSocket message type設計（Tagged Union）
-  - E2Eテスト自動化戦略の策定
+  - ✅ 3プロセスアーキテクチャE2E疎通確認（録音→処理→配信→表示）
+  - ✅ Fake音声録音（100ms間隔でダミーデータ生成）
+  - ✅ Pythonサイドカープロセス管理（起動/終了/ヘルスチェック）
+  - ✅ JSON IPC通信（Rust ↔ Python）
+  - ✅ WebSocketサーバー（Rust ↔ Chrome拡張）
+  - ✅ Chrome拡張スケルトン（Google Meetページで動作）
+- **主要ADR**:
+  - ADR-004: Chrome拡張WebSocket管理（Content Script方式採用）
+  - ADR-005: chrome.storage.local状態管理メカニズム
+- **ドキュメント**:
+  - chrome-storage-best-practices.md
+  - mvp0-known-issues.md
 
 #### 🎤 meeting-minutes-stt (MVP1 - Real STT)
 - **目的**: faster-whisper統合、webrtcvad統合、音声デバイス管理
 - **フェーズ**: Design Validated ✅
-- **ステータス**: 設計検証完了、タスク生成待ち（MVP0完了後）
+- **ステータス**: 設計検証完了、タスク生成準備中（MVP0完了）
 - **主要成果**:
   - ADR-001: 録音責務の一元化（Rust側のみ）
   - ADR-002: ハイブリッドモデル配布戦略
   - ADR-003: IPCバージョニング方針
   - Pre-commit hooks + 静的解析基盤の整備
+- **次のステップ**: `/kiro:spec-tasks meeting-minutes-stt` でタスク生成
 
 #### 📄 meeting-minutes-docs-sync (MVP2 - Google Docs Sync)
 - **目的**: OAuth 2.0認証、Google Docs API統合、Named Range管理
@@ -157,6 +161,16 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
   - MV3 Service Worker対応設計（chrome.alarms + Offscreen Document）
   - Optimistic Locking戦略（writeControl.requiredRevisionId）
   - Token Bucket RateLimiter設計
+  - ADR-004/005: Chrome拡張アーキテクチャ基盤（MVP0で完成）
+
+#### 🔧 meeting-minutes-ci (Infrastructure - CI/CD)
+- **目的**: GitHub Actions CI/CD、クロスプラットフォームテスト、自動リリース
+- **フェーズ**: Spec Initialized ✅
+- **ステータス**: 要件定義完了、設計待ち
+- **主要成果**:
+  - クロスプラットフォームテストマトリックス設計
+  - コスト最適化戦略（平行度制御、キャッシュ）
+  - セキュリティ/パフォーマンステスト基盤
 
 #### 🤖 meeting-minutes-llm (MVP3 - LLM Summary + Production UI)
 - **目的**: プロダクション準備、UI/UX完成度向上
@@ -165,17 +179,24 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 
 ### Implementation Progress
 
-現在のプロジェクト状態（2025-10-05更新）:
-- ✅ **Steering Documents**: 製品方針、技術スタック、構造、設計原則が確定
-- ✅ **Architecture**: 3プロセスアーキテクチャとIPC通信プロトコル策定完了
-- ✅ **Quality Infrastructure**: CI/CD基盤（pre-commit hooks、静的解析）整備済み
-- ✅ **Design Validation**: 主要な技術的課題（録音責務、モデル配布、IPC等）のADR作成完了
-- ✅ **Codebase Foundation**: プロジェクト基盤セットアップ完了
-  - `src-tauri/`, `src/`, `chrome-extension/`, `python-stt/` 作成済み
-  - 依存関係ファイル（Cargo.toml, package.json, requirements.txt）配置完了
-  - ビルド設定（tauri.conf.json, vite.config.ts）構成完了
+現在のプロジェクト状態（2025-10-10更新）:
+- ✅ **MVP0 Walking Skeleton**: E2E疎通確認完了
+  - 3プロセス間通信（Tauri ↔ Python ↔ Chrome拡張）動作確認
+  - Fake音声録音・処理・配信フロー検証
+  - WebSocket通信とchrome.storage.local状態管理実装
+- ✅ **Architecture Decision Records**: 主要技術決定を文書化
+  - ADR-001〜003（MVP1: STT関連）
+  - ADR-004〜005（MVP0: Chrome拡張アーキテクチャ）
+- ✅ **Development Infrastructure**: 開発基盤整備完了
+  - Pre-commit hooks + 静的解析（forbidden imports check）
+  - ドキュメント整備（chrome-storage-best-practices.md等）
+  - CI/CD spec初期化（meeting-minutes-ci）
+- ✅ **Quality Foundation**: コーディング規約とテスト基準確立
+  - Rust: `cargo clippy -D warnings`
+  - Python: `mypy --strict`
+  - TypeScript: `eslint`
 
-**次のステップ**: Task 1.2で全コンポーネントの空実装（スケルトン）を作成
+**次のステップ**: `/kiro:spec-tasks meeting-minutes-stt` でMVP1タスク生成
 
 ---
 

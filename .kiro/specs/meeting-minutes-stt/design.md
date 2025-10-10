@@ -110,8 +110,8 @@ meeting-minutes-coreのWalking Skeletonアーキテクチャを継承し、Fake�
 │         Chrome Extension (Manifest V3)                  │
 │  ┌───────────────┐      ┌────────────────┐            │
 │  │ Content Script│      │ Service Worker │            │
-│  │ (WebSocket    │──────│ (State Bridge) │            │
-│  │  Client)      │      │                │            │
+│  │ (WebSocket管理)│─────│ (メッセージ中継)│            │
+│  │ (chrome.storage)│    │                │            │
 │  └───────────────┘      └────────────────┘            │
 │       ↓                          ↓                      │
 │  ┌──────────────────────────────────────┐              │
@@ -126,9 +126,11 @@ meeting-minutes-coreのWalking Skeletonアーキテクチャを継承し、Fake�
 - `FakeProcessor` → `VoiceActivityDetector` + `WhisperSTTEngine` (実音声処理)
 - IPC通信プロトコルは維持 (後方互換性保証)
 - WebSocketメッセージフォーマットを拡張 (confidence, language等の追加フィールド)
-- **Chrome拡張アーキテクチャ**: Content ScriptがWebSocket管理を担当（ADR-004準拠）
-  - chrome.storage.local経由でPopup UI・複数タブ間の状態共有
-  - Service Workerは状態ブリッジとして機能
+- **Chrome拡張アーキテクチャ**: Content ScriptがWebSocket管理を担当（**ADR-004採用**）
+  - **WebSocket接続の永続化**: タブ存続期間中はContent Scriptが接続を維持（MV3の30秒制限回避）
+  - **状態共有**: chrome.storage.local経由でPopup UI・複数タブ間の状態を同期（ADR-005パターン）
+  - **Service Workerの役割**: 軽量メッセージ中継のみ（録音開始/停止コマンドのルーティング）
+  - **参照**: `.kiro/specs/meeting-minutes-core/adrs/ADR-004-chrome-extension-websocket-management.md`、`.kiro/specs/meeting-minutes-core/adrs/ADR-005-state-management-mechanism.md`
 
 ### Technology Stack and Design Decisions
 
