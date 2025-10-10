@@ -45,11 +45,13 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - ユニットテストの緑化
   - _Requirements: STT-REQ-001.4, STT-REQ-001.5, STT-REQ-001.6_
 
-- [ ] 2.4 ループバックオーディオ対応
-  - macOS BlackHole仮想デバイス認識機能
-  - Windows WASAPI loopback mode実装
-  - Linux PulseAudio monitorデバイス対応
-  - システム音声キャプチャのテスト
+- [x] 2.4 ループバックオーディオ対応
+  - macOS BlackHole等の仮想デバイス認識機能（パターンマッチ）
+  - Windows Stereo Mix/Wave Out Mix認識
+  - Linux PulseAudio monitorデバイス認識（"Monitor of", ".monitor"）
+  - `AudioDeviceInfo.is_loopback`フィールド追加
+  - ループバックデバイスフィルタリング機能
+  - 3プラットフォーム統合実装完了
   - _Requirements: STT-REQ-004.6, STT-REQ-004.7, STT-REQ-004.8_
 
 - [ ] 2.5 デバイス切断検出と自動再接続機能

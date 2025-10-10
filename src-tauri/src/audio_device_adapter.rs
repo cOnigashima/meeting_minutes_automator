@@ -26,11 +26,28 @@ pub struct AudioDeviceInfo {
     pub sample_rate: u32,
     /// Number of channels (1 = mono, 2 = stereo)
     pub channels: u16,
+    /// Whether this is a loopback/virtual device
+    /// Requirement: STT-REQ-004.6, STT-REQ-004.7, STT-REQ-004.8
+    pub is_loopback: bool,
 }
 
 /// Audio chunk callback type
 /// Receives Vec<u8> containing 16kHz mono PCM audio data (320 samples = 20ms)
 pub type AudioChunkCallback = Box<dyn Fn(Vec<u8>) + Send + Sync>;
+
+/// Check if a device name indicates a loopback/virtual audio device
+/// Requirement: STT-REQ-004.6, STT-REQ-004.7, STT-REQ-004.8
+fn is_loopback_device(name: &str) -> bool {
+    // macOS: BlackHole, Loopback Audio, etc.
+    // Windows: WASAPI loopback devices (detected by name patterns)
+    // Linux: PulseAudio monitor devices
+    name.contains("BlackHole") ||
+    name.contains("Loopback") ||
+    name.contains("Monitor of") ||
+    name.contains(".monitor") ||
+    name.contains("Stereo Mix") ||  // Windows legacy
+    name.contains("Wave Out Mix")    // Windows legacy
+}
 
 /// Audio device adapter trait for real audio recording
 /// Requirement: STT-REQ-001.1, STT-REQ-001.2, STT-REQ-001.4, STT-REQ-001.5
@@ -88,9 +105,10 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 
             devices.push(AudioDeviceInfo {
                 id: name.clone(), // Use name as ID for now
-                name,
+                name: name.clone(),
                 sample_rate: default_config.sample_rate().0,
                 channels: default_config.channels(),
+                is_loopback: is_loopback_device(&name),
             });
         }
 
@@ -202,9 +220,10 @@ impl AudioDeviceAdapter for WasapiAdapter {
 
             devices.push(AudioDeviceInfo {
                 id: name.clone(),
-                name,
+                name: name.clone(),
                 sample_rate: default_config.sample_rate().0,
                 channels: default_config.channels(),
+                is_loopback: is_loopback_device(&name),
             });
         }
 
@@ -307,9 +326,10 @@ impl AudioDeviceAdapter for AlsaAdapter {
 
             devices.push(AudioDeviceInfo {
                 id: name.clone(),
-                name,
+                name: name.clone(),
                 sample_rate: default_config.sample_rate().0,
                 channels: default_config.channels(),
+                is_loopback: is_loopback_device(&name),
             });
         }
 
@@ -431,6 +451,36 @@ mod tests {
                         name: "Test Microphone".to_string(),
                         sample_rate: 16000,
                         channels: 1,
+                        is_loopback: false,
+                    },
+                ],
+            }
+        }
+
+        fn new_with_loopback() -> Self {
+            Self {
+                is_recording: false,
+                devices: vec![
+                    AudioDeviceInfo {
+                        id: "device-1".to_string(),
+                        name: "Test Microphone".to_string(),
+                        sample_rate: 16000,
+                        channels: 1,
+                        is_loopback: false,
+                    },
+                    AudioDeviceInfo {
+                        id: "device-2".to_string(),
+                        name: "BlackHole 2ch".to_string(),
+                        sample_rate: 48000,
+                        channels: 2,
+                        is_loopback: true,
+                    },
+                    AudioDeviceInfo {
+                        id: "device-3".to_string(),
+                        name: "Monitor of Built-in Audio".to_string(),
+                        sample_rate: 44100,
+                        channels: 2,
+                        is_loopback: true,
                     },
                 ],
             }
@@ -472,6 +522,7 @@ mod tests {
         assert_eq!(devices[0].name, "Test Microphone");
         assert_eq!(devices[0].sample_rate, 16000);
         assert_eq!(devices[0].channels, 1);
+        assert!(!devices[0].is_loopback);
     }
 
     #[test]
@@ -577,5 +628,60 @@ mod tests {
         // Stop recording
         adapter.stop_recording().unwrap();
         assert!(!adapter.is_recording());
+    }
+
+    #[test]
+    fn test_is_loopback_device_detection() {
+        // macOS devices
+        assert!(is_loopback_device("BlackHole 2ch"));
+        assert!(is_loopback_device("BlackHole 16ch"));
+        assert!(is_loopback_device("Loopback Audio"));
+
+        // Linux PulseAudio monitor devices
+        assert!(is_loopback_device("Monitor of Built-in Audio"));
+        assert!(is_loopback_device("alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"));
+
+        // Windows Stereo Mix
+        assert!(is_loopback_device("Stereo Mix"));
+        assert!(is_loopback_device("Wave Out Mix"));
+
+        // Regular microphones (should be false)
+        assert!(!is_loopback_device("Built-in Microphone"));
+        assert!(!is_loopback_device("USB Audio Device"));
+        assert!(!is_loopback_device("Blue Yeti"));
+    }
+
+    #[test]
+    fn test_enumerate_includes_loopback_devices() {
+        let adapter = MockAudioAdapter::new_with_loopback();
+        let devices = adapter.enumerate_devices().unwrap();
+
+        assert_eq!(devices.len(), 3);
+
+        // Regular microphone
+        assert_eq!(devices[0].name, "Test Microphone");
+        assert!(!devices[0].is_loopback);
+
+        // BlackHole
+        assert_eq!(devices[1].name, "BlackHole 2ch");
+        assert!(devices[1].is_loopback);
+
+        // PulseAudio monitor
+        assert_eq!(devices[2].name, "Monitor of Built-in Audio");
+        assert!(devices[2].is_loopback);
+    }
+
+    #[test]
+    fn test_filter_loopback_devices() {
+        let adapter = MockAudioAdapter::new_with_loopback();
+        let devices = adapter.enumerate_devices().unwrap();
+
+        let loopback_devices: Vec<_> = devices.iter()
+            .filter(|d| d.is_loopback)
+            .collect();
+
+        assert_eq!(loopback_devices.len(), 2);
+        assert_eq!(loopback_devices[0].name, "BlackHole 2ch");
+        assert_eq!(loopback_devices[1].name, "Monitor of Built-in Audio");
     }
 }
