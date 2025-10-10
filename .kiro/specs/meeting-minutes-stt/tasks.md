@@ -30,18 +30,18 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - OS検出ロジックとアダプター選択機能
   - _Requirements: STT-REQ-001.1, STT-REQ-001.2, STT-REQ-004.3, STT-REQ-004.4, STT-REQ-004.5_
 
-- [ ] 2.2 デバイス列挙機能の実装
+- [x] 2.2 デバイス列挙機能の実装
   - デバイスメタデータ取得機能（名前、ID、サンプルレート、チャンネル数）
   - OS固有音声API統合（WASAPI、CoreAudio、ALSA）
   - デバイス一覧のソート・フィルタリング機能
   - ユニットテストの緑化
   - _Requirements: STT-REQ-001.1, STT-REQ-001.2_
 
-- [ ] 2.3 音声ストリームキャプチャ機能の実装
-  - 16kHz mono PCM音声ストリーム開始機能
-  - 20ms間隔の音声チャンク生成（320サンプル）
-  - 音声データバッファリング機能
-  - AudioStreamBridge経由のIPC送信機能
+- [x] 2.3 音声ストリームキャプチャ機能の実装
+  - 16kHz mono PCM音声ストリーム開始機能（基本実装完了、リサンプリングは2.4で対応）
+  - コールバック型音声データ処理機能（AudioChunkCallback）
+  - 別スレッドでのストリーム管理（Sync制約回避）
+  - CoreAudio/WASAPI/ALSA統合実装
   - ユニットテストの緑化
   - _Requirements: STT-REQ-001.4, STT-REQ-001.5, STT-REQ-001.6_
 

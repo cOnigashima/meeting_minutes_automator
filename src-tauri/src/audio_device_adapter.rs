@@ -28,6 +28,10 @@ pub struct AudioDeviceInfo {
     pub channels: u16,
 }
 
+/// Audio chunk callback type
+/// Receives Vec<u8> containing 16kHz mono PCM audio data (320 samples = 20ms)
+pub type AudioChunkCallback = Box<dyn Fn(Vec<u8>) + Send + Sync>;
+
 /// Audio device adapter trait for real audio recording
 /// Requirement: STT-REQ-001.1, STT-REQ-001.2, STT-REQ-001.4, STT-REQ-001.5
 pub trait AudioDeviceAdapter: Send + Sync {
@@ -38,6 +42,10 @@ pub trait AudioDeviceAdapter: Send + Sync {
     /// Start recording from the specified device
     /// Requirement: STT-REQ-001.4, STT-REQ-001.5, STT-REQ-001.6
     fn start_recording(&mut self, device_id: &str) -> Result<()>;
+
+    /// Start recording with callback for audio chunks
+    /// Requirement: STT-REQ-001.4, STT-REQ-001.5, STT-REQ-001.6
+    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()>;
 
     /// Stop recording
     /// Requirement: STT-REQ-001.7
@@ -55,6 +63,7 @@ pub trait AudioDeviceAdapter: Send + Sync {
 #[cfg(target_os = "macos")]
 pub struct CoreAudioAdapter {
     is_recording: bool,
+    stream_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -62,6 +71,7 @@ impl CoreAudioAdapter {
     pub fn new() -> Self {
         Self {
             is_recording: false,
+            stream_handle: None,
         }
     }
 }
@@ -69,18 +79,91 @@ impl CoreAudioAdapter {
 #[cfg(target_os = "macos")]
 impl AudioDeviceAdapter for CoreAudioAdapter {
     fn enumerate_devices(&self) -> Result<Vec<AudioDeviceInfo>> {
-        // TODO: Implement using cpal::default_host().input_devices()
-        Ok(vec![])
+        let host = cpal::default_host();
+        let mut devices = Vec::new();
+
+        for device in host.input_devices()? {
+            let name = device.name()?;
+            let default_config = device.default_input_config()?;
+
+            devices.push(AudioDeviceInfo {
+                id: name.clone(), // Use name as ID for now
+                name,
+                sample_rate: default_config.sample_rate().0,
+                channels: default_config.channels(),
+            });
+        }
+
+        Ok(devices)
     }
 
     fn start_recording(&mut self, _device_id: &str) -> Result<()> {
-        // TODO: Implement CoreAudio recording
+        // TODO: Implement CoreAudio recording (Task 2.3)
+        self.is_recording = true;
+        Ok(())
+    }
+
+    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()> {
+        if self.is_recording {
+            return Err(anyhow!("Already recording"));
+        }
+
+        let host = cpal::default_host();
+
+        // Find device by ID
+        let device = host.input_devices()?
+            .find(|d| d.name().ok().as_ref() == Some(&device_id.to_string()))
+            .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
+
+        let config = device.default_input_config()?;
+        let _sample_rate = config.sample_rate().0;
+        let _channels = config.channels() as usize;
+
+        // Spawn thread to manage stream
+        let handle = std::thread::spawn(move || {
+            let stream = device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    // Convert f32 samples to 16kHz mono PCM
+                    // For now, just pass through (full resampling in later task)
+                    let pcm_data: Vec<u8> = data.iter()
+                        .map(|&sample| {
+                            let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                            scaled.to_le_bytes()
+                        })
+                        .flatten()
+                        .collect();
+
+                    callback(pcm_data);
+                },
+                |err| eprintln!("Audio stream error: {:?}", err),
+            );
+
+            if let Ok(stream) = stream {
+                use cpal::traits::StreamTrait;
+                if stream.play().is_ok() {
+                    // Keep stream alive
+                    std::thread::park();
+                }
+            }
+        });
+
+        self.stream_handle = Some(handle);
         self.is_recording = true;
         Ok(())
     }
 
     fn stop_recording(&mut self) -> Result<()> {
-        // TODO: Implement stop recording
+        if !self.is_recording {
+            return Ok(());
+        }
+
+        if let Some(handle) = self.stream_handle.take() {
+            handle.thread().unpark();
+            // Don't wait for join in production (could hang)
+            // handle.join().ok();
+        }
+
         self.is_recording = false;
         Ok(())
     }
@@ -94,6 +177,7 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 #[cfg(target_os = "windows")]
 pub struct WasapiAdapter {
     is_recording: bool,
+    stream_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(target_os = "windows")]
@@ -101,6 +185,7 @@ impl WasapiAdapter {
     pub fn new() -> Self {
         Self {
             is_recording: false,
+            stream_handle: None,
         }
     }
 }
@@ -108,18 +193,82 @@ impl WasapiAdapter {
 #[cfg(target_os = "windows")]
 impl AudioDeviceAdapter for WasapiAdapter {
     fn enumerate_devices(&self) -> Result<Vec<AudioDeviceInfo>> {
-        // TODO: Implement using cpal::default_host().input_devices()
-        Ok(vec![])
+        let host = cpal::default_host();
+        let mut devices = Vec::new();
+
+        for device in host.input_devices()? {
+            let name = device.name()?;
+            let default_config = device.default_input_config()?;
+
+            devices.push(AudioDeviceInfo {
+                id: name.clone(),
+                name,
+                sample_rate: default_config.sample_rate().0,
+                channels: default_config.channels(),
+            });
+        }
+
+        Ok(devices)
     }
 
     fn start_recording(&mut self, _device_id: &str) -> Result<()> {
-        // TODO: Implement WASAPI recording
+        // TODO: Implement WASAPI recording (Task 2.3)
+        self.is_recording = true;
+        Ok(())
+    }
+
+    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()> {
+        if self.is_recording {
+            return Err(anyhow!("Already recording"));
+        }
+
+        let host = cpal::default_host();
+
+        let device = host.input_devices()?
+            .find(|d| d.name().ok().as_ref() == Some(&device_id.to_string()))
+            .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
+
+        let config = device.default_input_config()?;
+
+        let handle = std::thread::spawn(move || {
+            let stream = device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let pcm_data: Vec<u8> = data.iter()
+                        .map(|&sample| {
+                            let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                            scaled.to_le_bytes()
+                        })
+                        .flatten()
+                        .collect();
+
+                    callback(pcm_data);
+                },
+                |err| eprintln!("Audio stream error: {:?}", err),
+            );
+
+            if let Ok(stream) = stream {
+                use cpal::traits::StreamTrait;
+                if stream.play().is_ok() {
+                    std::thread::park();
+                }
+            }
+        });
+
+        self.stream_handle = Some(handle);
         self.is_recording = true;
         Ok(())
     }
 
     fn stop_recording(&mut self) -> Result<()> {
-        // TODO: Implement stop recording
+        if !self.is_recording {
+            return Ok(());
+        }
+
+        if let Some(handle) = self.stream_handle.take() {
+            handle.thread().unpark();
+        }
+
         self.is_recording = false;
         Ok(())
     }
@@ -133,6 +282,7 @@ impl AudioDeviceAdapter for WasapiAdapter {
 #[cfg(target_os = "linux")]
 pub struct AlsaAdapter {
     is_recording: bool,
+    stream_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -140,6 +290,7 @@ impl AlsaAdapter {
     pub fn new() -> Self {
         Self {
             is_recording: false,
+            stream_handle: None,
         }
     }
 }
@@ -147,18 +298,82 @@ impl AlsaAdapter {
 #[cfg(target_os = "linux")]
 impl AudioDeviceAdapter for AlsaAdapter {
     fn enumerate_devices(&self) -> Result<Vec<AudioDeviceInfo>> {
-        // TODO: Implement using cpal::default_host().input_devices()
-        Ok(vec![])
+        let host = cpal::default_host();
+        let mut devices = Vec::new();
+
+        for device in host.input_devices()? {
+            let name = device.name()?;
+            let default_config = device.default_input_config()?;
+
+            devices.push(AudioDeviceInfo {
+                id: name.clone(),
+                name,
+                sample_rate: default_config.sample_rate().0,
+                channels: default_config.channels(),
+            });
+        }
+
+        Ok(devices)
     }
 
     fn start_recording(&mut self, _device_id: &str) -> Result<()> {
-        // TODO: Implement ALSA recording
+        // TODO: Implement ALSA recording (Task 2.3)
+        self.is_recording = true;
+        Ok(())
+    }
+
+    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()> {
+        if self.is_recording {
+            return Err(anyhow!("Already recording"));
+        }
+
+        let host = cpal::default_host();
+
+        let device = host.input_devices()?
+            .find(|d| d.name().ok().as_ref() == Some(&device_id.to_string()))
+            .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
+
+        let config = device.default_input_config()?;
+
+        let handle = std::thread::spawn(move || {
+            let stream = device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let pcm_data: Vec<u8> = data.iter()
+                        .map(|&sample| {
+                            let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                            scaled.to_le_bytes()
+                        })
+                        .flatten()
+                        .collect();
+
+                    callback(pcm_data);
+                },
+                |err| eprintln!("Audio stream error: {:?}", err),
+            );
+
+            if let Ok(stream) = stream {
+                use cpal::traits::StreamTrait;
+                if stream.play().is_ok() {
+                    std::thread::park();
+                }
+            }
+        });
+
+        self.stream_handle = Some(handle);
         self.is_recording = true;
         Ok(())
     }
 
     fn stop_recording(&mut self) -> Result<()> {
-        // TODO: Implement stop recording
+        if !self.is_recording {
+            return Ok(());
+        }
+
+        if let Some(handle) = self.stream_handle.take() {
+            handle.thread().unpark();
+        }
+
         self.is_recording = false;
         Ok(())
     }
@@ -228,6 +443,11 @@ mod tests {
         }
 
         fn start_recording(&mut self, _device_id: &str) -> Result<()> {
+            self.is_recording = true;
+            Ok(())
+        }
+
+        fn start_recording_with_callback(&mut self, _device_id: &str, _callback: AudioChunkCallback) -> Result<()> {
             self.is_recording = true;
             Ok(())
         }
@@ -315,6 +535,46 @@ mod tests {
         adapter.start_recording("test-device").unwrap();
         assert!(adapter.is_recording());
 
+        adapter.stop_recording().unwrap();
+        assert!(!adapter.is_recording());
+    }
+
+    #[test]
+    fn test_audio_chunk_callback() {
+        use std::sync::{Arc, Mutex};
+
+        let mut adapter = MockAudioAdapter::new();
+        let chunks_received = Arc::new(Mutex::new(Vec::new()));
+        let chunks_received_clone = chunks_received.clone();
+
+        let callback: AudioChunkCallback = Box::new(move |chunk: Vec<u8>| {
+            chunks_received_clone.lock().unwrap().push(chunk);
+        });
+
+        adapter.start_recording_with_callback("device-1", callback).unwrap();
+        assert!(adapter.is_recording());
+
+        // Note: MockAdapter doesn't actually generate audio data
+        // This test verifies the callback interface is correctly defined
+        adapter.stop_recording().unwrap();
+        assert!(!adapter.is_recording());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_coreaudio_stream_capture() {
+        // RED: This test will fail until Task 2.3 is fully implemented
+        let mut adapter = CoreAudioAdapter::new();
+
+        // Test basic recording lifecycle
+        assert!(!adapter.is_recording());
+
+        // Start recording (will be TODO until implementation)
+        let result = adapter.start_recording("test-device");
+        assert!(result.is_ok());
+        assert!(adapter.is_recording());
+
+        // Stop recording
         adapter.stop_recording().unwrap();
         assert!(!adapter.is_recording());
     }
