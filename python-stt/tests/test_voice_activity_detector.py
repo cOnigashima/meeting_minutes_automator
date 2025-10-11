@@ -179,5 +179,272 @@ class TestVADIntegration:
             assert result is False
 
 
+class TestSpeechOnsetDetection:
+    """Test speech onset detection (STT-REQ-003.4)."""
+
+    def test_detect_speech_onset_after_300ms(self):
+        """WHEN speech frames are detected for 0.3 seconds (30 frames)
+        THEN should trigger speech onset event."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            # Mock is_speech to always return True (speech detected)
+            mock_vad_instance.is_speech.return_value = True
+
+            detector = VoiceActivityDetector()
+
+            # Process 30 speech frames (0.3 seconds)
+            frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+
+            speech_started = False
+            for i in range(30):
+                result = detector.process_frame(frame)
+                if result and result.get('event') == 'speech_start':
+                    speech_started = True
+                    break
+
+            assert speech_started is True
+
+    def test_no_speech_onset_before_300ms(self):
+        """WHEN speech frames are detected for less than 0.3 seconds
+        THEN should NOT trigger speech onset event."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            mock_vad_instance.is_speech.return_value = True
+
+            detector = VoiceActivityDetector()
+
+            # Process only 29 speech frames (less than 0.3 seconds)
+            frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+
+            speech_started = False
+            for i in range(29):
+                result = detector.process_frame(frame)
+                if result and result.get('event') == 'speech_start':
+                    speech_started = True
+                    break
+
+            assert speech_started is False
+
+    def test_speech_onset_reset_on_silence(self):
+        """WHEN speech is interrupted by silence before 0.3 seconds
+        THEN should reset speech onset counter."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            detector = VoiceActivityDetector()
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            # Process 20 speech frames
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(20):
+                detector.process_frame(speech_frame)
+
+            # Insert silence frame (should reset counter)
+            mock_vad_instance.is_speech.return_value = False
+            detector.process_frame(silence_frame)
+
+            # Process 29 more speech frames (total would be 49, but reset happened)
+            mock_vad_instance.is_speech.return_value = True
+            speech_started = False
+            for i in range(29):
+                result = detector.process_frame(speech_frame)
+                if result and result.get('event') == 'speech_start':
+                    speech_started = True
+                    break
+
+            # Should NOT trigger because counter was reset
+            assert speech_started is False
+
+
+class TestSpeechOffsetDetection:
+    """Test speech offset detection (STT-REQ-003.5)."""
+
+    def test_detect_speech_offset_after_500ms_silence(self):
+        """WHEN silence frames are detected for 0.5 seconds (50 frames) after speech
+        THEN should trigger speech offset event and finalize segment."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            detector = VoiceActivityDetector()
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            # First, trigger speech onset (30 speech frames)
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(30):
+                detector.process_frame(speech_frame)
+
+            # Then, detect silence for 0.5 seconds (50 frames)
+            mock_vad_instance.is_speech.return_value = False
+            speech_ended = False
+            for i in range(50):
+                result = detector.process_frame(silence_frame)
+                if result and result.get('event') == 'speech_end':
+                    speech_ended = True
+                    assert 'segment' in result
+                    break
+
+            assert speech_ended is True
+
+    def test_no_speech_offset_before_500ms_silence(self):
+        """WHEN silence frames are detected for less than 0.5 seconds
+        THEN should NOT trigger speech offset event."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            detector = VoiceActivityDetector()
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            # Trigger speech onset
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(30):
+                detector.process_frame(speech_frame)
+
+            # Detect silence for only 49 frames (less than 0.5 seconds)
+            mock_vad_instance.is_speech.return_value = False
+            speech_ended = False
+            for i in range(49):
+                result = detector.process_frame(silence_frame)
+                if result and result.get('event') == 'speech_end':
+                    speech_ended = True
+                    break
+
+            assert speech_ended is False
+
+    def test_speech_offset_reset_on_new_speech(self):
+        """WHEN silence is interrupted by new speech before 0.5 seconds
+        THEN should reset silence counter and continue speech."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            detector = VoiceActivityDetector()
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            # Trigger speech onset
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(30):
+                detector.process_frame(speech_frame)
+
+            # Detect silence for 30 frames
+            mock_vad_instance.is_speech.return_value = False
+            for i in range(30):
+                detector.process_frame(silence_frame)
+
+            # Resume speech (should reset silence counter)
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(10):
+                detector.process_frame(speech_frame)
+
+            # Now detect silence again for 49 frames
+            mock_vad_instance.is_speech.return_value = False
+            speech_ended = False
+            for i in range(49):
+                result = detector.process_frame(silence_frame)
+                if result and result.get('event') == 'speech_end':
+                    speech_ended = True
+                    break
+
+            # Should NOT trigger because counter was reset
+            assert speech_ended is False
+
+
+class TestSegmentFinalization:
+    """Test speech segment finalization (STT-REQ-003.5)."""
+
+    def test_segment_contains_audio_data(self):
+        """WHEN speech segment is finalized
+        THEN should contain accumulated audio data."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            detector = VoiceActivityDetector()
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            # Trigger speech onset and accumulate frames
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(50):  # 0.5 seconds of speech
+                detector.process_frame(speech_frame)
+
+            # Trigger speech offset
+            mock_vad_instance.is_speech.return_value = False
+            result = None
+            for i in range(50):
+                result = detector.process_frame(silence_frame)
+                if result and result.get('event') == 'speech_end':
+                    break
+
+            assert result is not None
+            assert 'segment' in result
+            # Segment should contain audio data
+            assert 'audio_data' in result['segment']
+            assert len(result['segment']['audio_data']) > 0
+
+    def test_segment_contains_duration(self):
+        """WHEN speech segment is finalized
+        THEN should contain duration information."""
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            detector = VoiceActivityDetector()
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            # Trigger speech onset
+            mock_vad_instance.is_speech.return_value = True
+            for i in range(50):
+                detector.process_frame(speech_frame)
+
+            # Trigger speech offset
+            mock_vad_instance.is_speech.return_value = False
+            result = None
+            for i in range(50):
+                result = detector.process_frame(silence_frame)
+                if result and result.get('event') == 'speech_end':
+                    break
+
+            assert result is not None
+            assert 'segment' in result
+            assert 'duration_ms' in result['segment']
+            # Speech onset at frame 30, then 21 speech frames (30-50) + 50 silence frames
+            # Total: 21 + 50 = 71 frames = 710ms
+            assert result['segment']['duration_ms'] == 710
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
