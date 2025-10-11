@@ -29,7 +29,10 @@
       "Bash(python -m pytest tests/test_offline_model_fallback.py -v --tb=short)",
       "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py tests/test_offline_model_fallback.py -v --tb=no -q)",
       "Bash(python -m pytest tests/test_whisper_inference.py -v --tb=short)",
-      "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py tests/test_offline_model_fallback.py tests/test_whisper_inference.py -v --tb=no -q)"
+      "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py tests/test_offline_model_fallback.py tests/test_whisper_inference.py -v --tb=no -q)",
+      "mcp__serena__find_file",
+      "Bash(python -m pytest tests/test_voice_activity_detector.py -v --tb=short)",
+      "Bash(python -m pytest tests/ -v --tb=no -q)"
     ],
     "deny": [],
     "ask": []

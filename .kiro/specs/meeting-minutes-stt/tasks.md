@@ -109,11 +109,11 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-002.11, STT-REQ-002.12, STT-REQ-002.13, STT-REQ-002.14_
 
 - [ ] 4. 音声活動検出（VAD）機能の実装（Python側）
-- [ ] 4.1 VoiceActivityDetectorスケルトンとwebrtcvad初期化
-  - 失敗するユニットテストを作成（VAD判定、セグメント検出）
-  - VoiceActivityDetectorクラスの定義
-  - webrtcvad初期化（aggressiveness=2）
-  - 音声データの10ms単位フレーム分割機能
+- [x] 4.1 VoiceActivityDetectorスケルトンとwebrtcvad初期化
+  - VoiceActivityDetectorクラスの定義とwebrtcvad初期化（aggressiveness=2）
+  - 音声データの10ms単位フレーム分割機能（160 samples = 320 bytes）
+  - is_speech()メソッドによるフレームごとの音声/無音判定
+  - ユニットテストの緑化（9テスト合格）
   - _Requirements: STT-REQ-003.1, STT-REQ-003.2_
 
 - [ ] 4.2 音声/無音判定機能
