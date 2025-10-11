@@ -89,14 +89,14 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - ユニットテストの緑化（15テスト合格）
   - _Requirements: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.3, STT-REQ-006.4, STT-REQ-006.5_
 
-- [ ] 3.3 オフラインモデルフォールバック機能
+- [x] 3.3 オフラインモデルフォールバック機能
   - HuggingFace Hubからのモデルダウンロード（タイムアウト10秒）
   - ネットワークエラー時のバンドルbaseモデルフォールバック
   - プロキシ環境対応（HTTPS_PROXY、HTTP_PROXY環境変数）
   - オフラインモード強制設定機能
   - モデルキャッシュ管理（~/.cache/huggingface/hub/）
   - ダウンロード進捗ログ記録
-  - ユニットテストと統合テストの緑化
+  - ユニットテストと統合テストの緑化（14テスト合格）
   - _Requirements: STT-REQ-002.3, STT-REQ-002.4, STT-REQ-002.5, STT-REQ-002.6, STT-REQ-002.7, STT-REQ-002.8, STT-REQ-002.9_
 
 - [ ] 3.4 faster-whisper推論機能

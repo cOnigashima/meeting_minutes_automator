@@ -25,7 +25,9 @@
       "SlashCommand(/kiro:spec-impl:*)",
       "Bash(source:*)",
       "Bash(python -m pytest tests/test_resource_based_model_selection.py -v --tb=short)",
-      "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py -v --tb=no -q)"
+      "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py -v --tb=no -q)",
+      "Bash(python -m pytest tests/test_offline_model_fallback.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py tests/test_offline_model_fallback.py -v --tb=no -q)"
     ],
     "deny": [],
     "ask": []
