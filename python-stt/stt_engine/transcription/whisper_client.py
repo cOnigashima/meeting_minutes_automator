@@ -393,29 +393,115 @@ class WhisperSTTEngine:
 
     async def transcribe(self, audio_data: bytes, sample_rate: int = 16000, is_final: bool = False) -> dict:
         """
-        Transcribe audio data to text (placeholder for Task 3.4).
+        Transcribe audio data to text using faster-whisper (STT-REQ-002.11, STT-REQ-002.12).
 
         Args:
-            audio_data: Raw audio data as bytes
+            audio_data: Raw audio data as bytes (16-bit PCM)
             sample_rate: Audio sample rate (default: 16000 Hz)
             is_final: Whether this is a final transcription or partial
 
         Returns:
-            dict: Transcription result with text, confidence, language, etc.
+            dict: Transcription result with text, confidence, language, is_final, processing_time_ms
 
-        Note:
-            Full implementation will be done in Task 3.4 (faster-whisper推論機能)
+        Raises:
+            RuntimeError: If model not initialized
         """
+        import time
+        import numpy as np
+
         if self.model is None:
             raise RuntimeError("WhisperSTTEngine not initialized. Call initialize() first.")
 
-        # Placeholder implementation
-        logger.debug(f"Transcribe called: sample_rate={sample_rate}, is_final={is_final}")
+        start_time = time.time()
 
-        return {
-            "text": "",
-            "confidence": 0.0,
-            "language": "ja",
-            "is_final": is_final,
-            "processing_time_ms": 0
-        }
+        try:
+            # Validate audio data (STT-REQ-002.14)
+            if not audio_data or len(audio_data) == 0:
+                logger.warning("Empty audio data received")
+                return {
+                    "text": "",
+                    "confidence": 0.0,
+                    "language": "ja",
+                    "is_final": is_final,
+                    "processing_time_ms": 0,
+                    "error": "INVALID_AUDIO"
+                }
+
+            # Convert bytes to numpy array (16-bit PCM)
+            try:
+                audio_array = np.frombuffer(audio_data, dtype=np.int16)
+                # Convert to float32 in range [-1.0, 1.0] as required by faster-whisper
+                audio_float = audio_array.astype(np.float32) / 32768.0
+            except Exception as e:
+                logger.error(f"Failed to decode audio data: {e}")
+                return {
+                    "text": "",
+                    "confidence": 0.0,
+                    "language": "ja",
+                    "is_final": is_final,
+                    "processing_time_ms": int((time.time() - start_time) * 1000),
+                    "error": "INVALID_AUDIO"
+                }
+
+            # Perform transcription with faster-whisper (STT-REQ-002.11)
+            logger.debug(f"Transcribing audio: {len(audio_float)} samples at {sample_rate}Hz")
+
+            segments, info = self.model.transcribe(
+                audio_float,
+                language="ja",  # Japanese language hint
+                beam_size=5,
+                vad_filter=False,  # VAD handled separately in Task 4
+            )
+
+            # Extract text from segments
+            text_parts = []
+            total_logprob = 0.0
+            segment_count = 0
+
+            for segment in segments:
+                text_parts.append(segment.text)
+                total_logprob += segment.avg_logprob
+                segment_count += 1
+
+            # Combine text
+            full_text = "".join(text_parts).strip()
+
+            # Calculate confidence from average log probability
+            # avg_logprob ranges from -infinity to 0 (0 is perfect)
+            # Convert to confidence score [0, 1]
+            if segment_count > 0:
+                avg_logprob = total_logprob / segment_count
+                # Use exponential to convert log probability to confidence
+                # Clamp to reasonable range
+                confidence = min(1.0, max(0.0, np.exp(avg_logprob)))
+            else:
+                confidence = 0.0
+
+            # Detect language
+            detected_language = info.language if hasattr(info, 'language') else "ja"
+
+            processing_time = int((time.time() - start_time) * 1000)
+
+            logger.debug(f"Transcription complete: '{full_text}' (confidence={confidence:.2f}, time={processing_time}ms)")
+
+            # Return JSON response format (STT-REQ-002.12)
+            return {
+                "text": full_text,
+                "confidence": round(confidence, 3),
+                "language": detected_language,
+                "is_final": is_final,
+                "processing_time_ms": processing_time
+            }
+
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            processing_time = int((time.time() - start_time) * 1000)
+
+            return {
+                "text": "",
+                "confidence": 0.0,
+                "language": "ja",
+                "is_final": is_final,
+                "processing_time_ms": processing_time,
+                "error": str(e)
+            }

@@ -99,13 +99,13 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - ユニットテストと統合テストの緑化（14テスト合格）
   - _Requirements: STT-REQ-002.3, STT-REQ-002.4, STT-REQ-002.5, STT-REQ-002.6, STT-REQ-002.7, STT-REQ-002.8, STT-REQ-002.9_
 
-- [ ] 3.4 faster-whisper推論機能
-  - 音声データのBase64デコード機能
-  - faster-whisperモデルでの推論実行
-  - JSON応答フォーマット生成（text、confidence、language、is_final）
-  - 不正音声データのエラー処理
-  - モデルロード失敗時のtinyモデルフォールバック
-  - ユニットテストの緑化
+- [x] 3.4 faster-whisper推論機能
+  - 音声データ（16-bit PCM）のnumpy配列変換とfloat32正規化
+  - faster-whisperモデルでの推論実行（language="ja", beam_size=5）
+  - JSON応答フォーマット生成（text、confidence、language、is_final、processing_time_ms）
+  - 不正音声データのエラー処理（空データ、破損データ）
+  - avg_logprobからconfidenceへの変換（exponential変換）
+  - ユニットテストの緑化（10テスト合格）
   - _Requirements: STT-REQ-002.11, STT-REQ-002.12, STT-REQ-002.13, STT-REQ-002.14_
 
 - [ ] 4. 音声活動検出（VAD）機能の実装（Python側）
