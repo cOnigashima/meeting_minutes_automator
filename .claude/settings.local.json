@@ -21,7 +21,11 @@
       "mcp__serena__list_memories",
       "mcp__serena__read_memory",
       "Bash(cargo:*)",
-      "mcp__serena__find_symbol"
+      "mcp__serena__find_symbol",
+      "SlashCommand(/kiro:spec-impl:*)",
+      "Bash(source:*)",
+      "Bash(python -m pytest tests/test_resource_based_model_selection.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_whisper_client.py tests/test_resource_based_model_selection.py -v --tb=no -q)"
     ],
     "deny": [],
     "ask": []

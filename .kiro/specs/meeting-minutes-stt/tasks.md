@@ -74,19 +74,19 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-004.1, STT-REQ-004.2_
 
 - [ ] 3. faster-whisper統合とモデル管理機能（Python側）
-- [ ] 3.1 WhisperSTTEngineスケルトンと初期化ロジック
+- [x] 3.1 WhisperSTTEngineスケルトンと初期化ロジック
   - 失敗するユニットテストを作成（モデルロード、推論）
   - WhisperSTTEngineクラスの定義
   - モデル検出優先順位ロジック（ユーザー設定 → HuggingFace Hubキャッシュ → バンドル）
   - faster-whisperライブラリの初期化
   - _Requirements: STT-REQ-002.1, STT-REQ-002.10_
 
-- [ ] 3.2 リソースベースモデル選択機能
+- [x] 3.2 リソースベースモデル選択機能
   - システムリソース検出（CPUコア数、メモリ容量、GPU利用可否）
   - モデル選択ルールの実装（GPU+8GB→large-v3、CPU+4GB→small等）
   - 手動モデル選択のオーバーライド機能
   - リソース超過時の警告ログ記録
-  - ユニットテストの緑化
+  - ユニットテストの緑化（15テスト合格）
   - _Requirements: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.3, STT-REQ-006.4, STT-REQ-006.5_
 
 - [ ] 3.3 オフラインモデルフォールバック機能

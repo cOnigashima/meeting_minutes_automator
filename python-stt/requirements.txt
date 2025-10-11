@@ -13,6 +13,9 @@ webrtcvad>=2.0.0
 # Audio Processing (MVP1)
 numpy>=1.24.0
 
+# System Resource Monitoring (MVP1 - Task 3.2)
+psutil>=5.9.0
+
 # Note: sounddevice, pyaudio, soundfile are PROHIBITED by ADR-001
 # Audio recording is handled exclusively by Rust AudioDeviceAdapter
 # Static analysis (check_forbidden_imports.py) enforces this policy
