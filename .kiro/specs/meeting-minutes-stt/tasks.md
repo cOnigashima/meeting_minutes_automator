@@ -137,21 +137,22 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Note: STT-REQ-003.7/003.8（部分テキスト）はAudioPipeline内部実装済み、IPC配信はTask 7で実装_
 
 - [ ] 5. リソース監視と動的モデルダウングレード機能（Python側）
-- [ ] 5.1 ResourceMonitorスケルトンと監視ループ
-  - 失敗するユニットテストを作成（リソース監視、ダウングレード判定）
-  - ResourceMonitorクラスの定義
-  - 30秒間隔のリソース監視ループ（CPU、メモリ）
-  - リソース使用量取得機能
-  - _Requirements: STT-REQ-006.6, STT-REQ-006.7, STT-REQ-006.8_
+- [x] 5.1 ResourceMonitorスケルトンと監視ループ
+  - ResourceMonitorクラスの定義完了
+  - システムリソース検出機能実装（CPU、メモリ、GPU）
+  - モデル選択ルール実装（large-v3/medium/small/base/tiny）
+  - リソース使用量取得機能実装（get_current_memory_usage, get_current_cpu_usage）
+  - ユニットテスト緑化（10テスト合格）
+  - _Requirements: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.3_
 
-- [ ] 5.2 動的モデルダウングレード機能
-  - CPU 85%/60秒持続時の1段階ダウングレード判定
-  - メモリ4GB到達時の即座baseモデルダウングレード判定
-  - 音声セグメント境界での切り替えロジック（シームレス切り替え）
+- [x] 5.2 動的モデルダウングレード機能
+  - CPU 85%/60秒持続時の1段階ダウングレード判定実装
+  - メモリ4GB到達時の即座baseモデルダウングレード判定実装
   - ダウングレード順序の実装（large→medium→small→base→tiny）
-  - モデル切り替え履歴のログ記録
-  - ユニットテストと統合テストの緑化
-  - _Requirements: STT-REQ-006.6, STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9_
+  - モデル切り替え履歴のログ記録実装
+  - ユニットテスト緑化（6テスト合格、合計16テスト）
+  - _Note: 音声セグメント境界での切り替えロジック（シームレス切り替え）はTask 5.3で実装_
+  - _Requirements: STT-REQ-006.6, STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9（一部）_
 
 - [ ] 5.3 UI通知とアップグレード提案機能
   - トースト通知の送信機能（「モデル変更: {old}→{new}」）
@@ -206,6 +207,10 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-005.7, STT-REQ-005.8_
 
 - [ ] 7. IPC通信プロトコル拡張と後方互換性（Rust/Python両側）
+  - **Task 4.3からの引継ぎ**: リアルタイム部分テキスト配信機能の実装
+  - **背景**: Task 4.3ではMVP0互換性優先でRequest-Response型（1リクエスト→1最終応答）を維持
+  - **本タスクの目標**: イベントストリーム型プロトコル追加（1リクエスト→複数イベント配信）
+  - **実装方針**: 新エンドポイント `process_audio_stream` または既存エンドポイントの拡張を検討
 - [ ] 7.1 IPCメッセージ拡張とバージョニング
   - 失敗するユニットテストを作成（メッセージシリアライゼーション、バージョンチェック）
   - 新フィールドの追加（confidence、language、processing_time_ms、model_size）
@@ -213,6 +218,13 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - 既存メッセージ形式の維持（text、is_final）
   - ユニットテストの緑化
   - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-SEC-001_
+- [ ] 7.1.5 イベントストリーム型プロトコル追加（Task 4.3引継ぎ）
+  - Python側: `_handle_process_audio_stream()` 実装（中間イベント即座送信）
+  - Rust側: `receive_message()` ループ実装（複数イベント受信）
+  - イベントタイプ: `speech_start`, `partial_text`, `final_text`, `speech_end`
+  - STT-REQ-003.7/003.8対応: 1秒間隔の部分テキスト配信
+  - 後方互換性維持: 既存 `process_audio` エンドポイントは変更なし
+  - _Requirements: STT-REQ-003.7, STT-REQ-003.8, STT-REQ-007.1_
 
 - [ ] 7.2 後方互換性テストとエラー処理
   - meeting-minutes-core（Fake実装）との互換性テスト

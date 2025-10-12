@@ -47,7 +47,9 @@
       "Bash(python -m pytest tests/test_audio_integration.py -v --tb=short)",
       "Bash(python -m pytest tests/test_audio_integration.py::TestVADPipelineSTTIntegration::test_speech_detection_to_transcription_flow tests/test_audio_integration.py::TestVADPipelineSTTIntegration::test_pipeline_without_stt_engine tests/test_audio_integration.py::TestVADPipelineSTTIntegration::test_multiple_speech_segments tests/test_audio_integration.py::TestAudioProcessorIntegration::test_audio_processor_initialization tests/test_audio_integration.py::TestAudioProcessorIntegration::test_audio_processor_message_handling -v --tb=short)",
       "Bash(pip install:*)",
-      "Bash(python -m pytest tests/test_audio_integration.py::TestAudioProcessorIntegration::test_audio_processor_message_handling -v --tb=short)"
+      "Bash(python -m pytest tests/test_audio_integration.py::TestAudioProcessorIntegration::test_audio_processor_message_handling -v --tb=short)",
+      "Bash(python -m pytest tests/test_resource_monitor.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_resource_monitor.py::TestDynamicDowngrade -v --tb=short)"
     ],
     "deny": [],
     "ask": []
