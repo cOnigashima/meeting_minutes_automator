@@ -70,6 +70,7 @@ class AudioProcessor:
 
         Message types:
         - process_audio: Process audio frames through VAD→Pipeline→STT
+        - approve_upgrade: User-approved model upgrade (Task 5.4, STT-REQ-006.12)
         - ping: Health check (respond with pong)
         - shutdown: Graceful shutdown
         """
@@ -79,6 +80,9 @@ class AudioProcessor:
         try:
             if msg_type == 'process_audio':
                 await self._handle_process_audio(msg)
+
+            elif msg_type == 'approve_upgrade':
+                await self._handle_approve_upgrade(msg)
 
             elif msg_type == 'ping':
                 await self.ipc.send_message({
@@ -278,6 +282,82 @@ class AudioProcessor:
 
         except Exception as e:
             logger.error(f"Failed to send recording pause notification: {e}", exc_info=True)
+
+    async def _handle_approve_upgrade(self, msg: Dict[str, Any]) -> None:
+        """
+        Handle user-approved model upgrade (Task 5.4, STT-REQ-006.12).
+
+        This method:
+        1. Loads the approved target model via WhisperSTTEngine
+        2. Updates ResourceMonitor's current_model (only on success)
+        3. Sends success/failure IPC notification to UI
+
+        Args:
+            msg: IPC message containing 'target_model' field
+
+        Expected message format:
+        {
+            'type': 'approve_upgrade',
+            'id': 'msg-id',
+            'target_model': 'small'  # The approved model size
+        }
+        """
+        msg_id = msg.get('id', 'unknown')
+        target_model = msg.get('target_model')
+
+        if not target_model:
+            logger.error("approve_upgrade message missing 'target_model' field")
+            if self.ipc:
+                await self.ipc.send_message({
+                    'type': 'error',
+                    'id': msg_id,
+                    'error': "Missing 'target_model' field"
+                })
+            return
+
+        old_model = self.resource_monitor.current_model
+        logger.info(f"User approved upgrade: {old_model} → {target_model}")
+
+        try:
+            # Load new model in WhisperSTTEngine
+            await self.stt_engine.load_model(target_model)
+
+            # Update ResourceMonitor state (only after successful load)
+            self.resource_monitor.current_model = target_model
+
+            # Send IPC messages (STT-REQ-006.12, STT-REQ-007.1)
+            if self.ipc:
+                # 1. id付きレスポンス（STT-REQ-007.1: Request-Response契約準拠）
+                await self.ipc.send_message({
+                    'type': 'response',
+                    'id': msg_id,
+                    'success': True,
+                    'old_model': old_model,
+                    'new_model': target_model
+                })
+                logger.info(f"Sent approve_upgrade response: {old_model} → {target_model}")
+
+                # 2. イベント通知（UI通知用、オプショナル）
+                await self.ipc.send_message({
+                    'type': 'event',
+                    'event': 'upgrade_success',
+                    'old_model': old_model,
+                    'new_model': target_model,
+                    'message': f'Model upgraded successfully to {target_model}'
+                })
+                logger.info(f"Sent upgrade_success event notification")
+
+        except Exception as e:
+            logger.error(f"Failed to handle approved upgrade: {e}", exc_info=True)
+            # Don't update current_model - it stays at old_model (automatic rollback)
+
+            # Send failure IPC notification to UI
+            if self.ipc:
+                await self.ipc.send_message({
+                    'type': 'error',
+                    'id': msg_id,
+                    'error': f"Failed to upgrade model: {str(e)}"
+                })
 
 
 async def main():

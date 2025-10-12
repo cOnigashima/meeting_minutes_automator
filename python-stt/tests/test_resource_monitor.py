@@ -766,6 +766,42 @@ class TestMonitoringLoop:
             assert call_args[0][1] == 'base'  # new_model should be 'base'
 
     @pytest.mark.asyncio
+    async def test_memory_downgrade_skips_when_already_base(self):
+        """
+        Regression: skip repeated base reloads when already on base model
+
+        GIVEN ResourceMonitor already running the base model with high memory usage
+        WHEN monitoring loop checks resources
+        THEN downgrade callback should NOT be invoked again
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'base'
+        monitor.initial_model = 'large-v3'
+
+        with patch('psutil.virtual_memory') as mock_mem, \
+             patch('psutil.cpu_percent', return_value=55):
+
+            mock_mem.return_value.percent = 90
+            mock_mem.return_value.used = 4.5 * (1024 ** 3)
+
+            on_downgrade = AsyncMock()
+
+            task = asyncio.create_task(monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=on_downgrade
+            ))
+
+            await asyncio.sleep(0.25)
+            await monitor.stop_monitoring()
+            await task
+
+            assert on_downgrade.call_count == 0
+
+    @pytest.mark.asyncio
     async def test_downgrade_triggered_after_60_seconds_high_cpu(self):
         """
         STT-REQ-006.7: Downgrade after 60 seconds of high CPU

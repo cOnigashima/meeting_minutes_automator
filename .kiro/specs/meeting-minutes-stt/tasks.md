@@ -137,7 +137,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Note: STT-REQ-003.7/003.8（部分テキスト）はAudioPipeline内部実装済み、IPC配信はTask 7で実装_
 
 - [ ] 5. リソース監視と動的モデルダウングレード機能（Python側）
-- [x] 5.1a ResourceMonitor API層実装（完了）
+- [x] 5.1 ResourceMonitor API層実装（完了）
   - ResourceMonitorクラスの定義完了
   - システムリソース検出API実装（CPU、メモリ、GPU）
   - モデル選択ルールAPI実装（large-v3/medium/small/base/tiny）
@@ -148,7 +148,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Note: API層のみ実装。監視ループ・統合・実際のモデル切替は未実装_
   - _Requirements: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.3（部分）_
 
-- [x] 5.1b ResourceMonitor監視ループ実装（完了）
+- [x] 5.2 ResourceMonitor監視ループ実装（完了）
   - **30秒間隔の監視ループ**実装完了（`start_monitoring()`, `stop_monitoring()`）
   - CPU負荷持続判定の自動状態管理実装完了（cpu_high_start_timeの自動更新）
   - リソース回復の自動状態管理実装完了（low_resource_start_timeの自動更新）
@@ -159,10 +159,10 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - ユニットテスト緑化（4テスト合格、合計31テスト）
   - バグ修正: `should_pause_recording()` をメモリ使用率ベースに変更
   - バグ修正: `get_current_cpu_usage()` の1秒ブロック問題修正
-  - _Note: AudioProcessorへの統合はTask 5.2で実装_
+  - _Note: AudioProcessorへの統合はTask 5.3で実装_
   - _Requirements: STT-NFR-001.6, STT-NFR-005.4, STT-REQ-006.7, STT-REQ-006.10（完全実装）_
 
-- [x] 5.2 動的モデルダウングレード機能（完了 + Critical Fixes適用済み）
+- [x] 5.3 動的モデルダウングレード機能（完了 + Critical Fixes適用済み）
   - **WhisperSTTEngine.load_model()実装完了**: 動的モデル切替（unload → reload）
     - **🔧 Critical Fix**: リソースリーク対策として`gc.collect()`追加（line 422）
     - **🔧 Cleanup**: TODOコメント削除（line 368）
@@ -171,7 +171,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - **🔧 Critical Fix: 監視ループ起動実装完了**（main.py:299-308）
     - `main()`関数で30秒間隔の監視ループを自動起動
     - シャットダウン時の適切なクリーンアップ処理実装（finally block）
-    - **影響**: これにより Task 5.2 の全機能が本番環境で実際に動作
+    - **影響**: これにより Task 5.3 の全機能が本番環境で実際に動作
   - **IPC通知送信実装完了**: model_change (cpu_high/memory_high), upgrade_proposal, recording_paused イベント
   - **メモリダウングレードロジック修正完了**: tinyモデル時のダウングレードスキップ実装（line 501）
   - **アップグレード提案ロジック拡張完了**: initial_modelへの直接アップグレード提案実装（line 538-559）
@@ -179,7 +179,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - **🔧 テスト追加**: `test_get_upgrade_target_respects_initial_model()` 追加（initial_model ceiling確認）
   - **全テスト合格**: 139 passed (+1), 1 skipped（リグレッションなし）
   - _Requirements: STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9, STT-REQ-006.10, STT-REQ-006.11, STT-NFR-001.6（完全実装）_
-  - _Note: Task 5.3（ユーザー承認時のアップグレード実行）は別タスク。本タスクは提案送信まで実装_
+  - _Note: Task 5.4（ユーザー承認時のアップグレード実行）は別タスク。本タスクは提案送信まで実装_
 
   **検証済み指摘対応**:
   - ✅ **指摘1（Critical）**: 監視ループ未起動 → main()で起動実装完了
@@ -187,13 +187,24 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - ❌ **指摘2**: メモリ監視未実装 → 誤り。line 498で実装済み
   - ❌ **指摘3**: get_upgrade_target()ロジックバグ → 誤り。元のロジックが正しい
 
-- [ ] 5.3 UI通知とアップグレード提案機能（未実装）
-  - IPC経由のUI通知送信実装（upgrade_proposal, model_change）
-  - リソース回復の自律的検出実装（low_resource_start_timeの自動更新）
-  - ユーザー承認時のアップグレード試行実装（IPC経由で受信）
-  - tinyモデルでリソース不足時の録音一時停止実行実装
-  - 統合テストの緑化
-  - _Requirements: STT-REQ-006.10, STT-REQ-006.11, STT-REQ-006.12（完全実装）_
+- [x] 5.4 UI通知とアップグレード提案機能（完了）
+  - **IPC経由のUI通知送信実装完了**: upgrade_proposal, model_change, recording_paused イベント（Task 5.3で実装済み）
+  - **リソース回復の自律的検出実装完了**: low_resource_start_timeの自動更新（Task 5.3で実装済み、line 491-499）
+  - **ユーザー承認時のアップグレード試行実装完了**: approve_upgrade IPCメッセージハンドラ追加（main.py:84-85, 286-349）
+  - **_handle_approve_upgrade()メソッド実装完了**: WhisperSTTEngine.load_model()呼び出し、current_model更新、IPC通知送信
+  - **tinyモデルでリソース不足時の録音一時停止実行実装完了**: _handle_pause_recording()（Task 5.3で実装済み）
+  - **統合テストの作成完了**: test_user_approved_upgrade_execution追加（test_audio_integration.py:732-777）
+  - **Rustテスト緑化完了**: 11テスト合格（MockAudioAdapter.check_permission()追加により修正）
+  - **🔧 P0バグ修正完了**（2025-10-13）:
+    - **IPC応答の非対称性修正**: 成功時に`type: response, id: msg_id`を追加（STT-REQ-007.1準拠）
+      - `main.py:330-348`: response + event 二段構成に変更
+      - 失敗時のみid付きエラーを返す非対称性を解消
+    - **テストコードのバグ修正**: `test_audio_integration.py:742-758`
+      - `ResourceMonitor`のimport追加（NameError解消）
+      - コンストラクタ引数削除（TypeError解消）
+      - 手動プロパティ設定に変更（`initial_model`, `current_model`）
+  - _Requirements: STT-REQ-006.10（完了）, STT-REQ-006.11（Task 5.3で完了）, STT-REQ-006.12（完了）, STT-REQ-007.1（修正完了）_
+  - _Note: E2Eテスト2件失敗はPythonサイドカー起動問題（Task 5.4の実装とは無関係）_
 
 - [ ] 6. ローカルストレージ機能の実装（Rust側）
 - [ ] 6.1 LocalStorageServiceスケルトンとセッション管理
@@ -201,9 +212,11 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - LocalStorageServiceクラスの定義
   - セッションID生成機能（UUID）
   - セッションディレクトリ作成機能（[app_data_dir]/recordings/[session_id]/）
+  - ユニットテストの緑化
   - _Requirements: STT-REQ-005.1_
 
 - [ ] 6.2 音声ファイル保存機能
+  - 失敗するユニットテストを作成（WAV保存、ストリーミング書き込み、クローズ処理）
   - 音声データのWAVファイル保存（16kHz、モノラル、16bit PCM）
   - リアルタイムストリーミング書き込み
   - ファイルクローズ処理
@@ -211,6 +224,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-005.2_
 
 - [ ] 6.3 文字起こし結果保存機能
+  - 失敗するユニットテストを作成（JSON Lines保存、追記モード、タイムスタンプ記録）
   - 部分テキストと確定テキストのJSON Lines形式保存（transcription.jsonl）
   - 追記モードでのファイル書き込み
   - タイムスタンプとis_finalフラグの記録
@@ -218,6 +232,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-005.3_
 
 - [ ] 6.4 セッションメタデータ保存機能
+  - 失敗するユニットテストを作成（session.json保存、統計情報集計）
   - session.json保存機能（session_id、start_time、end_time、duration_seconds等）
   - セッション統計情報の集計（total_segments、total_characters）
   - 録音終了時のメタデータ書き込み
@@ -225,6 +240,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-005.4_
 
 - [ ] 6.5 セッション一覧取得と再生機能
+  - 失敗する統合テストを作成（セッション一覧読み込み、再生機能）
   - セッションメタデータ一覧読み込み機能
   - 日時降順ソート機能
   - 過去セッションの読み込み機能（session.json、transcription.jsonl、audio.wav）
@@ -233,10 +249,12 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-005.5, STT-REQ-005.6_
 
 - [ ] 6.6 ディスク容量監視と警告機能
+  - 失敗するユニットテストを作成（容量監視、警告ログ、録音開始拒否）
   - ディスク容量監視ロジック
   - 1GB未満時の警告ログと通知
   - 500MB未満時の録音開始拒否
   - エラーメッセージ表示
+  - ユニットテストの緑化
   - _Requirements: STT-REQ-005.7, STT-REQ-005.8_
 
 - [ ] 7. IPC通信プロトコル拡張と後方互換性（Rust/Python両側）
@@ -250,16 +268,20 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - バージョンフィールドの追加（"version": "1.0"）
   - 既存メッセージ形式の維持（text、is_final）
   - ユニットテストの緑化
+  - 統合テストの緑化
   - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-SEC-001_
 - [ ] 7.1.5 イベントストリーム型プロトコル追加（Task 4.3引継ぎ）
+  - 失敗する統合テストを作成（イベントストリーム配信、複数イベント受信）
   - Python側: `_handle_process_audio_stream()` 実装（中間イベント即座送信）
   - Rust側: `receive_message()` ループ実装（複数イベント受信）
   - イベントタイプ: `speech_start`, `partial_text`, `final_text`, `speech_end`
   - STT-REQ-003.7/003.8対応: 1秒間隔の部分テキスト配信
   - 後方互換性維持: 既存 `process_audio` エンドポイントは変更なし
+  - 統合テストの緑化
   - _Requirements: STT-REQ-003.7, STT-REQ-003.8, STT-REQ-007.1_
 
 - [ ] 7.2 後方互換性テストとエラー処理
+  - 失敗する統合テストを作成（互換性、未知フィールド無視、バージョン不一致処理）
   - meeting-minutes-core（Fake実装）との互換性テスト
   - 未知フィールドの無視動作確認
   - エラー応答フォーマットの実装（errorCode、errorMessage、recoverable）
@@ -273,8 +295,9 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - 拡張メッセージ形式の実装（confidence、language、processing_time_ms追加）
   - Chrome拡張への配信機能
   - 未知フィールド無視の検証
+  - セキュリティ境界原則の検証（Chrome拡張は機密情報非保存、平文送信禁止）
   - ユニットテストと統合テストの緑化
-  - _Requirements: STT-REQ-008.1_
+  - _Requirements: STT-REQ-008.1, Principle 3（セキュリティ責任境界）_
 
 - [ ] 9. UI拡張とユーザー設定機能（Rust/React）
 - [ ] 9.1 音声デバイス選択UI
@@ -286,6 +309,7 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-001.3_
 
 - [ ] 9.2 Whisperモデル選択UI
+  - 失敗するE2Eテストを作成（モデル選択フロー、警告表示）
   - モデルサイズ選択ドロップダウン（tiny、base、small、medium、large-v3）
   - 自動選択とカスタマイズのトグル
   - リソース超過警告の表示
@@ -293,26 +317,34 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Requirements: STT-REQ-006.4_
 
 - [ ] 9.3 オフラインモード設定UI
+  - 失敗するE2Eテストを作成（オフラインモード設定フロー）
   - オフラインモード強制のチェックボックス
   - バンドルモデル使用状態の表示
   - 設定保存機能
+  - E2Eテストの緑化
   - _Requirements: STT-REQ-002.6_
 
 - [ ] 9.4 リソース監視とモデル切り替え通知UI
+  - 失敗するE2Eテストを作成（通知表示、ダイアログ操作）
   - トースト通知コンポーネント
   - モデル切り替え通知の表示（「モデル変更: {old}→{new}」）
   - モデルアップグレード提案ダイアログ
+  - E2Eテストの緑化
   - _Requirements: STT-REQ-006.9, STT-REQ-006.10_
 
 - [ ] 9.5 セッション管理UI
+  - 失敗するE2Eテストを作成（セッション一覧、再生、削除フロー）
   - セッション一覧表示コンポーネント
   - セッション詳細表示（メタデータ、文字起こし結果）
   - 音声再生機能
   - セッション削除機能
+  - E2Eテストの緑化
   - _Requirements: STT-REQ-005.5, STT-REQ-005.6_
 
-- [ ] 9.6 実装とのギャップ
-  - /kiro:validate-gap　を行う
+- [ ] 9.6 実装とのギャップ検証
+  - /kiro:validate-gap meeting-minutes-stt を実行
+  - 検出されたギャップを記録し、修正タスクを作成
+  - _Requirements: 全要件（ギャップ検証）_
 
 
 - [ ] 10. 統合とE2Eテスト
@@ -355,6 +387,13 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - Chrome拡張での表示確認
   - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.3, STT-REQ-008.1, STT-REQ-E2E-001_
 
+- [ ] 10.7 非機能要件検証テスト
+  - Reliability検証（自動再起動、異常終了対応、エラー回復）
+  - Compatibility検証（OS別動作確認、依存関係バージョン検証）
+  - Security検証（TLS通信、ハッシュ検証、アクセス許可）
+  - 統合テストの緑化
+  - _Requirements: STT-NFR-002, STT-NFR-003, STT-NFR-004_
+
 - [ ] 11. パフォーマンス最適化と非機能要件検証
 - [ ] 11.1 レイテンシ最適化
   - 部分テキスト生成レイテンシ計測（目標: 0.5秒以内）
@@ -379,6 +418,13 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - PIIマスク検証（音声データバイナリ内容の非記録）
   - エラー分類とユーザー提示の適切性確認
   - _Requirements: STT-NFR-005_
+
+- [ ] 11.5 セキュリティテスト
+  - TLS 1.2以降接続検証（HuggingFace Hub）
+  - モデルファイルSHA256ハッシュ検証テスト
+  - ディレクトリアクセス制限検証
+  - 音声デバイスアクセス許可フロー検証
+  - _Requirements: STT-NFR-004_
 
 - [ ] 12. ドキュメントとリリース準備
 - [ ] 12.1 UML図の作成

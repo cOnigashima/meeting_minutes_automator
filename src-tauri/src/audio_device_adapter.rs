@@ -1008,6 +1008,11 @@ mod tests {
         fn is_recording(&self) -> bool {
             self.is_recording
         }
+
+        fn check_permission(&self) -> Result<()> {
+            // Mock always returns Ok (permission granted)
+            Ok(())
+        }
     }
 
     #[test]

@@ -509,10 +509,13 @@ class ResourceMonitor:
                 logger.error(f"Critical memory usage {memory_gb:.2f}GB (>= 4GB), forcing downgrade to base")
                 old_model = self.current_model
                 # Don't update current_model here - let callback handle it after success
-                if on_downgrade:
-                    await on_downgrade(old_model, 'base')
-                # Reset CPU timer as we just downgraded
-                self.cpu_high_start_time = None
+                if old_model == 'base':
+                    logger.debug("Already at base model, skipping repeated memory downgrade")
+                else:
+                    if on_downgrade:
+                        await on_downgrade(old_model, 'base')
+                    # Reset CPU timer as we just downgraded
+                    self.cpu_high_start_time = None
             else:
                 # Gradual downgrade (memory >= 3GB)
                 logger.warning(f"High memory usage {memory_gb:.2f}GB (>= 3GB), triggering gradual downgrade")

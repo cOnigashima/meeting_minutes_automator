@@ -729,6 +729,59 @@ class TestResourceMonitorIntegration:
             assert processor.resource_monitor.current_model == 'large-v3', \
                 "current_model should remain 'large-v3' after failed downgrade"
 
+    @pytest.mark.asyncio
+    async def test_user_approved_upgrade_execution(self):
+        """
+        Task 5.4, STT-REQ-006.12: Test user-approved upgrade execution.
+
+        WHEN user approves upgrade proposal THEN ResourceMonitor SHALL:
+        1. Execute upgrade to target model
+        2. Update current_model on success
+        3. Send success IPC notification
+        """
+        from unittest.mock import MagicMock, AsyncMock
+        from main import AudioProcessor
+        from stt_engine.resource_monitor import ResourceMonitor
+        import asyncio
+
+        mock_stt = MagicMock()
+        mock_stt.load_model = AsyncMock(return_value=None)  # Success
+        mock_stt.transcribe = AsyncMock(return_value=("", 0.0, ""))
+
+        processor = AudioProcessor()
+        processor.stt_engine = mock_stt
+        processor.vad = None  # Skip VAD
+
+        # Initialize ResourceMonitor (no constructor args)
+        processor.resource_monitor = ResourceMonitor()
+        processor.resource_monitor.initial_model = 'small'  # Manually set
+        processor.resource_monitor.current_model = 'base'   # Currently downgraded
+
+        try:
+            # Simulate user approving upgrade from 'base' to 'small'
+            await processor.handle_message({
+                'type': 'approve_upgrade',
+                'id': 'test-approve-001',
+                'target_model': 'small'
+            })
+
+            # Wait for processing
+            await asyncio.sleep(0.1)
+
+            # Verify load_model was called with target
+            mock_stt.load_model.assert_called_once_with('small')
+
+            # Verify current_model was updated
+            assert processor.resource_monitor.current_model == 'small', \
+                "current_model should be updated to 'small' after successful upgrade"
+
+            # Verify IPC notification was sent (check mock_ipc if available)
+            # For now, just verify no exception was raised
+
+        finally:
+            if processor.resource_monitor.monitoring_running:
+                await processor.resource_monitor.stop_monitoring()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

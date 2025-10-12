@@ -31,7 +31,9 @@
       "Bash(python3 -m pytest:*)",
       "Bash(python3.12:*)",
       "Bash(python3:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "SlashCommand(/kiro:validate-tasks:*)",
+      "Bash(/kiro:spec-status meeting-minutes-stt)"
     ],
     "deny": [],
     "ask": []
