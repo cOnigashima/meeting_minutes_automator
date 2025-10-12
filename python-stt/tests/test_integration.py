@@ -1,107 +1,95 @@
 """
-E2E Integration Tests for Walking Skeleton (MVP0)
-TDD Red State: All tests should fail with NotImplementedError
+E2E Integration Tests for MVP1 Real STT Implementation
+
+Tests the complete integration of:
+- IpcHandler (stdin/stdout communication)
+- AudioProcessor (VAD → Pipeline → STT orchestration)
+- Real audio processing flow
+
+Related Requirements:
+- STT-REQ-007.1: IPC message extensions
+- STT-REQ-007.2: Version field support
+- STT-REQ-003.6-009: VAD-STT integration
 """
 
 import pytest
 import asyncio
+import numpy as np
+from unittest.mock import AsyncMock, MagicMock, patch
+from io import BytesIO
+
 from stt_engine.ipc_handler import IpcHandler
-from stt_engine.fake_processor import FakeProcessor
-from stt_engine.lifecycle_manager import LifecycleManager
 
 
 class TestComponentInitialization:
-    """Test component initialization (skeleton)"""
+    """Test component initialization"""
 
     def test_ipc_handler_initialization(self):
-        """IPC Handler should be instantiable"""
+        """IPC Handler should initialize with proper defaults"""
         handler = IpcHandler()
         assert handler is not None
+        assert handler.timeout == IpcHandler.DEFAULT_TIMEOUT_SEC
+        assert handler.stats["messages_sent"] == 0
 
-    def test_fake_processor_initialization(self):
-        """Fake Processor should be instantiable"""
-        processor = FakeProcessor()
-        assert processor is not None
+    def test_audio_processor_initialization(self):
+        """AudioProcessor should initialize all components"""
+        from main import AudioProcessor
 
-    def test_lifecycle_manager_initialization(self):
-        """Lifecycle Manager should be instantiable"""
-        manager = LifecycleManager()
-        assert manager is not None
+        processor = AudioProcessor()
+        assert processor.vad is not None
+        assert processor.stt_engine is not None
+        assert processor.pipeline is not None
 
 
 class TestIpcCommunication:
-    """Test IPC communication skeleton (should fail)"""
+    """Test IPC communication (real implementation)"""
 
     @pytest.mark.asyncio
-    async def test_ipc_send_message_not_implemented(self):
-        """IPC send_message should raise NotImplementedError"""
+    async def test_ipc_send_message_with_version(self):
+        """
+        STT-REQ-007.2: IPC messages should include version field
+
+        GIVEN IpcHandler
+        WHEN Sending a message without version
+        THEN Version "1.0" should be added automatically
+        """
         handler = IpcHandler()
 
-        with pytest.raises(NotImplementedError):
+        mock_stdout = MagicMock()
+        mock_buffer = BytesIO()
+        mock_stdout.buffer = mock_buffer
+
+        with patch('sys.stdout', mock_stdout):
             await handler.send_message({"type": "test"})
 
+            mock_buffer.seek(0)
+            import json
+            written_data = mock_buffer.read()
+            message = json.loads(written_data.decode('utf-8').strip())
+
+            assert message["version"] == "1.0"
+            assert message["type"] == "test"
+
     @pytest.mark.asyncio
-    async def test_ipc_receive_message_not_implemented(self):
-        """IPC receive_message should raise NotImplementedError"""
+    async def test_ipc_message_size_validation(self):
+        """
+        IPC should reject messages larger than MAX_MESSAGE_SIZE
+
+        GIVEN IpcHandler
+        WHEN Sending a message > 1MB
+        THEN IpcProtocolError should be raised
+        """
+        from stt_engine.ipc_handler import IpcProtocolError
+
         handler = IpcHandler()
 
-        with pytest.raises(NotImplementedError):
-            await handler.receive_message()
+        large_data = "x" * (handler.MAX_MESSAGE_SIZE + 1)
+        message = {"data": large_data}
 
-    @pytest.mark.asyncio
-    async def test_ipc_start_not_implemented(self):
-        """IPC start should raise NotImplementedError"""
-        handler = IpcHandler()
+        with pytest.raises(IpcProtocolError) as exc_info:
+            await handler.send_message(message)
 
-        with pytest.raises(NotImplementedError):
-            await handler.start()
-
-
-class TestFakeProcessor:
-    """Test Fake Processor skeleton (should fail)"""
-
-    @pytest.mark.asyncio
-    async def test_process_audio_not_implemented(self):
-        """process_audio should raise NotImplementedError"""
-        processor = FakeProcessor()
-
-        with pytest.raises(NotImplementedError):
-            await processor.process_audio(b"dummy_audio_data")
-
-    @pytest.mark.asyncio
-    async def test_processor_start_not_implemented(self):
-        """Processor start should raise NotImplementedError"""
-        processor = FakeProcessor()
-
-        with pytest.raises(NotImplementedError):
-            await processor.start()
-
-
-class TestLifecycleManager:
-    """Test Lifecycle Manager skeleton (should fail)"""
-
-    def test_setup_signal_handlers_not_implemented(self):
-        """setup_signal_handlers should raise NotImplementedError"""
-        manager = LifecycleManager()
-
-        with pytest.raises(NotImplementedError):
-            manager.setup_signal_handlers()
-
-    @pytest.mark.asyncio
-    async def test_wait_for_shutdown_not_implemented(self):
-        """wait_for_shutdown should raise NotImplementedError"""
-        manager = LifecycleManager()
-
-        with pytest.raises(NotImplementedError):
-            await manager.wait_for_shutdown()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_not_implemented(self):
-        """cleanup should raise NotImplementedError"""
-        manager = LifecycleManager()
-
-        with pytest.raises(NotImplementedError):
-            await manager.cleanup()
+        assert "Message too large" in str(exc_info.value)
 
 
 class TestInterfaceTypeDefinitions:
