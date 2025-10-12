@@ -6,7 +6,7 @@ Test-Driven Development: These tests are written first and will initially fail.
 
 import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 
 
 class TestVoiceActivityDetectorInitialization:
@@ -444,6 +444,247 @@ class TestSegmentFinalization:
             # Speech onset at frame 30, then 21 speech frames (30-50) + 50 silence frames
             # Total: 21 + 50 = 71 frames = 710ms
             assert result['segment']['duration_ms'] == 710
+
+
+class TestPartialAndFinalTextGeneration:
+    """
+    Task 4.3: Test partial and final text generation with WhisperSTTEngine integration.
+
+    Requirements:
+    - STT-REQ-003.6: Final text generation on speech segment completion
+    - STT-REQ-003.7: Partial text generation during speech (1s interval)
+    - STT-REQ-003.8: Partial text with is_final=False
+    - STT-REQ-003.9: Final text with is_final=True
+    """
+
+    @pytest.mark.asyncio
+    async def test_partial_text_generation_at_1_second_interval(self):
+        """
+        STT-REQ-003.7, STT-REQ-003.8: Verify partial text generated at 1s intervals with is_final=False.
+
+        Test scenario:
+        1. Initialize VAD with mock STT engine
+        2. Send 150 frames (1.5s) of continuous speech
+        3. Expect partial_text event around frame 130 (after 1s)
+        4. Verify is_final=False in transcription result
+        """
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        # Mock webrtcvad
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+            mock_vad_instance.is_speech.return_value = True  # All frames are speech
+
+            # Mock STT engine
+            mock_stt = MagicMock()
+            mock_stt.transcribe = AsyncMock(return_value={
+                'text': 'This is partial',
+                'is_final': False,
+                'confidence': 0.85
+            })
+
+            vad = VoiceActivityDetector(stt_engine=mock_stt)
+
+            # Create speech frames (simulate 1.5 seconds of speech)
+            # Frame size: 320 bytes (10ms at 16kHz, 16-bit)
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+
+            partial_text_events = []
+            speech_started = False
+
+            # Send 150 frames (1500ms)
+            for i in range(150):
+                result = await vad.process_frame_async(speech_frame)
+
+                if result:
+                    if result.get('event') == 'speech_start':
+                        speech_started = True
+                    elif result.get('event') == 'partial_text':
+                        partial_text_events.append((i, result))
+
+            # Assertions
+            assert speech_started, "Speech onset should be detected"
+            assert len(partial_text_events) >= 1, "At least one partial text should be generated"
+
+            # First partial text should occur around frame 130 (30 frames onset + 100 frames = 1s)
+            frame_idx, first_partial = partial_text_events[0]
+            assert 120 <= frame_idx <= 140, f"First partial at frame {frame_idx}, expected ~130"
+
+            # Verify is_final=False
+            assert first_partial['transcription']['is_final'] is False
+            assert first_partial['transcription']['text'] == 'This is partial'
+
+            # Verify STT engine called with is_final=False
+            mock_stt.transcribe.assert_called()
+            call_args = mock_stt.transcribe.call_args
+            assert call_args.kwargs['is_final'] is False
+
+    @pytest.mark.asyncio
+    async def test_final_text_generation_on_speech_end(self):
+        """
+        STT-REQ-003.6, STT-REQ-003.9: Verify final text generated on speech end with is_final=True.
+
+        Test scenario:
+        1. Initialize VAD with mock STT engine
+        2. Send speech onset + continuation + silence (speech end)
+        3. Expect final_text event on speech end
+        4. Verify is_final=True in transcription result
+        """
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        # Mock webrtcvad
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            # Mock STT engine
+            mock_stt = MagicMock()
+            mock_stt.transcribe = AsyncMock(return_value={
+                'text': 'This is final text',
+                'is_final': True,
+                'confidence': 0.92
+            })
+
+            vad = VoiceActivityDetector(stt_engine=mock_stt)
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            final_text_event = None
+
+            # Send speech onset (30 frames)
+            mock_vad_instance.is_speech.return_value = True
+            for _ in range(30):
+                await vad.process_frame_async(speech_frame)
+
+            # Send continuous speech (50 frames)
+            for _ in range(50):
+                await vad.process_frame_async(speech_frame)
+
+            # Send silence to trigger speech end (50 frames)
+            mock_vad_instance.is_speech.return_value = False
+            for _ in range(50):
+                result = await vad.process_frame_async(silence_frame)
+                if result and result.get('event') == 'final_text':
+                    final_text_event = result
+
+            # Assertions
+            assert final_text_event is not None, "Final text event should be generated"
+            assert final_text_event['event'] == 'final_text'
+            assert final_text_event['transcription']['is_final'] is True
+            assert final_text_event['transcription']['text'] == 'This is final text'
+            assert 'segment' in final_text_event
+
+            # Verify STT engine called with is_final=True
+            mock_stt.transcribe.assert_called()
+            final_call_args = [call for call in mock_stt.transcribe.call_args_list
+                              if call.kwargs.get('is_final') is True]
+            assert len(final_call_args) > 0, "STT engine should be called with is_final=True"
+
+    @pytest.mark.asyncio
+    async def test_no_text_generation_without_stt_engine(self):
+        """
+        Test backward compatibility: VAD works without stt_engine.
+
+        Test scenario:
+        1. Initialize VAD without stt_engine (stt_engine=None)
+        2. Send speech onset + continuation + silence
+        3. Expect only speech_start/speech_end events (no partial/final_text)
+        """
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        # Mock webrtcvad
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            vad = VoiceActivityDetector(stt_engine=None)
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+            silence_frame = np.zeros(160, dtype=np.int16).tobytes()
+
+            events = []
+
+            # Send speech onset (30 frames)
+            mock_vad_instance.is_speech.return_value = True
+            for _ in range(30):
+                result = await vad.process_frame_async(speech_frame)
+                if result:
+                    events.append(result['event'])
+
+            # Send continuous speech (100 frames)
+            for _ in range(100):
+                result = await vad.process_frame_async(speech_frame)
+                if result:
+                    events.append(result['event'])
+
+            # Send silence (50 frames)
+            mock_vad_instance.is_speech.return_value = False
+            for _ in range(50):
+                result = await vad.process_frame_async(silence_frame)
+                if result:
+                    events.append(result['event'])
+
+            # Assertions: Only speech_start and speech_end should occur
+            assert 'speech_start' in events
+            assert 'speech_end' in events
+            assert 'partial_text' not in events, "No partial_text without stt_engine"
+            assert 'final_text' not in events, "No final_text without stt_engine"
+
+    @pytest.mark.asyncio
+    async def test_partial_text_interval_timing(self):
+        """
+        Verify exact 1000ms interval timing for partial text generation.
+
+        Test scenario:
+        1. Send 250 frames (2.5s) of continuous speech
+        2. Expect 2 partial_text events at ~1000ms and ~2000ms
+        3. Verify timing precision
+        """
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        # Mock webrtcvad
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+            mock_vad_instance.is_speech.return_value = True  # All frames are speech
+
+            # Mock STT engine
+            mock_stt = MagicMock()
+            mock_stt.transcribe = AsyncMock(side_effect=[
+                {'text': 'First partial', 'is_final': False, 'confidence': 0.80},
+                {'text': 'Second partial', 'is_final': False, 'confidence': 0.85},
+            ])
+
+            vad = VoiceActivityDetector(stt_engine=mock_stt)
+
+            speech_frame = np.random.randint(-32768, 32767, 160, dtype=np.int16).tobytes()
+
+            partial_text_events = []
+
+            # Send 250 frames (2500ms)
+            for i in range(250):
+                result = await vad.process_frame_async(speech_frame)
+                if result and result.get('event') == 'partial_text':
+                    partial_text_events.append((i, result))
+
+            # Assertions: Expect 2 partial text events
+            assert len(partial_text_events) == 2, f"Expected 2 partial texts, got {len(partial_text_events)}"
+
+            # First partial at ~frame 130 (30 onset + 100 frames = 1000ms)
+            first_frame, first_event = partial_text_events[0]
+            assert 120 <= first_frame <= 140, f"First partial at frame {first_frame}, expected ~130"
+            assert first_event['transcription']['text'] == 'First partial'
+
+            # Second partial at ~frame 230 (30 onset + 200 frames = 2000ms)
+            second_frame, second_event = partial_text_events[1]
+            assert 220 <= second_frame <= 240, f"Second partial at frame {second_frame}, expected ~230"
+            assert second_event['transcription']['text'] == 'Second partial'
+
+            # Verify interval: ~100 frames (1000ms) between partials
+            interval = second_frame - first_frame
+            assert 90 <= interval <= 110, f"Interval {interval} frames, expected ~100"
 
 
 if __name__ == "__main__":

@@ -38,7 +38,9 @@
       "Bash(python -m pytest tests/test_voice_activity_detector.py::TestSpeechOnsetDetection -v --tb=short)",
       "Bash(python -m pytest tests/test_voice_activity_detector.py::TestSpeechOffsetDetection -v --tb=short)",
       "Bash(python -m pytest tests/test_voice_activity_detector.py::TestSegmentFinalization -v --tb=short)",
-      "Bash(python -m pytest tests/test_voice_activity_detector.py -v --tb=no -q)"
+      "Bash(python -m pytest tests/test_voice_activity_detector.py -v --tb=no -q)",
+      "Bash(python3 -m pytest tests/test_voice_activity_detector.py::TestPartialAndFinalTextGeneration -v --tb=short)",
+      "Bash(python -m pytest tests/test_voice_activity_detector.py::TestPartialAndFinalTextGeneration -v --tb=short)"
     ],
     "deny": [],
     "ask": []
