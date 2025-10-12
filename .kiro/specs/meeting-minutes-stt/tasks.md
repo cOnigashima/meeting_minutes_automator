@@ -125,14 +125,16 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - ユニットテストの緑化（8テスト合格、合計17テスト）
   - _Requirements: STT-REQ-003.3, STT-REQ-003.4, STT-REQ-003.5_
 
-- [x] 4.3 部分テキストと確定テキストの生成連携
+- [x] 4.3 部分テキストと確定テキストの生成連携（MVP0互換版）
   - AudioPipelineのmain.py統合完了（AudioProcessorクラス作成）
-  - IpcHandlerのmain.py統合完了（VAD/STTイベントのIPC配信）
+  - Request-Response型プロトコル遵守（STT-REQ-007.1）
   - VAD→AudioPipeline→STT本番経路構築完了（_handle_process_audio実装）
-  - 実統合テスト追加（test_audio_integration.py: 5 passed, 1 skipped）
-  - 全テスト: 101 passed, 1 skipped
-  - _Note: test_partial_text_generation_during_speechはtime.time()モッキング未実装のためskipped_
-  - _Requirements: STT-REQ-003.6, STT-REQ-003.7, STT-REQ-003.8, STT-REQ-003.9_
+  - **IPC実装方針**: 1リクエスト→1最終応答（MVP0互換）
+  - 中間イベント（speech_start, partial_text）はログ記録のみ、IPC送信なし
+  - 実統合テスト追加（test_audio_integration.py: AudioPipeline動作、IPC統合）
+  - **Task 7への引継ぎ事項**: リアルタイム部分テキスト配信（イベントストリーム型プロトコル追加）
+  - _Requirements: STT-REQ-007.1（後方互換性）, STT-REQ-003.6, STT-REQ-003.9_
+  - _Note: STT-REQ-003.7/003.8（部分テキスト）はAudioPipeline内部実装済み、IPC配信はTask 7で実装_
 
 - [ ] 5. リソース監視と動的モデルダウングレード機能（Python側）
 - [ ] 5.1 ResourceMonitorスケルトンと監視ループ

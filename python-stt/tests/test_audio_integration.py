@@ -376,12 +376,12 @@ class TestAudioProcessorIntegration:
             assert response['type'] == 'response', "Response type should be 'response'"
             assert response['version'] == '1.0', "Response should have version field"
 
-            # Check result structure (MVP0 compatible)
-            result = response.get('result')
-            if result:  # May be None if no transcription yet
-                assert 'text' in result, "Result should contain text field"
-                assert 'is_final' in result, "Result should contain is_final field"
-                assert 'confidence' in result, "Result should contain confidence field (MVP1 extension)"
+            # Check flat structure (MVP0 compatible + MVP1 extensions)
+            # STT-REQ-007.3: text field at root level for backward compatibility
+            if response.get('text'):  # May be None if no transcription yet
+                assert 'text' in response, "Response should contain text field at root level"
+                assert 'is_final' in response, "Response should contain is_final field"
+                assert 'confidence' in response, "Response should contain confidence field (MVP1 extension)"
 
 
 if __name__ == "__main__":

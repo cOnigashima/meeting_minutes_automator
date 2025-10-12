@@ -122,12 +122,12 @@ class AudioProcessor:
 
         if not audio_data:
             logger.warning("Empty audio_data received")
-            # Send empty response for empty audio
+            # Send empty response for empty audio (MVP0 compatible)
             await self.ipc.send_message({
                 'id': msg_id,
                 'type': 'response',
                 'version': '1.0',
-                'result': None
+                'text': None
             })
             return
 
@@ -156,17 +156,17 @@ class AudioProcessor:
 
         if final_event:
             transcription = final_event['transcription']
+            # Send response with flat structure (MVP0 compatible + MVP1 extensions)
+            # STT-REQ-007.2/007.3: text field at root level for backward compatibility
             await self.ipc.send_message({
                 'id': msg_id,
                 'type': 'response',
                 'version': '1.0',
-                'result': {
-                    'text': transcription['text'],
-                    'is_final': transcription['is_final'],
-                    'confidence': transcription.get('confidence', 0.0),
-                    'language': transcription.get('language', 'ja'),
-                    'processing_time_ms': transcription.get('processing_time_ms', 0),
-                }
+                'text': transcription['text'],  # MVP0 compatible (root level)
+                'is_final': transcription['is_final'],  # MVP1 extension
+                'confidence': transcription.get('confidence', 0.0),  # MVP1 extension
+                'language': transcription.get('language', 'ja'),  # MVP1 extension
+                'processing_time_ms': transcription.get('processing_time_ms', 0),  # MVP1 extension
             })
             logger.info(f"Sent final transcription: {transcription['text'][:50]}...")
         else:
@@ -175,7 +175,7 @@ class AudioProcessor:
                 'id': msg_id,
                 'type': 'response',
                 'version': '1.0',
-                'result': None
+                'text': None
             })
             logger.debug("No final transcription yet, sent empty response")
 
