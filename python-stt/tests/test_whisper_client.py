@@ -150,5 +150,55 @@ class TestWhisperSTTEngineModelTypes:
         assert actual_sizes == expected_sizes
 
 
+class TestWhisperSTTEngineModelSwitching:
+    """Test WhisperSTTEngine dynamic model switching (Task 5.2, STT-REQ-006.9)."""
+
+    @pytest.mark.asyncio
+    async def test_load_model_rollback_on_failure(self):
+        """
+        STT-REQ-006.9: load_model() should rollback on failure
+
+        GIVEN WhisperSTTEngine with a loaded model
+        WHEN load_model() fails to load new model
+        THEN old model should be restored and transcribe() should still work
+        """
+        from stt_engine.transcription.whisper_client import WhisperSTTEngine, WhisperModel
+        from unittest.mock import patch, MagicMock
+
+        # Initialize with 'tiny' model
+        engine = WhisperSTTEngine(model_size='tiny')
+
+        # Manually set up a mock model to simulate already-loaded state
+        mock_old_model = MagicMock(spec=WhisperModel)
+        engine.model = mock_old_model
+        engine.model_path = "fake/path/to/tiny"
+
+        # Verify initialization succeeded
+        assert engine.model is not None, "Initial model should be loaded"
+
+        # Save old model reference
+        old_model = engine.model
+        old_model_size = engine.model_size
+        old_model_path = engine.model_path
+
+        # Mock WhisperModel to raise exception on construction
+        with patch('stt_engine.transcription.whisper_client.WhisperModel') as mock_whisper_model:
+            mock_whisper_model.side_effect = RuntimeError("Mock model load failure")
+
+            # Try to switch to 'base' model (should fail and rollback)
+            with pytest.raises(RuntimeError, match="Mock model load failure"):
+                await engine.load_model('base')
+
+            # Verify rollback: old model, size, and path restored
+            assert engine.model is old_model, "Model should be restored to old model"
+            assert engine.model_size == old_model_size, f"model_size should be {old_model_size}"
+            assert engine.model_path == old_model_path, "model_path should be restored"
+
+            # Verify engine still works with old model
+            # (Don't actually call transcribe() as it requires real audio data,
+            #  just verify model is not None)
+            assert engine.model is not None, "Model should not be None after rollback"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -53,6 +53,12 @@ class AudioProcessor:
         self.pipeline = AudioPipeline(vad=self.vad, stt_engine=self.stt_engine)
         self.ipc = None
 
+        # Initialize ResourceMonitor (Task 5.2, STT-REQ-006)
+        from stt_engine.resource_monitor import ResourceMonitor
+        self.resource_monitor = ResourceMonitor()
+        self.resource_monitor.current_model = self.stt_engine.model_size
+        self.resource_monitor.initial_model = self.stt_engine.model_size
+
         logger.info("AudioProcessor initialized successfully")
 
     async def handle_message(self, msg: Dict[str, Any]) -> None:
@@ -180,12 +186,109 @@ class AudioProcessor:
             logger.debug("No final transcription yet, sent empty response")
 
 
+    async def _handle_model_downgrade(self, old_model: str, new_model: str) -> None:
+        """
+        Handle model downgrade callback from ResourceMonitor (Task 5.2, STT-REQ-006.9).
+
+        This method:
+        1. Triggers WhisperSTTEngine to load the new model
+        2. Updates ResourceMonitor's current_model (only on success)
+        3. Sends IPC notification to UI
+
+        Args:
+            old_model: Previous model size
+            new_model: New (downgraded) model size
+
+        Raises:
+            Exception: Re-raises any exception from load_model() to signal failure
+        """
+        logger.info(f"Model downgrade triggered: {old_model} → {new_model}")
+
+        try:
+            # Load new model in WhisperSTTEngine
+            await self.stt_engine.load_model(new_model)
+
+            # Update ResourceMonitor state (only after successful load)
+            self.resource_monitor.current_model = new_model
+
+            # Send IPC notification to UI (STT-REQ-006.9)
+            if self.ipc:
+                await self.ipc.send_message({
+                    'type': 'event',
+                    'event': 'model_change',
+                    'old_model': old_model,
+                    'new_model': new_model,
+                    'reason': 'cpu_high' if self.resource_monitor.cpu_high_start_time else 'memory_high'
+                })
+                logger.info(f"Sent model_change IPC notification: {old_model} → {new_model}")
+
+        except Exception as e:
+            logger.error(f"Failed to handle model downgrade: {e}", exc_info=True)
+            # Don't update current_model - it stays at old_model (automatic rollback)
+            # Re-raise to signal failure to monitoring loop
+            raise
+
+    async def _handle_upgrade_proposal(self, current_model: str, proposed_model: str) -> None:
+        """
+        Handle upgrade proposal callback from ResourceMonitor (Task 5.2, STT-REQ-006.10).
+
+        This method sends IPC notification to UI proposing model upgrade.
+        Actual upgrade is performed only after user approval (Task 5.3).
+
+        Args:
+            current_model: Current model size
+            proposed_model: Proposed (upgraded) model size
+        """
+        logger.info(f"Upgrade proposal: {current_model} → {proposed_model}")
+
+        try:
+            # Send IPC notification to UI (STT-REQ-006.10)
+            if self.ipc:
+                await self.ipc.send_message({
+                    'type': 'event',
+                    'event': 'upgrade_proposal',
+                    'current_model': current_model,
+                    'proposed_model': proposed_model,
+                    'message': f'Resources have recovered. Upgrade to {proposed_model}?'
+                })
+                logger.info(f"Sent upgrade_proposal IPC notification: {current_model} → {proposed_model}")
+
+        except Exception as e:
+            logger.error(f"Failed to send upgrade proposal: {e}", exc_info=True)
+
+    async def _handle_pause_recording(self) -> None:
+        """
+        Handle recording pause callback from ResourceMonitor (Task 5.2, STT-REQ-006.11).
+
+        This method sends IPC notification to UI when tiny model is insufficient.
+        Actual recording pause is handled by the UI/Rust backend.
+        """
+        logger.warning("Recording pause requested: tiny model insufficient for current resources")
+
+        try:
+            # Send IPC notification to UI (STT-REQ-006.11)
+            if self.ipc:
+                await self.ipc.send_message({
+                    'type': 'event',
+                    'event': 'recording_paused',
+                    'reason': 'insufficient_resources',
+                    'message': 'System resources are critically low. Recording paused.'
+                })
+                logger.info("Sent recording_paused IPC notification")
+
+        except Exception as e:
+            logger.error(f"Failed to send recording pause notification: {e}", exc_info=True)
+
+
 async def main():
     """
     Main entry point for Python sidecar process.
 
     Initializes AudioProcessor and IpcHandler, then starts IPC event loop.
     """
+    processor = None
+    monitoring_task = None
+
     try:
         # Initialize audio processor
         processor = AudioProcessor()
@@ -198,6 +301,17 @@ async def main():
             'type': 'ready',
             'message': 'Python sidecar ready (MVP1 Real STT)'
         })
+
+        # Start resource monitoring loop (Task 5.2, STT-REQ-006)
+        logger.info("Starting resource monitoring loop...")
+        monitoring_task = asyncio.create_task(
+            processor.resource_monitor.start_monitoring(
+                interval_seconds=30.0,  # STT-NFR-001.6
+                on_downgrade=processor._handle_model_downgrade,
+                on_upgrade_proposal=processor._handle_upgrade_proposal,
+                on_pause_recording=processor._handle_pause_recording
+            )
+        )
 
         logger.info("Starting IPC event loop...")
 
@@ -212,6 +326,20 @@ async def main():
     except Exception as e:
         logger.error(f"Fatal error in main: {e}", exc_info=True)
         sys.exit(1)
+
+    finally:
+        # Cleanup: Stop monitoring loop
+        if processor and processor.resource_monitor:
+            logger.info("Stopping resource monitoring loop...")
+            await processor.resource_monitor.stop_monitoring()
+
+        # Wait for monitoring task to complete
+        if monitoring_task:
+            try:
+                await asyncio.wait_for(monitoring_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning("Monitoring task did not stop within timeout")
+                monitoring_task.cancel()
 
 
 if __name__ == "__main__":

@@ -365,8 +365,7 @@ class WhisperSTTEngine:
             # Load faster-whisper model
             logger.info(f"Loading faster-whisper model: {self.model_size}")
 
-            # TODO: Actual model loading will be implemented in Task 3.4
-            # For now, we simulate model loading for testing purposes
+            # Load faster-whisper model (Task 3.4 implementation)
             self.model = WhisperModel(
                 self.model_path,
                 device="cpu",
@@ -389,6 +388,76 @@ class WhisperSTTEngine:
 
         except Exception as e:
             logger.error(f"Failed to initialize WhisperSTTEngine: {e}")
+            raise
+
+    async def load_model(self, new_model_size: ModelSize) -> None:
+        """
+        Dynamically switch to a different model size (Task 5.2, STT-REQ-006.9).
+
+        This method:
+        1. Saves current model state for rollback
+        2. Loads the new model
+        3. Only unloads old model after new model loads successfully
+        4. Rolls back to old model on any failure
+
+        Args:
+            new_model_size: Target model size to load
+
+        Raises:
+            Exception: If model loading fails (after rollback)
+        """
+        import gc
+
+        logger.info(f"Switching model from {self.model_size} to {new_model_size}")
+
+        # Save current state for rollback (CRITICAL: before any modifications)
+        old_model = self.model
+        old_model_size = self.model_size
+        old_model_path = self.model_path
+
+        try:
+            # Update model size first
+            self.model_size = new_model_size
+
+            # Re-detect model path for new size
+            try:
+                self.model_path = self._detect_model_path()
+            except (TimeoutError, ConnectionError, OSError) as network_error:
+                # Fallback to bundled model if network error
+                logger.warning(f"Network error during model detection: {network_error}")
+                logger.info(f"オフラインモードで起動: バンドル{new_model_size}モデル使用")
+                self.model_path = f"[app_resources]/models/faster-whisper/{new_model_size}"
+
+            logger.info(f"Loading new model: {new_model_size} from {self.model_path}")
+
+            # Load new model (CRITICAL: this can fail)
+            new_model = WhisperModel(
+                self.model_path,
+                device="cpu",
+                compute_type="int8"
+            )
+
+            # Success: switch to new model and cleanup old one
+            self.model = new_model
+            if old_model is not None:
+                logger.info(f"Unloading old model: {old_model_size}")
+                del old_model
+                # Force garbage collection to release resources
+                # faster-whisper doesn't have close() method, relies on GC
+                gc.collect()
+
+            logger.info(f"Model switch complete: {old_model_size} → {new_model_size}")
+
+        except Exception as e:
+            # CRITICAL: Rollback to old model state on ANY failure
+            logger.error(f"Failed to load model {new_model_size}: {e}")
+            logger.info(f"Rolling back to previous model: {old_model_size}")
+            
+            # Restore all state (model, size, path)
+            self.model = old_model
+            self.model_size = old_model_size
+            self.model_path = old_model_path
+            
             raise
 
     async def transcribe(self, audio_data: bytes, sample_rate: int = 16000, is_final: bool = False) -> dict:

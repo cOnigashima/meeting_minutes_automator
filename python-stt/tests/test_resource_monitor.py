@@ -262,7 +262,7 @@ class TestDynamicDowngrade:
 
     def test_should_downgrade_for_high_memory_usage(self):
         """
-        STT-REQ-006.8: Immediate downgrade to base for 4GB+ memory usage
+        STT-REQ-006.8: Immediate downgrade to base for critical memory usage
 
         GIVEN Memory usage >= 4GB
         WHEN should_downgrade_memory() is called
@@ -273,7 +273,7 @@ class TestDynamicDowngrade:
         monitor = ResourceMonitor()
         monitor.current_model = 'large-v3'
 
-        # Simulate 4.5GB memory usage
+        # Simulate 4.5GB memory usage (critical, >= 4GB)
         should_downgrade, target_model = monitor.should_downgrade_memory(memory_gb=4.5)
 
         assert should_downgrade is True
@@ -334,6 +334,519 @@ class TestDynamicDowngrade:
 
         assert result is None
         assert monitor.current_model == 'tiny'
+
+
+class TestUINotificationAndUpgrade:
+    """Test UI notification and upgrade proposal (STT-REQ-006.9-006.12)"""
+
+    def test_create_downgrade_notification(self):
+        """
+        STT-REQ-006.9: Create downgrade notification message
+
+        GIVEN model downgrade occurs
+        WHEN create_downgrade_notification() is called
+        THEN notification message should be generated
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+
+        notification = monitor.create_downgrade_notification(
+            old_model='large-v3',
+            new_model='medium'
+        )
+
+        assert notification is not None
+        assert notification['type'] == 'model_change'
+        assert notification['message'] == 'モデル変更: large-v3 → medium'
+        assert notification['old_model'] == 'large-v3'
+        assert notification['new_model'] == 'medium'
+
+    def test_should_propose_upgrade_when_resources_recovered(self):
+        """
+        STT-REQ-006.10: Propose upgrade when resources recovered
+
+        GIVEN memory < 2GB AND CPU < 50% sustained for 5 minutes
+        WHEN should_propose_upgrade() is called
+        THEN upgrade should be proposed
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+        monitor.initial_model = 'large-v3'
+
+        # Simulate resource recovery (5 minutes = 300 seconds)
+        should_propose = monitor.should_propose_upgrade(
+            memory_gb=1.5,
+            cpu_percent=45,
+            duration_seconds=305
+        )
+
+        assert should_propose is True
+
+    def test_should_not_propose_upgrade_before_5_minutes(self):
+        """
+        STT-REQ-006.10: No upgrade proposal before 5 minutes
+
+        GIVEN memory < 2GB AND CPU < 50% but < 5 minutes
+        WHEN should_propose_upgrade() is called
+        THEN upgrade should NOT be proposed
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+        monitor.initial_model = 'large-v3'
+
+        # Simulate short recovery period (2 minutes)
+        should_propose = monitor.should_propose_upgrade(
+            memory_gb=1.5,
+            cpu_percent=45,
+            duration_seconds=120
+        )
+
+        assert should_propose is False
+
+    def test_should_not_propose_upgrade_when_high_cpu(self):
+        """
+        STT-REQ-006.10: No upgrade proposal when CPU still high
+
+        GIVEN memory < 2GB but CPU >= 50%
+        WHEN should_propose_upgrade() is called
+        THEN upgrade should NOT be proposed
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+        monitor.initial_model = 'large-v3'
+
+        # Simulate high CPU (65%)
+        should_propose = monitor.should_propose_upgrade(
+            memory_gb=1.5,
+            cpu_percent=65,
+            duration_seconds=305
+        )
+
+        assert should_propose is False
+
+    def test_create_upgrade_proposal_notification(self):
+        """
+        STT-REQ-006.10: Create upgrade proposal notification
+
+        GIVEN upgrade proposal is triggered
+        WHEN create_upgrade_proposal_notification() is called
+        THEN proposal notification should be generated
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+
+        notification = monitor.create_upgrade_proposal_notification(
+            current_model='small',
+            target_model='medium'
+        )
+
+        assert notification is not None
+        assert notification['type'] == 'upgrade_proposal'
+        assert 'small' in notification['message']
+        assert 'medium' in notification['message']
+        assert notification['current_model'] == 'small'
+        assert notification['target_model'] == 'medium'
+
+    def test_get_upgrade_target(self):
+        """
+        STT-REQ-006.12: Upgrade sequence (tiny → base → small → medium → large)
+
+        GIVEN current model
+        WHEN get_upgrade_target() is called
+        THEN next higher model in sequence should be returned
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.initial_model = 'large-v3'
+
+        # Test upgrade sequence
+        assert monitor.get_upgrade_target('tiny') == 'base'
+        assert monitor.get_upgrade_target('base') == 'small'
+        assert monitor.get_upgrade_target('small') == 'medium'
+        assert monitor.get_upgrade_target('medium') == 'large-v3'
+        assert monitor.get_upgrade_target('large-v3') is None  # Already at maximum
+
+    def test_get_upgrade_target_respects_initial_model(self):
+        """
+        STT-REQ-006.12: Upgrade should not exceed initial_model
+
+        GIVEN initial_model = small
+        WHEN get_upgrade_target() is called
+        THEN should not return models larger than small
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.initial_model = 'small'
+
+        # MODEL_SEQUENCE = ['large-v3', 'medium', 'small', 'base', 'tiny']
+        # index:             0          1         2        3       4
+        # Smaller index = larger model
+
+        # Upgrades that should work (staying within small ceiling)
+        assert monitor.get_upgrade_target('tiny') == 'base'  # 4→3 OK
+        assert monitor.get_upgrade_target('base') == 'small'  # 3→2 OK (at ceiling)
+
+        # Upgrades that should be blocked (would exceed initial_model)
+        assert monitor.get_upgrade_target('small') is None  # 2→1 would be medium, exceeds small
+
+    def test_upgrade_model_changes_current_model(self):
+        """
+        STT-REQ-006.12: Model upgrade execution
+
+        GIVEN current model is 'small'
+        WHEN upgrade_model() is called
+        THEN current model should change to 'medium'
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+        monitor.initial_model = 'large-v3'
+
+        old_model, new_model = monitor.upgrade_model()
+
+        assert old_model == 'small'
+        assert new_model == 'medium'
+        assert monitor.current_model == 'medium'
+
+    def test_cannot_upgrade_above_initial_model(self):
+        """
+        STT-REQ-006.12: Cannot upgrade beyond initial model
+
+        GIVEN current model is same as initial model
+        WHEN upgrade_model() is called
+        THEN None should be returned (no upgrade possible)
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'large-v3'
+        monitor.initial_model = 'large-v3'
+
+        result = monitor.upgrade_model()
+
+        assert result is None
+        assert monitor.current_model == 'large-v3'
+
+    def test_should_pause_recording_when_tiny_and_insufficient(self):
+        """
+        STT-REQ-006.11: Pause recording when tiny model is insufficient
+
+        GIVEN current model is 'tiny' AND resources still insufficient
+        WHEN should_pause_recording() is called
+        THEN recording pause should be recommended
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'tiny'
+
+        # Simulate high memory usage (>= 4GB) on tiny model
+        should_pause = monitor.should_pause_recording(
+            current_model='tiny',
+            memory_gb=4.5,
+            cpu_percent=90
+        )
+
+        assert should_pause is True
+
+    def test_should_not_pause_recording_when_not_tiny(self):
+        """
+        STT-REQ-006.11: No pause when not on tiny model
+
+        GIVEN current model is not 'tiny'
+        WHEN should_pause_recording() is called
+        THEN recording pause should NOT be recommended
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+
+        # Even with high resource usage
+        should_pause = monitor.should_pause_recording(
+            current_model='small',
+            memory_gb=4.5,
+            cpu_percent=90
+        )
+
+        assert should_pause is False
+
+    def test_create_recording_pause_notification(self):
+        """
+        STT-REQ-006.11: Create recording pause notification
+
+        GIVEN recording pause is triggered
+        WHEN create_recording_pause_notification() is called
+        THEN pause notification should be generated
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+
+        notification = monitor.create_recording_pause_notification()
+
+        assert notification is not None
+        assert notification['type'] == 'recording_paused'
+        assert notification['message'] == 'システムリソース不足のため録音を一時停止しました'
+        assert notification['reason'] == 'insufficient_resources'
+
+
+class TestMonitoringLoop:
+    """Test monitoring loop functionality (STT-NFR-001.6, STT-NFR-005.4)"""
+
+    @pytest.mark.asyncio
+    async def test_monitor_loop_executes_periodically(self):
+        """
+        STT-NFR-001.6, STT-NFR-005.4: Monitor loop executes every 30 seconds
+
+        GIVEN ResourceMonitor with monitoring loop
+        WHEN monitor_loop() is running
+        THEN resources should be checked periodically
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import AsyncMock, MagicMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'medium'
+        monitor.initial_model = 'large-v3'
+
+        # Mock callbacks
+        on_downgrade = AsyncMock()
+        on_upgrade_proposal = AsyncMock()
+        on_pause_recording = AsyncMock()
+
+        # Run monitoring loop for short duration
+        task = asyncio.create_task(monitor.start_monitoring(
+            interval_seconds=0.1,  # Fast interval for testing
+            on_downgrade=on_downgrade,
+            on_upgrade_proposal=on_upgrade_proposal,
+            on_pause_recording=on_pause_recording
+        ))
+
+        # Let it run long enough for multiple cycles
+        # With 0.1s interval: cycle1 at 0s, cycle2 at 0.1s, cycle3 at 0.2s
+        await asyncio.sleep(0.5)
+
+        # Stop monitoring
+        await monitor.stop_monitoring()
+        await task
+
+        # Verify monitoring occurred (at least 3 checks with 0.1s interval in 0.5s)
+        assert monitor.monitoring_cycle_count >= 3
+
+    @pytest.mark.asyncio
+    async def test_cpu_high_duration_tracking(self):
+        """
+        STT-REQ-006.7: Track CPU high duration automatically
+
+        GIVEN ResourceMonitor with monitoring loop
+        WHEN CPU >= 85% for multiple cycles
+        THEN cpu_high_start_time should be tracked
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'large-v3'
+        monitor.initial_model = 'large-v3'
+
+        # Mock CPU to always return high usage, memory to be low (avoid memory-based downgrade)
+        with patch('psutil.cpu_percent', return_value=90), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            # Set memory low enough to avoid memory-based downgrade (< 3GB)
+            mock_mem.return_value.percent = 30
+            mock_mem.return_value.used = 2.0 * (1024 ** 3)  # 2GB (< 3GB threshold)
+
+            on_downgrade = AsyncMock()
+
+            task = asyncio.create_task(monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=on_downgrade
+            ))
+
+            await asyncio.sleep(0.25)
+            await monitor.stop_monitoring()
+            await task
+
+            # Verify cpu_high_start_time was set
+            assert monitor.cpu_high_start_time is not None
+
+    @pytest.mark.asyncio
+    async def test_low_resource_duration_tracking(self):
+        """
+        STT-REQ-006.10: Track low resource duration for upgrade proposal
+
+        GIVEN ResourceMonitor with monitoring loop
+        WHEN memory < 2GB AND CPU < 50% for multiple cycles
+        THEN low_resource_start_time should be tracked
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+        monitor.initial_model = 'large-v3'
+
+        # Mock resources to show recovery
+        with patch('psutil.cpu_percent', return_value=30), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            mock_mem.return_value.percent = 40
+            mock_mem.return_value.used = 1.5 * (1024 ** 3)  # 1.5GB (low memory)
+            mock_mem.return_value.available = 4 * (1024 ** 3)
+
+            on_upgrade_proposal = AsyncMock()
+
+            task = asyncio.create_task(monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_upgrade_proposal=on_upgrade_proposal
+            ))
+
+            await asyncio.sleep(0.25)
+            await monitor.stop_monitoring()
+            await task
+
+            # Verify low_resource_start_time was set
+            assert monitor.low_resource_start_time is not None
+
+    @pytest.mark.asyncio
+    async def test_memory_downgrade_triggered_immediately(self):
+        """
+        STT-REQ-006.8: Memory downgrade triggers immediately
+
+        GIVEN ResourceMonitor with high memory usage (>= 4GB)
+        WHEN monitoring loop detects high memory
+        THEN downgrade callback should be invoked immediately
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'large-v3'
+        monitor.initial_model = 'large-v3'
+
+        # Mock memory to always return high usage
+        with patch('psutil.virtual_memory') as mock_mem, \
+             patch('psutil.cpu_percent', return_value=50):
+
+            mock_mem.return_value.percent = 92  # High percentage (for logging)
+            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB (critical, >= 4GB)
+
+            on_downgrade = AsyncMock()
+
+            task = asyncio.create_task(monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=on_downgrade
+            ))
+
+            await asyncio.sleep(0.25)
+            await monitor.stop_monitoring()
+            await task
+
+            # Verify downgrade was called (immediately, not after 60 seconds)
+            assert on_downgrade.called
+            # Should downgrade to 'base' immediately
+            call_args = on_downgrade.call_args
+            assert call_args[0][1] == 'base'  # new_model should be 'base'
+
+    @pytest.mark.asyncio
+    async def test_downgrade_triggered_after_60_seconds_high_cpu(self):
+        """
+        STT-REQ-006.7: Downgrade after 60 seconds of high CPU
+
+        GIVEN ResourceMonitor with high CPU for 60+ seconds
+        WHEN monitoring loop detects sustained high CPU
+        THEN downgrade callback should be invoked
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'large-v3'
+        monitor.initial_model = 'large-v3'
+
+        # Mock CPU to always return high usage
+        with patch('psutil.cpu_percent', return_value=90):
+            on_downgrade = AsyncMock()
+
+            # Simulate 60 seconds elapsed by manipulating cpu_high_start_time
+            import time
+            monitor.cpu_high_start_time = time.time() - 65
+
+            task = asyncio.create_task(monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=on_downgrade
+            ))
+
+            await asyncio.sleep(0.25)
+            await monitor.stop_monitoring()
+            await task
+
+            # Verify downgrade was called
+            assert on_downgrade.called
+
+    @pytest.mark.asyncio
+    async def test_downgrade_failure_does_not_update_current_model(self):
+        """
+        Task 5.2: Downgrade failure should not change current_model
+
+        GIVEN ResourceMonitor with high memory usage
+        WHEN downgrade callback fails (raises exception)
+        THEN current_model should remain unchanged (rollback)
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        from unittest.mock import patch, AsyncMock
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'large-v3'
+        monitor.initial_model = 'large-v3'
+
+        # Mock high memory usage (>= 4GB triggers immediate downgrade)
+        with patch('psutil.cpu_percent', return_value=50), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            mock_mem.return_value.percent = 92
+            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB
+
+            # Mock callback that fails
+            async def failing_downgrade(old_model, new_model):
+                raise RuntimeError("Mock downgrade failure")
+
+            on_downgrade = AsyncMock(side_effect=failing_downgrade)
+
+            task = asyncio.create_task(monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=on_downgrade
+            ))
+
+            await asyncio.sleep(0.25)
+            await monitor.stop_monitoring()
+            await task
+
+            # Verify downgrade was attempted
+            assert on_downgrade.called
+
+            # CRITICAL: current_model should NOT be changed (rollback)
+            assert monitor.current_model == 'large-v3', \
+                "current_model should remain unchanged after downgrade failure"
 
 
 if __name__ == "__main__":

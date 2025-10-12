@@ -137,30 +137,63 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - _Note: STT-REQ-003.7/003.8（部分テキスト）はAudioPipeline内部実装済み、IPC配信はTask 7で実装_
 
 - [ ] 5. リソース監視と動的モデルダウングレード機能（Python側）
-- [x] 5.1 ResourceMonitorスケルトンと監視ループ
+- [x] 5.1a ResourceMonitor API層実装（完了）
   - ResourceMonitorクラスの定義完了
-  - システムリソース検出機能実装（CPU、メモリ、GPU）
-  - モデル選択ルール実装（large-v3/medium/small/base/tiny）
-  - リソース使用量取得機能実装（get_current_memory_usage, get_current_cpu_usage）
-  - ユニットテスト緑化（10テスト合格）
-  - _Requirements: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.3_
+  - システムリソース検出API実装（CPU、メモリ、GPU）
+  - モデル選択ルールAPI実装（large-v3/medium/small/base/tiny）
+  - リソース使用量取得API実装（get_current_memory_usage, get_current_cpu_usage）
+  - ダウングレード/アップグレード判定API実装
+  - UI通知生成API実装
+  - ユニットテスト緑化（27テスト合格）
+  - _Note: API層のみ実装。監視ループ・統合・実際のモデル切替は未実装_
+  - _Requirements: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.3（部分）_
 
-- [x] 5.2 動的モデルダウングレード機能
-  - CPU 85%/60秒持続時の1段階ダウングレード判定実装
-  - メモリ4GB到達時の即座baseモデルダウングレード判定実装
-  - ダウングレード順序の実装（large→medium→small→base→tiny）
-  - モデル切り替え履歴のログ記録実装
-  - ユニットテスト緑化（6テスト合格、合計16テスト）
-  - _Note: 音声セグメント境界での切り替えロジック（シームレス切り替え）はTask 5.3で実装_
-  - _Requirements: STT-REQ-006.6, STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9（一部）_
+- [x] 5.1b ResourceMonitor監視ループ実装（完了）
+  - **30秒間隔の監視ループ**実装完了（`start_monitoring()`, `stop_monitoring()`）
+  - CPU負荷持続判定の自動状態管理実装完了（cpu_high_start_timeの自動更新）
+  - リソース回復の自動状態管理実装完了（low_resource_start_timeの自動更新）
+  - 60秒継続CPU高負荷検出と自動ダウングレードトリガー実装完了
+  - 5分継続リソース回復検出と自動アップグレード提案実装完了
+  - 30秒間隔のDEBUGログ出力実装完了
+  - コールバックベース設計（on_downgrade, on_upgrade_proposal, on_pause_recording）
+  - ユニットテスト緑化（4テスト合格、合計31テスト）
+  - バグ修正: `should_pause_recording()` をメモリ使用率ベースに変更
+  - バグ修正: `get_current_cpu_usage()` の1秒ブロック問題修正
+  - _Note: AudioProcessorへの統合はTask 5.2で実装_
+  - _Requirements: STT-NFR-001.6, STT-NFR-005.4, STT-REQ-006.7, STT-REQ-006.10（完全実装）_
 
-- [ ] 5.3 UI通知とアップグレード提案機能
-  - トースト通知の送信機能（「モデル変更: {old}→{new}」）
-  - リソース回復検出ロジック（メモリ2GB未満 AND CPU 50%未満が5分継続）
-  - モデルアップグレード提案UI通知
-  - ユーザー承認時のアップグレード試行
-  - tinyモデルでもリソース不足時の録音一時停止
-  - _Requirements: STT-REQ-006.9, STT-REQ-006.10, STT-REQ-006.11, STT-REQ-006.12_
+- [x] 5.2 動的モデルダウングレード機能（完了 + Critical Fixes適用済み）
+  - **WhisperSTTEngine.load_model()実装完了**: 動的モデル切替（unload → reload）
+    - **🔧 Critical Fix**: リソースリーク対策として`gc.collect()`追加（line 422）
+    - **🔧 Cleanup**: TODOコメント削除（line 368）
+  - **AudioProcessorコールバック統合完了**: `_handle_model_downgrade`, `_handle_upgrade_proposal`, `_handle_pause_recording`
+  - **ResourceMonitor統合完了**: AudioProcessor.__init__でResourceMonitor初期化、current_model/initial_model設定
+  - **🔧 Critical Fix: 監視ループ起動実装完了**（main.py:299-308）
+    - `main()`関数で30秒間隔の監視ループを自動起動
+    - シャットダウン時の適切なクリーンアップ処理実装（finally block）
+    - **影響**: これにより Task 5.2 の全機能が本番環境で実際に動作
+  - **IPC通知送信実装完了**: model_change (cpu_high/memory_high), upgrade_proposal, recording_paused イベント
+  - **メモリダウングレードロジック修正完了**: tinyモデル時のダウングレードスキップ実装（line 501）
+  - **アップグレード提案ロジック拡張完了**: initial_modelへの直接アップグレード提案実装（line 538-559）
+  - **統合テスト緑化完了**: TestResourceMonitorIntegration全5テスト合格
+  - **🔧 テスト追加**: `test_get_upgrade_target_respects_initial_model()` 追加（initial_model ceiling確認）
+  - **全テスト合格**: 139 passed (+1), 1 skipped（リグレッションなし）
+  - _Requirements: STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9, STT-REQ-006.10, STT-REQ-006.11, STT-NFR-001.6（完全実装）_
+  - _Note: Task 5.3（ユーザー承認時のアップグレード実行）は別タスク。本タスクは提案送信まで実装_
+
+  **検証済み指摘対応**:
+  - ✅ **指摘1（Critical）**: 監視ループ未起動 → main()で起動実装完了
+  - ✅ **指摘4（Medium）**: リソースリーク懸念 → gc.collect()追加
+  - ❌ **指摘2**: メモリ監視未実装 → 誤り。line 498で実装済み
+  - ❌ **指摘3**: get_upgrade_target()ロジックバグ → 誤り。元のロジックが正しい
+
+- [ ] 5.3 UI通知とアップグレード提案機能（未実装）
+  - IPC経由のUI通知送信実装（upgrade_proposal, model_change）
+  - リソース回復の自律的検出実装（low_resource_start_timeの自動更新）
+  - ユーザー承認時のアップグレード試行実装（IPC経由で受信）
+  - tinyモデルでリソース不足時の録音一時停止実行実装
+  - 統合テストの緑化
+  - _Requirements: STT-REQ-006.10, STT-REQ-006.11, STT-REQ-006.12（完全実装）_
 
 - [ ] 6. ローカルストレージ機能の実装（Rust側）
 - [ ] 6.1 LocalStorageServiceスケルトンとセッション管理

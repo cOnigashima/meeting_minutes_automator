@@ -384,5 +384,351 @@ class TestAudioProcessorIntegration:
                 assert 'confidence' in response, "Response should contain confidence field (MVP1 extension)"
 
 
+
+class TestResourceMonitorIntegration:
+    """Integration tests for ResourceMonitor + AudioProcessor (Task 5.2)"""
+
+    @pytest.mark.asyncio
+    async def test_resource_monitor_initialization(self):
+        """
+        Task 5.2: ResourceMonitor should be initialized in AudioProcessor
+
+        GIVEN AudioProcessor
+        WHEN Initialized
+        THEN ResourceMonitor should be created and configured
+        """
+        from unittest.mock import patch, MagicMock
+
+        with patch('main.WhisperSTTEngine') as mock_whisper, \
+             patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'):
+
+            mock_whisper.return_value = MagicMock()
+
+            from main import AudioProcessor
+
+            processor = AudioProcessor()
+
+            # ResourceMonitor should be initialized
+            assert hasattr(processor, 'resource_monitor'), "AudioProcessor should have resource_monitor"
+            assert processor.resource_monitor is not None
+            # Should be configured with current model from STT engine
+            assert processor.resource_monitor.current_model == processor.stt_engine.model_size
+
+    @pytest.mark.asyncio
+    async def test_model_downgrade_on_high_cpu(self):
+        """
+        Task 5.2, STT-REQ-006.7: CPU-based model downgrade
+
+        GIVEN AudioProcessor with monitoring enabled
+        WHEN CPU usage stays high (>= 85%) for 60+ seconds
+        THEN Model should downgrade and IPC notification should be sent
+        """
+        from unittest.mock import patch, MagicMock, AsyncMock
+        import asyncio
+        import time
+
+        with patch('main.WhisperSTTEngine') as mock_whisper_class, \
+             patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
+             patch('psutil.cpu_percent', return_value=90), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            # Mock memory to be low (safe, < 3GB)
+            mock_mem.return_value.percent = 50
+            mock_mem.return_value.used = 2.0 * (1024 ** 3)  # 2GB
+
+            # Mock STT engine
+            mock_stt = MagicMock()
+            mock_stt.model_size = 'large-v3'
+            mock_stt.load_model = AsyncMock()
+            mock_whisper_class.return_value = mock_stt
+
+            from main import AudioProcessor
+
+            processor = AudioProcessor()
+
+            # Simulate CPU high for 60+ seconds by setting timestamp
+            processor.resource_monitor.cpu_high_start_time = time.time() - 61
+
+            # Mock IPC
+            sent_messages = []
+            async def mock_send(msg):
+                sent_messages.append(msg)
+            processor.ipc = AsyncMock()
+            processor.ipc.send_message = mock_send
+
+            # Start monitoring with fast interval
+            task = asyncio.create_task(processor.resource_monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=processor._handle_model_downgrade,
+                on_upgrade_proposal=processor._handle_upgrade_proposal,
+                on_pause_recording=processor._handle_pause_recording
+            ))
+
+            # Wait for one monitoring cycle
+            await asyncio.sleep(0.2)
+
+            await processor.resource_monitor.stop_monitoring()
+            await task
+
+            # Verify model downgrade was called
+            assert mock_stt.load_model.called, "load_model should be called for downgrade"
+
+            # Verify IPC notification was sent
+            model_change_msgs = [m for m in sent_messages if m.get('event') == 'model_change']
+            assert len(model_change_msgs) > 0, "model_change event should be sent via IPC"
+
+            # Verify notification format
+            msg = model_change_msgs[0]
+            assert msg['type'] == 'event'
+            assert 'old_model' in msg
+            assert 'new_model' in msg
+            assert msg['reason'] in ['cpu_high', 'memory_high']
+
+    @pytest.mark.asyncio
+    async def test_model_downgrade_on_high_memory(self):
+        """
+        Task 5.2, STT-REQ-006.8: Memory-based model downgrade
+
+        GIVEN AudioProcessor with monitoring enabled
+        WHEN Memory usage exceeds 90%
+        THEN Model should immediately downgrade to base and IPC notification sent
+        """
+        from unittest.mock import patch, MagicMock, AsyncMock
+        import asyncio
+
+        with patch('main.WhisperSTTEngine') as mock_whisper_class, \
+             patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
+             patch('psutil.cpu_percent', return_value=50), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            # Mock critical memory usage (>= 4GB)
+            mock_mem.return_value.percent = 92
+            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB (critical)
+
+            # Mock STT engine
+            mock_stt = MagicMock()
+            mock_stt.model_size = 'large-v3'
+            mock_stt.load_model = AsyncMock()
+            mock_whisper_class.return_value = mock_stt
+
+            from main import AudioProcessor
+
+            processor = AudioProcessor()
+
+            # Mock IPC
+            sent_messages = []
+            async def mock_send(msg):
+                sent_messages.append(msg)
+            processor.ipc = AsyncMock()
+            processor.ipc.send_message = mock_send
+
+            # Start monitoring
+            task = asyncio.create_task(processor.resource_monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=processor._handle_model_downgrade,
+                on_upgrade_proposal=processor._handle_upgrade_proposal,
+                on_pause_recording=processor._handle_pause_recording
+            ))
+
+            # Wait for one monitoring cycle
+            await asyncio.sleep(0.2)
+
+            await processor.resource_monitor.stop_monitoring()
+            await task
+
+            # Verify immediate downgrade to base
+            assert mock_stt.load_model.called
+            call_args = mock_stt.load_model.call_args
+            assert call_args[0][0] == 'base', "Should downgrade to base for critical memory"
+
+            # Verify IPC notification
+            model_change_msgs = [m for m in sent_messages if m.get('event') == 'model_change']
+            assert len(model_change_msgs) > 0
+            assert model_change_msgs[0]['new_model'] == 'base'
+            assert model_change_msgs[0]['reason'] == 'memory_high'
+
+    @pytest.mark.asyncio
+    async def test_upgrade_proposal_on_recovery(self):
+        """
+        Task 5.2, STT-REQ-006.10: Upgrade proposal after resource recovery
+
+        GIVEN AudioProcessor with downgraded model
+        WHEN Resources recover (CPU < 50%, memory < 60%) for 5+ minutes
+        THEN Upgrade proposal notification should be sent via IPC
+        """
+        from unittest.mock import patch, MagicMock, AsyncMock
+        import asyncio
+        import time
+
+        with patch('main.WhisperSTTEngine') as mock_whisper_class, \
+             patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
+             patch('psutil.cpu_percent', return_value=30), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            # Mock low resource usage (recovered, < 2GB)
+            mock_mem.return_value.percent = 40
+            mock_mem.return_value.used = 1.5 * (1024 ** 3)  # 1.5GB (low)
+
+            # Mock STT engine with downgraded model
+            mock_stt = MagicMock()
+            mock_stt.model_size = 'small'
+            mock_whisper_class.return_value = mock_stt
+
+            from main import AudioProcessor
+
+            processor = AudioProcessor()
+            # Set initial model to simulate downgrade history
+            processor.resource_monitor.initial_model = 'large-v3'
+            processor.resource_monitor.current_model = 'small'
+
+            # Simulate resources recovered for 5+ minutes by setting timestamp
+            processor.resource_monitor.low_resource_start_time = time.time() - 301
+
+            # Mock IPC
+            sent_messages = []
+            async def mock_send(msg):
+                sent_messages.append(msg)
+            processor.ipc = AsyncMock()
+            processor.ipc.send_message = mock_send
+
+            # Start monitoring
+            task = asyncio.create_task(processor.resource_monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=processor._handle_model_downgrade,
+                on_upgrade_proposal=processor._handle_upgrade_proposal,
+                on_pause_recording=processor._handle_pause_recording
+            ))
+
+            # Wait for one monitoring cycle
+            await asyncio.sleep(0.2)
+
+            await processor.resource_monitor.stop_monitoring()
+            await task
+
+            # Verify upgrade proposal was sent
+            upgrade_msgs = [m for m in sent_messages if m.get('event') == 'upgrade_proposal']
+            assert len(upgrade_msgs) > 0, "upgrade_proposal event should be sent"
+
+            msg = upgrade_msgs[0]
+            assert msg['type'] == 'event'
+            assert msg['current_model'] == 'small'
+            assert msg['proposed_model'] == 'large-v3'
+
+    @pytest.mark.asyncio
+    async def test_recording_pause_notification(self):
+        """
+        Task 5.2, STT-REQ-006.11: Recording pause when tiny model is insufficient
+
+        GIVEN AudioProcessor with tiny model
+        WHEN Resources are still insufficient (should_pause_recording returns True)
+        THEN recording_paused notification should be sent via IPC
+        """
+        from unittest.mock import patch, MagicMock, AsyncMock
+        import asyncio
+
+        with patch('main.WhisperSTTEngine') as mock_whisper_class, \
+             patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
+             patch('psutil.cpu_percent', return_value=95), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            # Mock very high memory usage (>= 4GB triggers pause)
+            mock_mem.return_value.percent = 95
+            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB (critical)
+
+            # Mock STT engine with tiny model
+            mock_stt = MagicMock()
+            mock_stt.model_size = 'tiny'
+            mock_whisper_class.return_value = mock_stt
+
+            from main import AudioProcessor
+
+            processor = AudioProcessor()
+            processor.resource_monitor.current_model = 'tiny'
+
+            # Mock IPC
+            sent_messages = []
+            async def mock_send(msg):
+                sent_messages.append(msg)
+            processor.ipc = AsyncMock()
+            processor.ipc.send_message = mock_send
+
+            # Start monitoring
+            task = asyncio.create_task(processor.resource_monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=processor._handle_model_downgrade,
+                on_upgrade_proposal=processor._handle_upgrade_proposal,
+                on_pause_recording=processor._handle_pause_recording
+            ))
+
+            await asyncio.sleep(0.2)
+
+            await processor.resource_monitor.stop_monitoring()
+            await task
+
+            # Verify recording_paused notification
+            pause_msgs = [m for m in sent_messages if m.get('event') == 'recording_paused']
+            assert len(pause_msgs) > 0, "recording_paused event should be sent"
+            
+            msg = pause_msgs[0]
+            assert msg['type'] == 'event'
+            assert msg['reason'] == 'insufficient_resources'
+
+    @pytest.mark.asyncio
+    async def test_model_downgrade_failure_state_consistency(self):
+        """
+        Task 5.2: Model downgrade failure should maintain state consistency
+
+        GIVEN AudioProcessor with monitoring enabled
+        WHEN Model downgrade fails (load_model raises exception)
+        THEN ResourceMonitor.current_model should remain unchanged (not updated)
+        """
+        from unittest.mock import patch, MagicMock, AsyncMock
+        import asyncio
+
+        with patch('main.WhisperSTTEngine') as mock_whisper_class, \
+             patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
+             patch('psutil.cpu_percent', return_value=50), \
+             patch('psutil.virtual_memory') as mock_mem:
+
+            # Mock critical memory usage (>= 4GB)
+            mock_mem.return_value.percent = 92
+            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB
+
+            # Mock STT engine with failing load_model
+            mock_stt = MagicMock()
+            mock_stt.model_size = 'large-v3'
+            mock_stt.load_model = AsyncMock(side_effect=RuntimeError("Mock load failure"))
+            mock_whisper_class.return_value = mock_stt
+
+            from main import AudioProcessor
+
+            processor = AudioProcessor()
+
+            # Verify initial state
+            assert processor.resource_monitor.current_model == 'large-v3'
+
+            # Mock IPC
+            processor.ipc = AsyncMock()
+
+            # Start monitoring
+            task = asyncio.create_task(processor.resource_monitor.start_monitoring(
+                interval_seconds=0.1,
+                on_downgrade=processor._handle_model_downgrade,
+                on_upgrade_proposal=processor._handle_upgrade_proposal,
+                on_pause_recording=processor._handle_pause_recording
+            ))
+
+            await asyncio.sleep(0.25)
+            await processor.resource_monitor.stop_monitoring()
+            await task
+
+            # Verify load_model was called (downgrade attempted)
+            assert mock_stt.load_model.called
+
+            # CRITICAL: current_model should NOT be changed after failure
+            assert processor.resource_monitor.current_model == 'large-v3', \
+                "current_model should remain 'large-v3' after failed downgrade"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
