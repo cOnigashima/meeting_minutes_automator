@@ -2,12 +2,12 @@
 // Walking Skeleton (MVP0) - Recording Commands Implementation
 // MVP1 - Audio Device Event Monitoring
 
-use crate::state::AppState;
-use crate::websocket::WebSocketMessage;
 use crate::audio::AudioDevice;
 use crate::audio_device_adapter::AudioDeviceEvent;
-use tauri::{State, Manager, AppHandle, Emitter};
+use crate::state::AppState;
+use crate::websocket::WebSocketMessage;
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Monitor audio device events and notify UI
 /// MVP1 - STT-REQ-004.9/10/11
@@ -30,22 +30,31 @@ async fn monitor_audio_events(app: AppHandle) {
                 eprintln!("[Meeting Minutes] ❌ Stream error: {}", err);
 
                 // Emit to frontend
-                if let Err(e) = app.emit("audio-device-error", serde_json::json!({
-                    "type": "stream_error",
-                    "message": format!("音声ストリームエラー: {}", err),
-                })) {
+                if let Err(e) = app.emit(
+                    "audio-device-error",
+                    serde_json::json!({
+                        "type": "stream_error",
+                        "message": format!("音声ストリームエラー: {}", err),
+                    }),
+                ) {
                     eprintln!("[Meeting Minutes] Failed to emit stream error: {:?}", e);
                 }
             }
             AudioDeviceEvent::Stalled { elapsed_ms } => {
-                eprintln!("[Meeting Minutes] ⚠️ Audio device stalled: {} ms", elapsed_ms);
+                eprintln!(
+                    "[Meeting Minutes] ⚠️ Audio device stalled: {} ms",
+                    elapsed_ms
+                );
 
                 // Emit to frontend
-                if let Err(e) = app.emit("audio-device-error", serde_json::json!({
-                    "type": "stalled",
-                    "message": "音声デバイスが応答しません",
-                    "elapsed_ms": elapsed_ms,
-                })) {
+                if let Err(e) = app.emit(
+                    "audio-device-error",
+                    serde_json::json!({
+                        "type": "stalled",
+                        "message": "音声デバイスが応答しません",
+                        "elapsed_ms": elapsed_ms,
+                    }),
+                ) {
                     eprintln!("[Meeting Minutes] Failed to emit stalled event: {:?}", e);
                 }
             }
@@ -53,11 +62,14 @@ async fn monitor_audio_events(app: AppHandle) {
                 eprintln!("[Meeting Minutes] ❌ Device disconnected: {}", device_id);
 
                 // Emit to frontend - STT-REQ-004.10
-                if let Err(e) = app.emit("audio-device-error", serde_json::json!({
-                    "type": "device_gone",
-                    "message": "音声デバイスが切断されました",
-                    "device_id": device_id,
-                })) {
+                if let Err(e) = app.emit(
+                    "audio-device-error",
+                    serde_json::json!({
+                        "type": "device_gone",
+                        "message": "音声デバイスが切断されました",
+                        "device_id": device_id,
+                    }),
+                ) {
                     eprintln!("[Meeting Minutes] Failed to emit device gone: {:?}", e);
                 }
 
@@ -68,7 +80,9 @@ async fn monitor_audio_events(app: AppHandle) {
                     let is_recording = state.is_recording.lock().unwrap();
                     if *is_recording {
                         drop(is_recording);
-                        eprintln!("[Meeting Minutes] 🛑 Stopping recording due to device disconnection");
+                        eprintln!(
+                            "[Meeting Minutes] 🛑 Stopping recording due to device disconnection"
+                        );
                         // Note: Actual stop will be triggered by frontend or timeout
                     }
                 }
@@ -92,19 +106,22 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
     // Get references to components
     let audio_device = {
         let device_lock = state.audio_device.lock().unwrap();
-        device_lock.clone()
+        device_lock
+            .clone()
             .ok_or_else(|| "Audio device not initialized".to_string())?
     };
 
     let python_sidecar = {
         let sidecar_lock = state.python_sidecar.lock().unwrap();
-        sidecar_lock.clone()
+        sidecar_lock
+            .clone()
             .ok_or_else(|| "Python sidecar not initialized".to_string())?
     };
 
     let websocket_server = {
         let ws_lock = state.websocket_server.lock().unwrap();
-        ws_lock.clone()
+        ws_lock
+            .clone()
             .ok_or_else(|| "WebSocket server not initialized".to_string())?
     };
 
@@ -120,60 +137,75 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
 
     // Start audio device with callback
     let mut device = audio_device.lock().await;
-    device.start_with_callback(move |audio_data| {
-        let python_sidecar = Arc::clone(&python_sidecar_clone);
-        let websocket_server = Arc::clone(&websocket_server_clone);
+    device
+        .start_with_callback(move |audio_data| {
+            let python_sidecar = Arc::clone(&python_sidecar_clone);
+            let websocket_server = Arc::clone(&websocket_server_clone);
 
-        // Spawn async task to handle IPC communication
-        tokio::spawn(async move {
-            // Send audio data to Python sidecar
-            let mut sidecar = python_sidecar.lock().await;
+            // Spawn async task to handle IPC communication
+            tokio::spawn(async move {
+                // Send audio data to Python sidecar
+                let mut sidecar = python_sidecar.lock().await;
 
-            let message = serde_json::json!({
-                "type": "process_audio",
-                "id": format!("audio-{}", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis()),
-                "audio_data": audio_data,
-            });
+                let message = serde_json::json!({
+                    "type": "process_audio",
+                    "id": format!("audio-{}", std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()),
+                    "audio_data": audio_data,
+                });
 
-            if let Err(e) = sidecar.send_message(message).await {
-                eprintln!("[Meeting Minutes] Failed to send audio data to Python: {:?}", e);
-                return;
-            }
+                if let Err(e) = sidecar.send_message(message).await {
+                    eprintln!(
+                        "[Meeting Minutes] Failed to send audio data to Python: {:?}",
+                        e
+                    );
+                    return;
+                }
 
-            // Receive response from Python
-            match sidecar.receive_message().await {
-                Ok(response) => {
-                    // Extract transcription text
-                    if let Some(text) = response.get("text").and_then(|v| v.as_str()) {
-                        // Broadcast to WebSocket clients
-                        let ws_message = WebSocketMessage::Transcription {
-                            message_id: format!("ws-{}", std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis()),
-                            session_id: "session-1".to_string(), // TODO: Use actual session ID
-                            text: text.to_string(),
-                            timestamp: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis() as u64,
-                        };
+                // Receive response from Python
+                match sidecar.receive_message().await {
+                    Ok(response) => {
+                        // Extract transcription text
+                        if let Some(text) = response.get("text").and_then(|v| v.as_str()) {
+                            // Broadcast to WebSocket clients
+                            let ws_message = WebSocketMessage::Transcription {
+                                message_id: format!(
+                                    "ws-{}",
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_millis()
+                                ),
+                                session_id: "session-1".to_string(), // TODO: Use actual session ID
+                                text: text.to_string(),
+                                timestamp: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis() as u64,
+                            };
 
-                        let ws_server = websocket_server.lock().await;
-                        if let Err(e) = ws_server.broadcast(ws_message).await {
-                            eprintln!("[Meeting Minutes] Failed to broadcast transcription: {:?}", e);
+                            let ws_server = websocket_server.lock().await;
+                            if let Err(e) = ws_server.broadcast(ws_message).await {
+                                eprintln!(
+                                    "[Meeting Minutes] Failed to broadcast transcription: {:?}",
+                                    e
+                                );
+                            }
                         }
                     }
+                    Err(e) => {
+                        eprintln!(
+                            "[Meeting Minutes] Failed to receive Python response: {:?}",
+                            e
+                        );
+                    }
                 }
-                Err(e) => {
-                    eprintln!("[Meeting Minutes] Failed to receive Python response: {:?}", e);
-                }
-            }
-        });
-    }).await.map_err(|e| e.to_string())?;
+            });
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Start monitoring audio device events - MVP1 STT-REQ-004.9/10/11
     // Note: Event monitoring will start when CoreAudioAdapter is used (not FakeAudioDevice)
@@ -201,7 +233,8 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
     // Get audio device reference
     let audio_device = {
         let device_lock = state.audio_device.lock().unwrap();
-        device_lock.clone()
+        device_lock
+            .clone()
             .ok_or_else(|| "Audio device not initialized".to_string())?
     };
 

@@ -64,51 +64,39 @@ impl LogEntry {
 #[macro_export]
 macro_rules! log_info {
     ($component:expr, $event:expr) => {
-        $crate::logger::LogEntry::new(
-            $crate::logger::LogLevel::Info,
-            $component,
-            $event,
-        ).log();
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Info, $component, $event).log();
     };
     ($component:expr, $event:expr, $msg:expr) => {
-        $crate::logger::LogEntry::new(
-            $crate::logger::LogLevel::Info,
-            $component,
-            $event,
-        ).with_message($msg).log();
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Info, $component, $event)
+            .with_message($msg)
+            .log();
     };
 }
 
 #[macro_export]
 macro_rules! log_error {
     ($component:expr, $event:expr, $msg:expr) => {
-        $crate::logger::LogEntry::new(
-            $crate::logger::LogLevel::Error,
-            $component,
-            $event,
-        ).with_message($msg).log();
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Error, $component, $event)
+            .with_message($msg)
+            .log();
     };
 }
 
 #[macro_export]
 macro_rules! log_warn {
     ($component:expr, $event:expr, $msg:expr) => {
-        $crate::logger::LogEntry::new(
-            $crate::logger::LogLevel::Warn,
-            $component,
-            $event,
-        ).with_message($msg).log();
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Warn, $component, $event)
+            .with_message($msg)
+            .log();
     };
 }
 
 #[macro_export]
 macro_rules! log_debug {
     ($component:expr, $event:expr, $msg:expr) => {
-        $crate::logger::LogEntry::new(
-            $crate::logger::LogLevel::Debug,
-            $component,
-            $event,
-        ).with_message($msg).log();
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Debug, $component, $event)
+            .with_message($msg)
+            .log();
     };
 }
 

@@ -2,11 +2,11 @@
 // Cross-platform audio device management for macOS, Windows, Linux
 // Requirement: STT-REQ-001 (Real Audio Device Management)
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 // OS-specific imports
 #[cfg(target_os = "macos")]
@@ -80,7 +80,7 @@ fn is_loopback_device(name: &str) -> bool {
     name.contains("Monitor of") ||
     name.contains(".monitor") ||
     name.contains("Stereo Mix") ||  // Windows legacy
-    name.contains("Wave Out Mix")    // Windows legacy
+    name.contains("Wave Out Mix") // Windows legacy
 }
 
 /// Audio device adapter trait for real audio recording
@@ -96,7 +96,11 @@ pub trait AudioDeviceAdapter: Send + Sync {
 
     /// Start recording with callback for audio chunks
     /// Requirement: STT-REQ-001.4, STT-REQ-001.5, STT-REQ-001.6
-    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()>;
+    fn start_recording_with_callback(
+        &mut self,
+        device_id: &str,
+        callback: AudioChunkCallback,
+    ) -> Result<()>;
 
     /// Stop recording
     /// Requirement: STT-REQ-001.7
@@ -194,11 +198,15 @@ impl CoreAudioAdapter {
                 if elapsed.as_millis() > STALL_THRESHOLD_MS {
                     if let Some(tx) = &event_tx {
                         tx.send(AudioDeviceEvent::Stalled {
-                            elapsed_ms: elapsed.as_millis() as u64
-                        }).ok();
+                            elapsed_ms: elapsed.as_millis() as u64,
+                        })
+                        .ok();
                     }
-                    eprintln!("⚠️ Audio stream stalled: {}ms since last callback", elapsed.as_millis());
-                    break;  // Stop watchdog on stall detection
+                    eprintln!(
+                        "⚠️ Audio stream stalled: {}ms since last callback",
+                        elapsed.as_millis()
+                    );
+                    break; // Stop watchdog on stall detection
                 }
             }
         });
@@ -228,7 +236,8 @@ impl CoreAudioAdapter {
 
                 // Check device existence
                 let host = cpal::default_host();
-                let exists = host.input_devices()
+                let exists = host
+                    .input_devices()
                     .ok()
                     .and_then(|mut devices| {
                         devices.find(|d| d.name().ok().as_ref() == Some(&device_id))
@@ -238,8 +247,9 @@ impl CoreAudioAdapter {
                 if !exists {
                     if let Some(tx) = &event_tx {
                         tx.send(AudioDeviceEvent::DeviceGone {
-                            device_id: device_id.clone()
-                        }).ok();
+                            device_id: device_id.clone(),
+                        })
+                        .ok();
                     }
                     eprintln!("🔌 Device disconnected: {}", device_id);
                     break;
@@ -280,7 +290,11 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
         Ok(())
     }
 
-    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()> {
+    fn start_recording_with_callback(
+        &mut self,
+        device_id: &str,
+        callback: AudioChunkCallback,
+    ) -> Result<()> {
         if self.is_recording {
             return Err(anyhow!("Already recording"));
         }
@@ -288,7 +302,8 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
         let host = cpal::default_host();
 
         // Find device by ID
-        let device = host.input_devices()?
+        let device = host
+            .input_devices()?
             .find(|d| d.name().ok().as_ref() == Some(&device_id.to_string()))
             .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
 
@@ -314,7 +329,8 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 
                     // Convert f32 samples to 16kHz mono PCM
                     // For now, just pass through (full resampling in later task)
-                    let pcm_data: Vec<u8> = data.iter()
+                    let pcm_data: Vec<u8> = data
+                        .iter()
                         .map(|&sample| {
                             let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             scaled.to_le_bytes()
@@ -327,7 +343,8 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
                 move |err| {
                     // Send error event (Task 2.5: STT-REQ-004.9)
                     if let Some(tx) = &event_tx_clone {
-                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err))).ok();
+                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err)))
+                            .ok();
                     }
                     eprintln!("❌ Audio stream error: {:?}", err);
                 },
@@ -411,13 +428,17 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
                 if devices.next().is_some() {
                     Ok(())
                 } else {
-                    Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                    Err(anyhow!(
+                        "マイクアクセスが拒否されました。システム設定から許可してください"
+                    ))
                 }
             }
             Err(e) => {
                 // Device enumeration failed - likely permission denied
                 eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
-                Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                Err(anyhow!(
+                    "マイクアクセスが拒否されました。システム設定から許可してください"
+                ))
             }
         }
     }
@@ -464,21 +485,20 @@ impl WasapiAdapter {
         let event_tx = self.event_tx.clone();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let handle = std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_millis(250));
+        let handle = std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(250));
 
-                if shutdown_rx.try_recv().is_ok() {
-                    break;
-                }
+            if shutdown_rx.try_recv().is_ok() {
+                break;
+            }
 
-                let elapsed = last_cb.lock().unwrap().elapsed();
-                if elapsed > Duration::from_millis(1200) {
-                    if let Some(tx) = &event_tx {
-                        tx.send(AudioDeviceEvent::Stalled {
-                            elapsed_ms: elapsed.as_millis() as u64,
-                        }).ok();
-                    }
+            let elapsed = last_cb.lock().unwrap().elapsed();
+            if elapsed > Duration::from_millis(1200) {
+                if let Some(tx) = &event_tx {
+                    tx.send(AudioDeviceEvent::Stalled {
+                        elapsed_ms: elapsed.as_millis() as u64,
+                    })
+                    .ok();
                 }
             }
         });
@@ -492,31 +512,31 @@ impl WasapiAdapter {
         let event_tx = self.event_tx.clone();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let handle = std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(3));
+        let handle = std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(3));
 
-                if shutdown_rx.try_recv().is_ok() {
-                    break;
-                }
+            if shutdown_rx.try_recv().is_ok() {
+                break;
+            }
 
-                if let Some(ref dev_id) = device_id {
-                    let host = cpal::default_host();
-                    let device_exists = host.input_devices()
-                        .ok()
-                        .and_then(|mut devices| {
-                            devices.find(|d| d.name().ok().as_ref() == Some(&dev_id))
+            if let Some(ref dev_id) = device_id {
+                let host = cpal::default_host();
+                let device_exists = host
+                    .input_devices()
+                    .ok()
+                    .and_then(|mut devices| {
+                        devices.find(|d| d.name().ok().as_ref() == Some(&dev_id))
+                    })
+                    .is_some();
+
+                if !device_exists {
+                    if let Some(tx) = &event_tx {
+                        tx.send(AudioDeviceEvent::DeviceGone {
+                            device_id: dev_id.clone(),
                         })
-                        .is_some();
-
-                    if !device_exists {
-                        if let Some(tx) = &event_tx {
-                            tx.send(AudioDeviceEvent::DeviceGone {
-                                device_id: dev_id.clone(),
-                            }).ok();
-                        }
-                        break;
+                        .ok();
                     }
+                    break;
                 }
             }
         });
@@ -554,7 +574,11 @@ impl AudioDeviceAdapter for WasapiAdapter {
         Ok(())
     }
 
-    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()> {
+    fn start_recording_with_callback(
+        &mut self,
+        device_id: &str,
+        callback: AudioChunkCallback,
+    ) -> Result<()> {
         if self.is_recording {
             return Err(anyhow!("Already recording"));
         }
@@ -563,7 +587,8 @@ impl AudioDeviceAdapter for WasapiAdapter {
 
         let host = cpal::default_host();
 
-        let device = host.input_devices()?
+        let device = host
+            .input_devices()?
             .find(|d| d.name().ok().as_ref() == Some(&device_id.to_string()))
             .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
 
@@ -583,7 +608,8 @@ impl AudioDeviceAdapter for WasapiAdapter {
                     // Update liveness timestamp
                     *last_cb.lock().unwrap() = Instant::now();
 
-                    let pcm_data: Vec<u8> = data.iter()
+                    let pcm_data: Vec<u8> = data
+                        .iter()
                         .map(|&sample| {
                             let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             scaled.to_le_bytes()
@@ -596,7 +622,8 @@ impl AudioDeviceAdapter for WasapiAdapter {
                 move |err| {
                     eprintln!("Audio stream error: {:?}", err);
                     if let Some(tx) = &event_tx_clone {
-                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err))).ok();
+                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err)))
+                            .ok();
                     }
                 },
             );
@@ -623,14 +650,26 @@ impl AudioDeviceAdapter for WasapiAdapter {
         }
 
         // Signal all threads to stop
-        if let Some(tx) = self.stream_shutdown_tx.take() { tx.send(()).ok(); }
-        if let Some(tx) = self.watchdog_shutdown_tx.take() { tx.send(()).ok(); }
-        if let Some(tx) = self.polling_shutdown_tx.take() { tx.send(()).ok(); }
+        if let Some(tx) = self.stream_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
+        if let Some(tx) = self.watchdog_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
+        if let Some(tx) = self.polling_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
 
         // Join all threads
-        if let Some(handle) = self.stream_thread.take() { handle.join().ok(); }
-        if let Some(handle) = self.watchdog_handle.take() { handle.join().ok(); }
-        if let Some(handle) = self.polling_handle.take() { handle.join().ok(); }
+        if let Some(handle) = self.stream_thread.take() {
+            handle.join().ok();
+        }
+        if let Some(handle) = self.watchdog_handle.take() {
+            handle.join().ok();
+        }
+        if let Some(handle) = self.polling_handle.take() {
+            handle.join().ok();
+        }
 
         self.is_recording = false;
         self.device_id = None;
@@ -651,12 +690,16 @@ impl AudioDeviceAdapter for WasapiAdapter {
                 if devices.next().is_some() {
                     Ok(())
                 } else {
-                    Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                    Err(anyhow!(
+                        "マイクアクセスが拒否されました。システム設定から許可してください"
+                    ))
                 }
             }
             Err(e) => {
                 eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
-                Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                Err(anyhow!(
+                    "マイクアクセスが拒否されました。システム設定から許可してください"
+                ))
             }
         }
     }
@@ -703,21 +746,20 @@ impl AlsaAdapter {
         let event_tx = self.event_tx.clone();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let handle = std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_millis(250));
+        let handle = std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(250));
 
-                if shutdown_rx.try_recv().is_ok() {
-                    break;
-                }
+            if shutdown_rx.try_recv().is_ok() {
+                break;
+            }
 
-                let elapsed = last_cb.lock().unwrap().elapsed();
-                if elapsed > Duration::from_millis(1200) {
-                    if let Some(tx) = &event_tx {
-                        tx.send(AudioDeviceEvent::Stalled {
-                            elapsed_ms: elapsed.as_millis() as u64,
-                        }).ok();
-                    }
+            let elapsed = last_cb.lock().unwrap().elapsed();
+            if elapsed > Duration::from_millis(1200) {
+                if let Some(tx) = &event_tx {
+                    tx.send(AudioDeviceEvent::Stalled {
+                        elapsed_ms: elapsed.as_millis() as u64,
+                    })
+                    .ok();
                 }
             }
         });
@@ -731,31 +773,31 @@ impl AlsaAdapter {
         let event_tx = self.event_tx.clone();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let handle = std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(3));
+        let handle = std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(3));
 
-                if shutdown_rx.try_recv().is_ok() {
-                    break;
-                }
+            if shutdown_rx.try_recv().is_ok() {
+                break;
+            }
 
-                if let Some(ref dev_id) = device_id {
-                    let host = cpal::default_host();
-                    let device_exists = host.input_devices()
-                        .ok()
-                        .and_then(|mut devices| {
-                            devices.find(|d| d.name().ok().as_ref() == Some(&dev_id))
+            if let Some(ref dev_id) = device_id {
+                let host = cpal::default_host();
+                let device_exists = host
+                    .input_devices()
+                    .ok()
+                    .and_then(|mut devices| {
+                        devices.find(|d| d.name().ok().as_ref() == Some(&dev_id))
+                    })
+                    .is_some();
+
+                if !device_exists {
+                    if let Some(tx) = &event_tx {
+                        tx.send(AudioDeviceEvent::DeviceGone {
+                            device_id: dev_id.clone(),
                         })
-                        .is_some();
-
-                    if !device_exists {
-                        if let Some(tx) = &event_tx {
-                            tx.send(AudioDeviceEvent::DeviceGone {
-                                device_id: dev_id.clone(),
-                            }).ok();
-                        }
-                        break;
+                        .ok();
                     }
+                    break;
                 }
             }
         });
@@ -793,7 +835,11 @@ impl AudioDeviceAdapter for AlsaAdapter {
         Ok(())
     }
 
-    fn start_recording_with_callback(&mut self, device_id: &str, callback: AudioChunkCallback) -> Result<()> {
+    fn start_recording_with_callback(
+        &mut self,
+        device_id: &str,
+        callback: AudioChunkCallback,
+    ) -> Result<()> {
         if self.is_recording {
             return Err(anyhow!("Already recording"));
         }
@@ -802,7 +848,8 @@ impl AudioDeviceAdapter for AlsaAdapter {
 
         let host = cpal::default_host();
 
-        let device = host.input_devices()?
+        let device = host
+            .input_devices()?
             .find(|d| d.name().ok().as_ref() == Some(&device_id.to_string()))
             .ok_or_else(|| anyhow!("Device not found: {}", device_id))?;
 
@@ -822,7 +869,8 @@ impl AudioDeviceAdapter for AlsaAdapter {
                     // Update liveness timestamp
                     *last_cb.lock().unwrap() = Instant::now();
 
-                    let pcm_data: Vec<u8> = data.iter()
+                    let pcm_data: Vec<u8> = data
+                        .iter()
                         .map(|&sample| {
                             let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             scaled.to_le_bytes()
@@ -835,7 +883,8 @@ impl AudioDeviceAdapter for AlsaAdapter {
                 move |err| {
                     eprintln!("Audio stream error: {:?}", err);
                     if let Some(tx) = &event_tx_clone {
-                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err))).ok();
+                        tx.send(AudioDeviceEvent::StreamError(format!("{:?}", err)))
+                            .ok();
                     }
                 },
             );
@@ -862,14 +911,26 @@ impl AudioDeviceAdapter for AlsaAdapter {
         }
 
         // Signal all threads to stop
-        if let Some(tx) = self.stream_shutdown_tx.take() { tx.send(()).ok(); }
-        if let Some(tx) = self.watchdog_shutdown_tx.take() { tx.send(()).ok(); }
-        if let Some(tx) = self.polling_shutdown_tx.take() { tx.send(()).ok(); }
+        if let Some(tx) = self.stream_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
+        if let Some(tx) = self.watchdog_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
+        if let Some(tx) = self.polling_shutdown_tx.take() {
+            tx.send(()).ok();
+        }
 
         // Join all threads
-        if let Some(handle) = self.stream_thread.take() { handle.join().ok(); }
-        if let Some(handle) = self.watchdog_handle.take() { handle.join().ok(); }
-        if let Some(handle) = self.polling_handle.take() { handle.join().ok(); }
+        if let Some(handle) = self.stream_thread.take() {
+            handle.join().ok();
+        }
+        if let Some(handle) = self.watchdog_handle.take() {
+            handle.join().ok();
+        }
+        if let Some(handle) = self.polling_handle.take() {
+            handle.join().ok();
+        }
 
         self.is_recording = false;
         self.device_id = None;
@@ -890,12 +951,16 @@ impl AudioDeviceAdapter for AlsaAdapter {
                 if devices.next().is_some() {
                     Ok(())
                 } else {
-                    Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                    Err(anyhow!(
+                        "マイクアクセスが拒否されました。システム設定から許可してください"
+                    ))
                 }
             }
             Err(e) => {
                 eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
-                Err(anyhow!("マイクアクセスが拒否されました。システム設定から許可してください"))
+                Err(anyhow!(
+                    "マイクアクセスが拒否されました。システム設定から許可してください"
+                ))
             }
         }
     }
@@ -943,15 +1008,13 @@ mod tests {
         fn new() -> Self {
             Self {
                 is_recording: false,
-                devices: vec![
-                    AudioDeviceInfo {
-                        id: "device-1".to_string(),
-                        name: "Test Microphone".to_string(),
-                        sample_rate: 16000,
-                        channels: 1,
-                        is_loopback: false,
-                    },
-                ],
+                devices: vec![AudioDeviceInfo {
+                    id: "device-1".to_string(),
+                    name: "Test Microphone".to_string(),
+                    sample_rate: 16000,
+                    channels: 1,
+                    is_loopback: false,
+                }],
             }
         }
 
@@ -995,7 +1058,11 @@ mod tests {
             Ok(())
         }
 
-        fn start_recording_with_callback(&mut self, _device_id: &str, _callback: AudioChunkCallback) -> Result<()> {
+        fn start_recording_with_callback(
+            &mut self,
+            _device_id: &str,
+            _callback: AudioChunkCallback,
+        ) -> Result<()> {
             self.is_recording = true;
             Ok(())
         }
@@ -1048,7 +1115,10 @@ mod tests {
     fn test_create_audio_adapter() {
         // Test OS-specific adapter creation
         let adapter = create_audio_adapter();
-        assert!(adapter.is_ok(), "Should create audio adapter for current OS");
+        assert!(
+            adapter.is_ok(),
+            "Should create audio adapter for current OS"
+        );
 
         let adapter = adapter.unwrap();
         assert!(!adapter.is_recording(), "Should not be recording initially");
@@ -1105,7 +1175,9 @@ mod tests {
             chunks_received_clone.lock().unwrap().push(chunk);
         });
 
-        adapter.start_recording_with_callback("device-1", callback).unwrap();
+        adapter
+            .start_recording_with_callback("device-1", callback)
+            .unwrap();
         assert!(adapter.is_recording());
 
         // Note: MockAdapter doesn't actually generate audio data
@@ -1142,7 +1214,9 @@ mod tests {
 
         // Linux PulseAudio monitor devices
         assert!(is_loopback_device("Monitor of Built-in Audio"));
-        assert!(is_loopback_device("alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"));
+        assert!(is_loopback_device(
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        ));
 
         // Windows Stereo Mix
         assert!(is_loopback_device("Stereo Mix"));
@@ -1179,9 +1253,7 @@ mod tests {
         let adapter = MockAudioAdapter::new_with_loopback();
         let devices = adapter.enumerate_devices().unwrap();
 
-        let loopback_devices: Vec<_> = devices.iter()
-            .filter(|d| d.is_loopback)
-            .collect();
+        let loopback_devices: Vec<_> = devices.iter().filter(|d| d.is_loopback).collect();
 
         assert_eq!(loopback_devices.len(), 2);
         assert_eq!(loopback_devices[0].name, "BlackHole 2ch");

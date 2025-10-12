@@ -1,4 +1,4 @@
-# ADR-004: Token Storage Strategy
+# ADR-006: Token Storage Strategy
 
 ## Status
 Accepted

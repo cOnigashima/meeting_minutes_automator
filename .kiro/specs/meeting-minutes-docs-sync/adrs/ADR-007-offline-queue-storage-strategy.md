@@ -1,4 +1,4 @@
-# ADR-005: Offline Queue Storage Strategy
+# ADR-007: Offline Queue Storage Strategy
 
 ## Status
 Accepted

@@ -11,7 +11,10 @@ async fn ut_2_1_1_fake_audio_device_initialization() {
     let mut device = FakeAudioDevice::new();
 
     let result = device.initialize();
-    assert!(result.is_ok(), "FakeAudioDevice initialization should succeed");
+    assert!(
+        result.is_ok(),
+        "FakeAudioDevice initialization should succeed"
+    );
 }
 
 #[tokio::test]

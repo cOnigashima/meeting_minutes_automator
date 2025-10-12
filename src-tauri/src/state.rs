@@ -2,11 +2,11 @@
 // Walking Skeleton (MVP0) - WebSocket Server Integration
 // MVP1 - Audio Device Event Management
 
-use std::sync::{Arc, Mutex};
-use crate::websocket::WebSocketServer;
-use crate::python_sidecar::PythonSidecarManager;
 use crate::audio::FakeAudioDevice;
 use crate::audio_device_adapter::{AudioEventReceiver, AudioEventSender};
+use crate::python_sidecar::PythonSidecarManager;
+use crate::websocket::WebSocketServer;
+use std::sync::{Arc, Mutex};
 
 /// Application state shared across Tauri commands
 pub struct AppState {

@@ -1,10 +1,10 @@
 // Integration Test: WebSocket Server Connection and Broadcast
 // Tests WebSocket server with actual client connections
 
-use meeting_minutes_automator_lib::websocket::{WebSocketServer, WebSocketMessage};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 use futures_util::StreamExt;
-use tokio::time::{Duration, timeout};
+use meeting_minutes_automator_lib::websocket::{WebSocketMessage, WebSocketServer};
+use tokio::time::{timeout, Duration};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
 async fn it_websocket_server_client_connection() {
@@ -28,8 +28,14 @@ async fn it_websocket_server_client_connection() {
         let json: serde_json::Value = serde_json::from_str(&text).expect("Invalid JSON");
         assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("connected"));
         // Fields are in camelCase for Chrome extension compatibility
-        assert!(json.get("sessionId").is_some(), "sessionId missing (camelCase)");
-        assert!(json.get("messageId").is_some(), "messageId missing (camelCase)");
+        assert!(
+            json.get("sessionId").is_some(),
+            "sessionId missing (camelCase)"
+        );
+        assert!(
+            json.get("messageId").is_some(),
+            "messageId missing (camelCase)"
+        );
         assert!(json.get("timestamp").is_some(), "timestamp missing");
     } else {
         panic!("Expected text message");
@@ -47,10 +53,14 @@ async fn it_websocket_server_broadcast() {
     // Connect two clients
     let url = format!("ws://127.0.0.1:{}", port);
 
-    let (ws_stream1, _) = connect_async(&url).await.expect("Failed to connect client 1");
+    let (ws_stream1, _) = connect_async(&url)
+        .await
+        .expect("Failed to connect client 1");
     let (mut _write1, mut read1) = ws_stream1.split();
 
-    let (ws_stream2, _) = connect_async(&url).await.expect("Failed to connect client 2");
+    let (ws_stream2, _) = connect_async(&url)
+        .await
+        .expect("Failed to connect client 2");
     let (mut _write2, mut read2) = ws_stream2.split();
 
     // Skip connected messages
@@ -65,7 +75,10 @@ async fn it_websocket_server_broadcast() {
         timestamp: 12345,
     };
 
-    server.broadcast(broadcast_msg).await.expect("Should broadcast");
+    server
+        .broadcast(broadcast_msg)
+        .await
+        .expect("Should broadcast");
 
     // Both clients should receive the message
     for (i, read) in [&mut read1, &mut read2].iter_mut().enumerate() {
@@ -77,8 +90,14 @@ async fn it_websocket_server_broadcast() {
 
         if let Message::Text(text) = msg {
             let json: serde_json::Value = serde_json::from_str(&text).expect("Invalid JSON");
-            assert_eq!(json.get("type").and_then(|v| v.as_str()), Some("transcription"));
-            assert_eq!(json.get("text").and_then(|v| v.as_str()), Some("Test transcription"));
+            assert_eq!(
+                json.get("type").and_then(|v| v.as_str()),
+                Some("transcription")
+            );
+            assert_eq!(
+                json.get("text").and_then(|v| v.as_str()),
+                Some("Test transcription")
+            );
             println!("✅ Client {} received broadcast message", i + 1);
         } else {
             panic!("Expected text message");
@@ -123,7 +142,10 @@ async fn it_websocket_server_multiple_broadcasts() {
         if let Message::Text(text) = msg {
             let json: serde_json::Value = serde_json::from_str(&text).expect("Invalid JSON");
             let expected = format!("Message {}", i);
-            assert_eq!(json.get("text").and_then(|v| v.as_str()), Some(expected.as_str()));
+            assert_eq!(
+                json.get("text").and_then(|v| v.as_str()),
+                Some(expected.as_str())
+            );
             println!("✅ Received message {}", i);
         }
     }

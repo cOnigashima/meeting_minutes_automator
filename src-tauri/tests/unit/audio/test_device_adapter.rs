@@ -2,7 +2,7 @@
 // MVP1 - Task 2.5: Device Disconnection Detection and Auto-Reconnect
 
 use meeting_minutes_automator_lib::audio_device_adapter::{
-    AudioDeviceEvent, AudioEventSender, AudioEventReceiver, AudioDeviceAdapter,
+    AudioDeviceAdapter, AudioDeviceEvent, AudioEventReceiver, AudioEventSender,
 };
 use std::sync::mpsc;
 use std::time::Duration;
@@ -49,21 +49,24 @@ fn test_event_channel_send_receive() {
     .expect("Failed to send DeviceGone");
 
     // Receive and verify events
-    let event1 = rx.recv_timeout(Duration::from_millis(100))
+    let event1 = rx
+        .recv_timeout(Duration::from_millis(100))
         .expect("Failed to receive event1");
     match event1 {
         AudioDeviceEvent::StreamError(msg) => assert_eq!(msg, "error1"),
         _ => panic!("Wrong event type"),
     }
 
-    let event2 = rx.recv_timeout(Duration::from_millis(100))
+    let event2 = rx
+        .recv_timeout(Duration::from_millis(100))
         .expect("Failed to receive event2");
     match event2 {
         AudioDeviceEvent::Stalled { elapsed_ms } => assert_eq!(elapsed_ms, 2000),
         _ => panic!("Wrong event type"),
     }
 
-    let event3 = rx.recv_timeout(Duration::from_millis(100))
+    let event3 = rx
+        .recv_timeout(Duration::from_millis(100))
         .expect("Failed to receive event3");
     match event3 {
         AudioDeviceEvent::DeviceGone { device_id } => assert_eq!(device_id, "device1"),
@@ -91,9 +94,11 @@ fn test_event_channel_clone() {
         .expect("Failed to send from clone");
 
     // Receive both
-    let event1 = rx.recv_timeout(Duration::from_millis(100))
+    let event1 = rx
+        .recv_timeout(Duration::from_millis(100))
         .expect("Failed to receive event1");
-    let event2 = rx.recv_timeout(Duration::from_millis(100))
+    let event2 = rx
+        .recv_timeout(Duration::from_millis(100))
         .expect("Failed to receive event2");
 
     // Verify both were received (order not guaranteed)
@@ -142,8 +147,8 @@ fn test_core_audio_adapter_permission_check() {
             // Permission denied - verify error message
             let error_msg = e.to_string();
             assert!(
-                error_msg.contains("マイクアクセスが拒否されました") ||
-                error_msg.contains("システム設定から許可してください"),
+                error_msg.contains("マイクアクセスが拒否されました")
+                    || error_msg.contains("システム設定から許可してください"),
                 "Expected permission error message, got: {}",
                 error_msg
             );
@@ -180,8 +185,8 @@ fn test_wasapi_adapter_permission_check() {
         Err(e) => {
             let error_msg = e.to_string();
             assert!(
-                error_msg.contains("マイクアクセスが拒否されました") ||
-                error_msg.contains("システム設定から許可してください"),
+                error_msg.contains("マイクアクセスが拒否されました")
+                    || error_msg.contains("システム設定から許可してください"),
                 "Expected permission error message, got: {}",
                 error_msg
             );
@@ -218,8 +223,8 @@ fn test_alsa_adapter_permission_check() {
         Err(e) => {
             let error_msg = e.to_string();
             assert!(
-                error_msg.contains("マイクアクセスが拒否されました") ||
-                error_msg.contains("システム設定から許可してください"),
+                error_msg.contains("マイクアクセスが拒否されました")
+                    || error_msg.contains("システム設定から許可してください"),
                 "Expected permission error message, got: {}",
                 error_msg
             );

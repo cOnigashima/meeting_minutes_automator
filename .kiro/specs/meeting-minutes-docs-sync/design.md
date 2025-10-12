@@ -1624,12 +1624,12 @@ type QueueItem = {
 
 ### State Management Architecture
 
-#### 統合状態スキーマ (ADR-005準拠)
+#### 統合状態スキーマ (ADR-007/CORE-ADR-005準拠)
 
 本機能は、`.kiro/specs/meeting-minutes-core/adrs/ADR-005-state-management-mechanism.md`で定義された統合状態管理アーキテクチャに準拠します。
 
 ```typescript
-// DocsExtensionState: ADR-005のExtensionStateを継承
+// DocsExtensionState: CORE-ADR-005のExtensionStateを継承、オフラインキュー管理はADR-007に基づく
 interface DocsExtensionState extends ExtensionState {
   // === Core States (継承) ===
   connection: {

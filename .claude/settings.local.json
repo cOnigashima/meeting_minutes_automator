@@ -33,7 +33,10 @@
       "Bash(python3:*)",
       "Bash(source:*)",
       "SlashCommand(/kiro:validate-tasks:*)",
-      "Bash(/kiro:spec-status meeting-minutes-stt)"
+      "Bash(/kiro:spec-status meeting-minutes-stt)",
+      "Bash(rustfmt:*)",
+      "Bash(.kiro/scripts/validate_adrs.sh:*)",
+      "Bash(/kiro:spec-init:*)"
     ],
     "deny": [],
     "ask": []

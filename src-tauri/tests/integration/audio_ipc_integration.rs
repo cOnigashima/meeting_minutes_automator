@@ -1,11 +1,11 @@
 // Integration Test: FakeAudioDevice → PythonSidecarManager IPC
 // Validates E2E audio data flow
 
-use meeting_minutes_automator_lib::audio::{FakeAudioDevice, AudioDevice};
+use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
 use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
 #[tokio::test]
 async fn it_audio_to_python_ipc_flow() {
@@ -14,7 +14,10 @@ async fn it_audio_to_python_ipc_flow() {
     // Start Python sidecar
     let mut sidecar = PythonSidecarManager::new();
     sidecar.start().await.expect("Should start Python sidecar");
-    sidecar.wait_for_ready().await.expect("Should receive ready signal");
+    sidecar
+        .wait_for_ready()
+        .await
+        .expect("Should receive ready signal");
 
     // Shared sidecar reference for callback
     let sidecar_arc = Arc::new(Mutex::new(sidecar));
@@ -31,10 +34,13 @@ async fn it_audio_to_python_ipc_flow() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
 
     // Start audio device with callback that sends to channel
-    audio_device.start_with_callback(move |data| {
-        let _ = tx.send(data);
-        *counter_clone.lock().unwrap() += 1;
-    }).await.expect("Should start with callback");
+    audio_device
+        .start_with_callback(move |data| {
+            let _ = tx.send(data);
+            *counter_clone.lock().unwrap() += 1;
+        })
+        .await
+        .expect("Should start with callback");
 
     // Async task to receive from channel and send to Python
     let sidecar_for_task = Arc::clone(&sidecar_arc);
@@ -66,10 +72,7 @@ async fn it_audio_to_python_ipc_flow() {
     // Receive responses from Python
     let mut sidecar = sidecar_arc.lock().await;
     for i in 0..count {
-        let result = timeout(
-            Duration::from_secs(1),
-            sidecar.receive_message()
-        ).await;
+        let result = timeout(Duration::from_secs(1), sidecar.receive_message()).await;
 
         match result {
             Ok(Ok(response)) => {
@@ -102,7 +105,10 @@ async fn it_audio_device_multiple_start_stop_cycles() {
 
     let mut sidecar = PythonSidecarManager::new();
     sidecar.start().await.expect("Should start Python sidecar");
-    sidecar.wait_for_ready().await.expect("Should receive ready signal");
+    sidecar
+        .wait_for_ready()
+        .await
+        .expect("Should receive ready signal");
 
     let sidecar_arc = Arc::new(Mutex::new(sidecar));
     let mut audio_device = FakeAudioDevice::new();
@@ -112,9 +118,12 @@ async fn it_audio_device_multiple_start_stop_cycles() {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
 
-        audio_device.start_with_callback(move |data| {
-            let _ = tx.send(data);
-        }).await.expect("Should start");
+        audio_device
+            .start_with_callback(move |data| {
+                let _ = tx.send(data);
+            })
+            .await
+            .expect("Should start");
 
         let sidecar_clone = Arc::clone(&sidecar_arc);
         let send_task = tokio::spawn(async move {

@@ -1,18 +1,21 @@
 // WebSocket Server for Chrome Extension Communication
 // Task 6: WebSocket Server Implementation
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use futures_util::stream::SplitSink;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
 use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
-use tokio_tungstenite::{accept_hdr_async, tungstenite::handshake::server::{Request, Response, ErrorResponse}};
-use futures_util::{StreamExt, SinkExt};
-use futures_util::stream::SplitSink;
-use tokio_tungstenite::WebSocketStream;
 use tokio::net::TcpStream;
+use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{
+    accept_hdr_async,
+    tungstenite::handshake::server::{ErrorResponse, Request, Response},
+};
 
 /// WebSocket message types for Chrome extension communication
 /// All messages include: messageId, sessionId, timestamp for traceability
@@ -157,7 +160,8 @@ impl WebSocketServer {
         if origin.starts_with("http://127.0.0.1")
             || origin.starts_with("http://localhost")
             || origin.starts_with("https://127.0.0.1")
-            || origin.starts_with("https://localhost") {
+            || origin.starts_with("https://localhost")
+        {
             return true;
         }
 
@@ -169,14 +173,16 @@ impl WebSocketServer {
         // Allow Chrome extensions (development: all, production: configured list)
         if origin.starts_with("chrome-extension://") {
             #[cfg(debug_assertions)]
-            return true;  // Development: allow all extension IDs
+            return true; // Development: allow all extension IDs
 
             #[cfg(not(debug_assertions))]
             {
                 // Production: check against configured allowed IDs
                 // TODO: Load from config file
-                let allowed_ids = vec![];  // Empty for now - configure in production
-                allowed_ids.iter().any(|id| origin.starts_with(&format!("chrome-extension://{}", id)))
+                let allowed_ids = vec![]; // Empty for now - configure in production
+                allowed_ids
+                    .iter()
+                    .any(|id| origin.starts_with(&format!("chrome-extension://{}", id)))
             }
         }
 
@@ -207,7 +213,8 @@ impl WebSocketServer {
             }
 
             Ok(response)
-        }).await?;
+        })
+        .await?;
         let (writer, mut reader) = ws_stream.split();
 
         let conn = Arc::new(WebSocketConnection {
@@ -276,7 +283,10 @@ impl WebSocketServer {
         let elapsed_ms = start.elapsed().as_millis() as u64;
         println!(
             r#"{{"metric":"websocket_broadcast_ms","value":{},"timestamp":{},"session_id":"{}","connections":{}}}"#,
-            elapsed_ms, Self::timestamp(), self.session_id, conn_count
+            elapsed_ms,
+            Self::timestamp(),
+            self.session_id,
+            conn_count
         );
 
         Ok(())

@@ -1,7 +1,7 @@
 // Unit Tests for Graceful Shutdown and Cleanup
 // TDD Red Phase: Tests for graceful shutdown and Drop trait
 
-use meeting_minutes_automator_lib::python_sidecar::{PythonSidecarManager, PythonSidecarError};
+use meeting_minutes_automator_lib::python_sidecar::{PythonSidecarError, PythonSidecarManager};
 use std::time::Duration;
 
 #[tokio::test]
@@ -10,7 +10,10 @@ async fn ut_3_3_1_graceful_shutdown_with_message() {
 
     let mut manager = PythonSidecarManager::new();
     manager.start().await.expect("Process should start");
-    manager.wait_for_ready().await.expect("Should receive ready");
+    manager
+        .wait_for_ready()
+        .await
+        .expect("Should receive ready");
 
     // Call shutdown (which sends shutdown message)
     let result = manager.shutdown().await;
@@ -21,7 +24,10 @@ async fn ut_3_3_1_graceful_shutdown_with_message() {
     }
 
     assert!(result.is_ok(), "Should shutdown gracefully");
-    assert!(!manager.is_running(), "Process should not be running after shutdown");
+    assert!(
+        !manager.is_running(),
+        "Process should not be running after shutdown"
+    );
 }
 
 #[tokio::test]
@@ -30,7 +36,10 @@ async fn ut_3_3_2_forced_shutdown_on_timeout() {
 
     let mut manager = PythonSidecarManager::new();
     manager.start().await.expect("Process should start");
-    manager.wait_for_ready().await.expect("Should receive ready");
+    manager
+        .wait_for_ready()
+        .await
+        .expect("Should receive ready");
 
     // For this test, we'll modify the Python script temporarily to ignore shutdown
     // For Walking Skeleton, we'll just verify the timeout mechanism works
@@ -47,7 +56,10 @@ async fn ut_3_3_2_forced_shutdown_on_timeout() {
 
     // Even with timeout, should succeed (with force kill)
     assert!(result.is_ok(), "Should force shutdown on timeout");
-    assert!(!manager.is_running(), "Process should not be running after force shutdown");
+    assert!(
+        !manager.is_running(),
+        "Process should not be running after force shutdown"
+    );
 }
 
 #[tokio::test]
@@ -57,7 +69,10 @@ async fn ut_3_3_3_drop_trait_cleanup() {
     let process_id = {
         let mut manager = PythonSidecarManager::new();
         manager.start().await.expect("Process should start");
-        manager.wait_for_ready().await.expect("Should receive ready");
+        manager
+            .wait_for_ready()
+            .await
+            .expect("Should receive ready");
 
         // Get process ID before dropping
         manager.get_process_id().expect("Should have process ID")
@@ -79,7 +94,10 @@ async fn ut_3_3_4_no_zombie_processes() {
     let process_id = {
         let mut manager = PythonSidecarManager::new();
         manager.start().await.expect("Process should start");
-        manager.wait_for_ready().await.expect("Should receive ready");
+        manager
+            .wait_for_ready()
+            .await
+            .expect("Should receive ready");
 
         let pid = manager.get_process_id().expect("Should have process ID");
 
@@ -101,7 +119,10 @@ async fn ut_3_3_5_multiple_shutdown_calls() {
 
     let mut manager = PythonSidecarManager::new();
     manager.start().await.expect("Process should start");
-    manager.wait_for_ready().await.expect("Should receive ready");
+    manager
+        .wait_for_ready()
+        .await
+        .expect("Should receive ready");
 
     // First shutdown
     let result1 = manager.shutdown().await;

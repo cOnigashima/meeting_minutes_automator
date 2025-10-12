@@ -21,8 +21,13 @@ mod e2e_tests {
         let mut audio_device = FakeAudioDevice::new();
 
         // Should initialize successfully
-        audio_device.initialize().expect("Initialization should succeed");
-        assert!(!audio_device.is_running(), "Device should not be running after init");
+        audio_device
+            .initialize()
+            .expect("Initialization should succeed");
+        assert!(
+            !audio_device.is_running(),
+            "Device should not be running after init"
+        );
     }
 
     /// E2E-8.2.1: Recording Start Flow Test
@@ -32,11 +37,16 @@ mod e2e_tests {
         use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
 
         let mut audio_device = FakeAudioDevice::new();
-        audio_device.initialize().expect("Initialization should succeed");
+        audio_device
+            .initialize()
+            .expect("Initialization should succeed");
 
         // Should start successfully
         audio_device.start().expect("Start should succeed");
-        assert!(audio_device.is_running(), "Device should be running after start");
+        assert!(
+            audio_device.is_running(),
+            "Device should be running after start"
+        );
     }
 
     /// E2E-8.3.1: Recording Stop and Cleanup Test
@@ -46,12 +56,17 @@ mod e2e_tests {
         use meeting_minutes_automator_lib::audio::{AudioDevice, FakeAudioDevice};
 
         let mut audio_device = FakeAudioDevice::new();
-        audio_device.initialize().expect("Initialization should succeed");
+        audio_device
+            .initialize()
+            .expect("Initialization should succeed");
         audio_device.start().expect("Start should succeed");
 
         // Should stop successfully
         audio_device.stop().expect("Stop should succeed");
-        assert!(!audio_device.is_running(), "Device should not be running after stop");
+        assert!(
+            !audio_device.is_running(),
+            "Device should not be running after stop"
+        );
     }
 
     /// E2E-8.1.3: WebSocket Server Initialization Test
@@ -65,7 +80,10 @@ mod e2e_tests {
         // Should start successfully
         let port = ws_server.start().await.expect("Should start successfully");
 
-        assert!(port >= 9001 && port <= 9100, "Port should be in range 9001-9100");
+        assert!(
+            port >= 9001 && port <= 9100,
+            "Port should be in range 9001-9100"
+        );
 
         // Cleanup
         ws_server.stop().await.expect("Should stop successfully");
@@ -80,10 +98,16 @@ mod e2e_tests {
         let mut sidecar = PythonSidecarManager::new();
 
         // Should start successfully
-        sidecar.start().await.expect("Sidecar should start successfully");
+        sidecar
+            .start()
+            .await
+            .expect("Sidecar should start successfully");
 
         // Should receive ready signal
-        sidecar.wait_for_ready().await.expect("Should receive ready signal");
+        sidecar
+            .wait_for_ready()
+            .await
+            .expect("Should receive ready signal");
 
         // Cleanup
         sidecar.shutdown().await.expect("Shutdown should succeed");
@@ -97,12 +121,15 @@ mod e2e_tests {
         use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
         use std::sync::Arc;
         use tokio::sync::Mutex;
-        use tokio::time::{Duration, timeout};
+        use tokio::time::{timeout, Duration};
 
         // Start Python sidecar
         let mut sidecar = PythonSidecarManager::new();
         sidecar.start().await.expect("Sidecar should start");
-        sidecar.wait_for_ready().await.expect("Should receive ready signal");
+        sidecar
+            .wait_for_ready()
+            .await
+            .expect("Should receive ready signal");
 
         let sidecar_arc = Arc::new(Mutex::new(sidecar));
 
@@ -112,16 +139,21 @@ mod e2e_tests {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
 
-        audio_device.start_with_callback(move |data| {
-            let _ = tx.send(data);
-        }).await.expect("Should start with callback");
+        audio_device
+            .start_with_callback(move |data| {
+                let _ = tx.send(data);
+            })
+            .await
+            .expect("Should start with callback");
 
         // Send audio chunks to Python
         let sidecar_clone = Arc::clone(&sidecar_arc);
         let send_task = tokio::spawn(async move {
             let mut count = 0;
             while let Some(data) = rx.recv().await {
-                if count >= 2 { break; } // Send 2 chunks only
+                if count >= 2 {
+                    break;
+                } // Send 2 chunks only
 
                 let msg = serde_json::json!({
                     "type": "process_audio",
@@ -152,7 +184,8 @@ mod e2e_tests {
                     assert_eq!(
                         response.get("type").and_then(|v| v.as_str()),
                         Some("transcription_result"),
-                        "Response {} should be transcription_result", i
+                        "Response {} should be transcription_result",
+                        i
                     );
                 }
                 _ => panic!("Should receive response {}", i),
@@ -185,8 +218,16 @@ mod e2e_tests {
         let json = serde_json::to_string(&ws_msg).expect("Should serialize");
         assert!(json.contains("connected") || json.contains("Connected"));
         // Fields should be in camelCase for Chrome extension compatibility
-        assert!(json.contains("messageId"), "JSON should contain 'messageId' (camelCase): {}", json);
-        assert!(json.contains("sessionId"), "JSON should contain 'sessionId' (camelCase): {}", json);
+        assert!(
+            json.contains("messageId"),
+            "JSON should contain 'messageId' (camelCase): {}",
+            json
+        );
+        assert!(
+            json.contains("sessionId"),
+            "JSON should contain 'sessionId' (camelCase): {}",
+            json
+        );
         assert!(json.contains("timestamp"));
     }
 }

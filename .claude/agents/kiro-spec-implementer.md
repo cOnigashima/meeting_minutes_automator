@@ -199,20 +199,25 @@ Use this agent automatically when:
    - Add new test case IDs to `requirements.md` traceability table
    - Link task completion to requirement IDs
 
-4. **Commit with Requirement ID**
-   ```bash
-   git add .
-   git commit -m "feat(audio): REQ-001.4 音声ストリームキャプチャ実装
+4. **Report Implementation Summary**
+   - List all modified files with line numbers
+   - Provide commit message suggestion (DO NOT execute git commit)
+   - Example format:
+     ```
+     Suggested commit message:
+     feat(audio): REQ-001.4 音声ストリームキャプチャ実装
 
-   - AudioDeviceAdapter::start_capture() 実装
-   - ユニットテストtest_capture_audio_stream追加
-   - ADR-001準拠確認済み（Rust側録音のみ）
+     - AudioDeviceAdapter::start_capture() 実装
+     - ユニットテストtest_capture_audio_stream追加
+     - ADR-001準拠確認済み（Rust側録音のみ）
 
-   🤖 Generated with [Claude Code](https://claude.com/claude-code)
-   Co-Authored-By: Claude <noreply@anthropic.com>"
-   ```
+     🤖 Generated with [Claude Code](https://claude.com/claude-code)
+     Co-Authored-By: Claude <noreply@anthropic.com>
+     ```
+   - **IMPORTANT**: DO NOT run `git add` or `git commit` commands
+   - Let the user decide when to commit
 
-**Output**: Validated implementation with full traceability
+**Output**: Validated implementation with full traceability and commit message suggestion
 
 ---
 
@@ -238,13 +243,15 @@ Use this agent automatically when:
 - **Testing**: `vitest` for unit tests
 - **State Management**: `useState`/`useReducer` + React.Context (no global store without ADR)
 
-### Commit Messages
+### Commit Message Guidelines
 **Format**: `<type>(<scope>): <REQ-ID> <summary>`
 
-**Examples**:
+**Examples** (for reference, DO NOT commit):
 - `feat(audio): REQ-001.4 音声ストリームキャプチャ実装`
 - `fix(websocket): REQ-EXT-001 切断再接続ロジック修正`
 - `test(stt): STT-REQ-002.1 faster-whisperテストケース追加`
+
+**IMPORTANT**: Always provide commit message suggestions to the user, but DO NOT execute `git add` or `git commit` commands. Let the user decide when to commit.
 
 ---
 
@@ -335,10 +342,13 @@ mcp__serena__find_symbol(
 - **MVP3 (meeting-minutes-llm)**: ⚪ Planned
 
 ### Architecture Decision Records (ADRs)
-- **ADR-001**: Recording Responsibility (Rust-only audio recording)
-- **ADR-002**: Model Distribution Strategy (HuggingFace Hub + bundled fallback)
-- **ADR-003**: IPC Versioning (Semantic versioning with backward compatibility)
-- **ADR-004**: Chrome Extension WebSocket Management (Content Script adoption)
+- **ADR-001**: Recording Responsibility (Rust-only audio recording) - meeting-minutes-stt
+- **ADR-002**: Model Distribution Strategy (HuggingFace Hub + bundled fallback) - meeting-minutes-stt
+- **ADR-003**: IPC Versioning (Semantic versioning with backward compatibility) - meeting-minutes-stt
+- **ADR-004**: Chrome Extension WebSocket Management (Content Script adoption) - meeting-minutes-core
+- **ADR-005**: State Management Mechanism (chrome.storage.local + ExtensionState) - meeting-minutes-core
+- **ADR-006**: Token Storage Strategy (Tauri secure storage) - meeting-minutes-docs-sync
+- **ADR-007**: Offline Queue Storage Strategy (chrome.storage.local + RetryQueue) - meeting-minutes-docs-sync
 
 ### Key Files
 - `.kiro/steering/principles.md`: 9 core design principles

@@ -10,7 +10,11 @@ async fn ut_6_1_1_websocket_server_port_assignment() {
 
     let port = server.start().await.expect("Should start successfully");
 
-    assert!(port >= 9001 && port <= 9100, "Port should be in range 9001-9100, got {}", port);
+    assert!(
+        port >= 9001 && port <= 9100,
+        "Port should be in range 9001-9100, got {}",
+        port
+    );
 
     server.stop().await.expect("Should stop successfully");
 }

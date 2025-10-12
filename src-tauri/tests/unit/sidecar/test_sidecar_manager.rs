@@ -1,7 +1,7 @@
 // Unit Tests for PythonSidecarManager Process Lifecycle
 // TDD Red Phase: Tests for process startup and management
 
-use meeting_minutes_automator_lib::python_sidecar::{PythonSidecarManager, PythonSidecarError};
+use meeting_minutes_automator_lib::python_sidecar::{PythonSidecarError, PythonSidecarManager};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -18,7 +18,10 @@ async fn ut_3_2_1_process_startup_success() {
         Err(e) => println!("❌ Process startup failed: {:?}", e),
     }
 
-    assert!(result.is_ok(), "Should start Python sidecar process successfully");
+    assert!(
+        result.is_ok(),
+        "Should start Python sidecar process successfully"
+    );
 
     // Cleanup
     let _ = manager.stop().await;
@@ -35,7 +38,8 @@ async fn ut_3_2_2_wait_for_ready_success() {
     let result = timeout(Duration::from_secs(10), async {
         // For Walking Skeleton, we'll implement a simple ready check
         manager.wait_for_ready().await
-    }).await;
+    })
+    .await;
 
     match &result {
         Ok(Ok(_)) => println!("✅ Received ready signal"),
@@ -77,12 +81,12 @@ async fn ut_3_2_4_stdin_stdout_streams() {
 
     // For Walking Skeleton, we verify streams are available
     // by attempting to send a simple ping message
-    let result = manager.send_message(
-        serde_json::json!({
+    let result = manager
+        .send_message(serde_json::json!({
             "type": "ping",
             "id": "test-1"
-        })
-    ).await;
+        }))
+        .await;
 
     match &result {
         Ok(_) => println!("✅ stdin stream is writable"),

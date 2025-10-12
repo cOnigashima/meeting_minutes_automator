@@ -4,18 +4,19 @@
 
 pub mod audio;
 pub mod audio_device_adapter;
-pub mod python_sidecar;
-pub mod websocket;
 pub mod commands;
-pub mod state;
 pub mod logger;
+pub mod python_sidecar;
+pub mod state;
+pub mod storage;
+pub mod websocket;
 
-use state::AppState;
-use websocket::WebSocketServer;
-use python_sidecar::PythonSidecarManager;
 use audio::FakeAudioDevice;
+use python_sidecar::PythonSidecarManager;
+use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
+use websocket::WebSocketServer;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -46,12 +47,18 @@ pub fn run() {
                                 app_state.set_python_sidecar(sidecar_arc);
                             }
                             Err(e) => {
-                                eprintln!("[Meeting Minutes] ❌ Python sidecar ready timeout: {:?}", e);
+                                eprintln!(
+                                    "[Meeting Minutes] ❌ Python sidecar ready timeout: {:?}",
+                                    e
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("[Meeting Minutes] ❌ Failed to start Python sidecar: {:?}", e);
+                        eprintln!(
+                            "[Meeting Minutes] ❌ Failed to start Python sidecar: {:?}",
+                            e
+                        );
                     }
                 }
 
@@ -65,12 +72,18 @@ pub fn run() {
                 let mut ws_server = WebSocketServer::new();
                 match ws_server.start().await {
                     Ok(port) => {
-                        println!("[Meeting Minutes] ✅ WebSocket server started on port {}", port);
+                        println!(
+                            "[Meeting Minutes] ✅ WebSocket server started on port {}",
+                            port
+                        );
                         let server_arc = Arc::new(tokio::sync::Mutex::new(ws_server));
                         app_state.set_websocket_server(server_arc);
                     }
                     Err(e) => {
-                        eprintln!("[Meeting Minutes] ❌ Failed to start WebSocket server: {:?}", e);
+                        eprintln!(
+                            "[Meeting Minutes] ❌ Failed to start WebSocket server: {:?}",
+                            e
+                        );
                     }
                 }
             });

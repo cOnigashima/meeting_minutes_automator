@@ -12,7 +12,8 @@ async fn ut_3_1_1_detect_from_env_variable() {
     // Skip if APP_PYTHON is already set
     if env::var("APP_PYTHON").is_err() {
         // Find a valid Python executable dynamically
-        let python_path = find_valid_python().await
+        let python_path = find_valid_python()
+            .await
             .expect("No valid Python found for testing");
 
         // Set it temporarily for this test
@@ -25,8 +26,15 @@ async fn ut_3_1_1_detect_from_env_variable() {
             Err(e) => println!("❌ Detection failed: {:?}", e),
         }
 
-        assert!(result.is_ok(), "Should detect Python from APP_PYTHON env var");
-        assert_eq!(result.unwrap().to_string_lossy(), python_path, "Should use APP_PYTHON path");
+        assert!(
+            result.is_ok(),
+            "Should detect Python from APP_PYTHON env var"
+        );
+        assert_eq!(
+            result.unwrap().to_string_lossy(),
+            python_path,
+            "Should use APP_PYTHON path"
+        );
     } else {
         println!("Skipping - APP_PYTHON already set");
     }
@@ -38,10 +46,23 @@ async fn find_valid_python() -> Option<String> {
 
     // Try common Python commands in order
     #[cfg(target_os = "windows")]
-    let candidates = vec!["python3.12", "python3.11", "python3.10", "python3.9", "python3", "python"];
+    let candidates = vec![
+        "python3.12",
+        "python3.11",
+        "python3.10",
+        "python3.9",
+        "python3",
+        "python",
+    ];
 
     #[cfg(not(target_os = "windows"))]
-    let candidates = vec!["python3.12", "python3.11", "python3.10", "python3.9", "python3"];
+    let candidates = vec![
+        "python3.12",
+        "python3.11",
+        "python3.10",
+        "python3.9",
+        "python3",
+    ];
 
     for cmd in candidates {
         // Try to run the command with --version
@@ -82,7 +103,10 @@ async fn ut_3_1_2_detect_from_virtual_env() {
     }
 
     let result = PythonSidecarManager::detect_python_executable().await;
-    assert!(result.is_ok(), "Should detect Python from virtual environment");
+    assert!(
+        result.is_ok(),
+        "Should detect Python from virtual environment"
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -93,7 +117,10 @@ async fn ut_3_1_3_detect_from_py_launcher() {
     let result = PythonSidecarManager::detect_python_executable().await;
 
     // Should succeed if py.exe exists, or fall back to PATH
-    assert!(result.is_ok(), "Should detect Python from py.exe or fallback");
+    assert!(
+        result.is_ok(),
+        "Should detect Python from py.exe or fallback"
+    );
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -116,7 +143,10 @@ async fn ut_3_1_5_validate_python_version() {
         Ok(path) => {
             // Verify version is in range
             let is_valid = PythonSidecarManager::validate_python_version(&path).await;
-            assert!(is_valid.is_ok(), "Detected Python should be in supported version range");
+            assert!(
+                is_valid.is_ok(),
+                "Detected Python should be in supported version range"
+            );
         }
         Err(e) => {
             panic!("Python detection failed: {}", e);
@@ -155,6 +185,9 @@ async fn ut_3_1_7_architecture_validation() {
 
     if let Ok(path) = result {
         let arch_result = PythonSidecarManager::validate_architecture(&path).await;
-        assert!(arch_result.is_ok(), "Should validate as 64-bit architecture");
+        assert!(
+            arch_result.is_ok(),
+            "Should validate as 64-bit architecture"
+        );
     }
 }

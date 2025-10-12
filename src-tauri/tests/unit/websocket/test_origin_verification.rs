@@ -15,7 +15,11 @@ async fn ut_6_2_2_origin_verification_localhost() {
     let result = connect_async(&url).await;
 
     // Note: Default connection uses localhost origin, should be accepted
-    assert!(result.is_ok(), "Should accept localhost origin: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should accept localhost origin: {:?}",
+        result.err()
+    );
 
     server.stop().await.expect("Should stop server");
 }

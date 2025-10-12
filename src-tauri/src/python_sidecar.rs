@@ -2,9 +2,9 @@
 // Walking Skeleton (MVP0) - Python Interpreter Detection Implementation
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use serde::{Deserialize, Serialize};
 
 /// Python interpreter detection errors (design.md compliant)
 #[derive(Error, Debug)]
@@ -124,8 +124,8 @@ impl PythonSidecarManager {
         }
 
         // Step 2: Check active virtual environment
-        if let Ok(venv_path) = std::env::var("VIRTUAL_ENV")
-            .or_else(|_| std::env::var("CONDA_PREFIX"))
+        if let Ok(venv_path) =
+            std::env::var("VIRTUAL_ENV").or_else(|_| std::env::var("CONDA_PREFIX"))
         {
             let python_path = if cfg!(windows) {
                 PathBuf::from(&venv_path).join("Scripts").join("python.exe")
@@ -133,7 +133,9 @@ impl PythonSidecarManager {
                 PathBuf::from(&venv_path).join("bin").join("python")
             };
 
-            if python_path.exists() && Self::validate_python(&python_path, &supported_versions).await? {
+            if python_path.exists()
+                && Self::validate_python(&python_path, &supported_versions).await?
+            {
                 return Ok(python_path);
             }
         }
@@ -152,8 +154,12 @@ impl PythonSidecarManager {
 
         // Step 4 & 5: PATH scan
         let candidates = vec![
-            "python3.12", "python3.11", "python3.10", "python3.9",
-            "python3", "python"
+            "python3.12",
+            "python3.11",
+            "python3.10",
+            "python3.9",
+            "python3",
+            "python",
         ];
 
         for name in candidates {
@@ -170,7 +176,7 @@ impl PythonSidecarManager {
     /// Validate Python version and architecture
     async fn validate_python(
         path: &Path,
-        supported_versions: &[(u32, u32)]
+        supported_versions: &[(u32, u32)],
     ) -> Result<bool, PythonDetectionError> {
         use tokio::process::Command;
 
@@ -209,7 +215,10 @@ impl PythonSidecarManager {
 
         // Validate architecture (64-bit)
         let arch = parts[1];
-        let is_64bit = arch.contains("64") || arch.contains("x86_64") || arch.contains("amd64") || arch.contains("arm64");
+        let is_64bit = arch.contains("64")
+            || arch.contains("x86_64")
+            || arch.contains("amd64")
+            || arch.contains("arm64");
 
         if !is_64bit {
             // Architecture mismatch - return false to try next candidate
@@ -238,7 +247,10 @@ impl PythonSidecarManager {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let arch = stdout.trim();
-        let is_64bit = arch.contains("64") || arch.contains("x86_64") || arch.contains("amd64") || arch.contains("arm64");
+        let is_64bit = arch.contains("64")
+            || arch.contains("x86_64")
+            || arch.contains("amd64")
+            || arch.contains("arm64");
 
         if !is_64bit {
             // Architecture mismatch - return false
@@ -250,13 +262,13 @@ impl PythonSidecarManager {
 
     /// Start the Python sidecar process
     pub async fn start(&mut self) -> Result<(), PythonSidecarError> {
-        use tokio::process::Command;
         use tokio::io::BufReader;
+        use tokio::process::Command;
 
         // Prevent double start
         if self.process.is_some() {
             return Err(PythonSidecarError::StartupFailed(
-                "Process already running".to_string()
+                "Process already running".to_string(),
             ));
         }
 
@@ -267,14 +279,17 @@ impl PythonSidecarManager {
         let script_path = std::env::current_dir()
             .map_err(|e| PythonSidecarError::StartupFailed(e.to_string()))?
             .parent()
-            .ok_or_else(|| PythonSidecarError::StartupFailed("Cannot find project root".to_string()))?
+            .ok_or_else(|| {
+                PythonSidecarError::StartupFailed("Cannot find project root".to_string())
+            })?
             .join("python-stt")
             .join("main.py");
 
         if !script_path.exists() {
-            return Err(PythonSidecarError::StartupFailed(
-                format!("Python script not found: {:?}", script_path)
-            ));
+            return Err(PythonSidecarError::StartupFailed(format!(
+                "Python script not found: {:?}",
+                script_path
+            )));
         }
 
         // Start Python process
@@ -287,9 +302,13 @@ impl PythonSidecarManager {
             .map_err(|e| PythonSidecarError::StartupFailed(e.to_string()))?;
 
         // Extract stdin/stdout handles
-        let stdin = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| PythonSidecarError::StartupFailed("Failed to get stdin".to_string()))?;
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| PythonSidecarError::StartupFailed("Failed to get stdout".to_string()))?;
 
         // Store process and streams
@@ -304,44 +323,59 @@ impl PythonSidecarManager {
     pub async fn wait_for_ready(&mut self) -> Result<(), PythonSidecarError> {
         use tokio::io::AsyncBufReadExt;
 
-        let stdout = self.stdout.as_mut()
+        let stdout = self
+            .stdout
+            .as_mut()
             .ok_or_else(|| PythonSidecarError::ProcessNotRunning)?;
 
         let mut line = String::new();
-        stdout.read_line(&mut line).await
+        stdout
+            .read_line(&mut line)
+            .await
             .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
-        let msg: serde_json::Value = serde_json::from_str(&line)
-            .map_err(|e| PythonSidecarError::CommunicationFailed(
-                format!("Failed to parse ready message: {}", e)
-            ))?;
+        let msg: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
+            PythonSidecarError::CommunicationFailed(format!("Failed to parse ready message: {}", e))
+        })?;
 
         if msg.get("type").and_then(|v| v.as_str()) != Some("ready") {
-            return Err(PythonSidecarError::CommunicationFailed(
-                format!("Expected 'ready' message, got: {:?}", msg)
-            ));
+            return Err(PythonSidecarError::CommunicationFailed(format!(
+                "Expected 'ready' message, got: {:?}",
+                msg
+            )));
         }
 
         Ok(())
     }
 
     /// Send a JSON message to Python sidecar via stdin
-    pub async fn send_message(&mut self, message: serde_json::Value) -> Result<(), PythonSidecarError> {
+    pub async fn send_message(
+        &mut self,
+        message: serde_json::Value,
+    ) -> Result<(), PythonSidecarError> {
         use tokio::io::AsyncWriteExt;
 
-        let stdin = self.stdin.as_mut()
+        let stdin = self
+            .stdin
+            .as_mut()
             .ok_or_else(|| PythonSidecarError::ProcessNotRunning)?;
 
         let json_str = serde_json::to_string(&message)
             .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
-        stdin.write_all(json_str.as_bytes()).await
+        stdin
+            .write_all(json_str.as_bytes())
+            .await
             .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
-        stdin.write_all(b"\n").await
+        stdin
+            .write_all(b"\n")
+            .await
             .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
-        stdin.flush().await
+        stdin
+            .flush()
+            .await
             .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
         Ok(())
@@ -351,23 +385,26 @@ impl PythonSidecarManager {
     pub async fn receive_message(&mut self) -> Result<serde_json::Value, PythonSidecarError> {
         use tokio::io::AsyncBufReadExt;
 
-        let stdout = self.stdout.as_mut()
+        let stdout = self
+            .stdout
+            .as_mut()
             .ok_or_else(|| PythonSidecarError::ProcessNotRunning)?;
 
         let mut line = String::new();
-        stdout.read_line(&mut line).await
+        stdout
+            .read_line(&mut line)
+            .await
             .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
         if line.is_empty() {
             return Err(PythonSidecarError::CommunicationFailed(
-                "EOF reached - process terminated".to_string()
+                "EOF reached - process terminated".to_string(),
             ));
         }
 
-        let msg: serde_json::Value = serde_json::from_str(&line)
-            .map_err(|e| PythonSidecarError::CommunicationFailed(
-                format!("Failed to parse message: {}", e)
-            ))?;
+        let msg: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
+            PythonSidecarError::CommunicationFailed(format!("Failed to parse message: {}", e))
+        })?;
 
         Ok(msg)
     }
@@ -391,10 +428,8 @@ impl PythonSidecarManager {
 
         // Wait for process to exit gracefully (3 second timeout)
         if let Some(mut process) = self.process.take() {
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                process.wait()
-            ).await;
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(3), process.wait()).await;
 
             match result {
                 Ok(Ok(_)) => {
@@ -403,11 +438,10 @@ impl PythonSidecarManager {
                     self.stdout.take();
                     Ok(())
                 }
-                Ok(Err(e)) => {
-                    Err(PythonSidecarError::StartupFailed(
-                        format!("Failed to wait for process: {}", e)
-                    ))
-                }
+                Ok(Err(e)) => Err(PythonSidecarError::StartupFailed(format!(
+                    "Failed to wait for process: {}",
+                    e
+                ))),
                 Err(_) => {
                     // Timeout - kill the process
                     let _ = process.kill().await;
@@ -438,10 +472,8 @@ impl PythonSidecarManager {
             self.stdin.take();
 
             // Wait for process to exit (with timeout)
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                process.wait()
-            ).await;
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(3), process.wait()).await;
 
             match result {
                 Ok(Ok(_)) => {
@@ -449,11 +481,10 @@ impl PythonSidecarManager {
                     self.stdout.take();
                     Ok(())
                 }
-                Ok(Err(e)) => {
-                    Err(PythonSidecarError::StartupFailed(
-                        format!("Failed to wait for process: {}", e)
-                    ))
-                }
+                Ok(Err(e)) => Err(PythonSidecarError::StartupFailed(format!(
+                    "Failed to wait for process: {}",
+                    e
+                ))),
                 Err(_) => {
                     // Timeout - kill the process
                     let _ = process.kill().await;
