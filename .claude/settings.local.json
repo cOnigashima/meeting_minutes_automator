@@ -40,7 +40,9 @@
       "Bash(rustc --version)",
       "mcp__serena__think_about_task_adherence",
       "Bash(mv:*)",
-      "SlashCommand(/kiro:validate-design:*)"
+      "SlashCommand(/kiro:validate-design:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/python -m pytest tests/test_audio_pipeline.py -v)"
     ],
     "deny": [],
     "ask": []

@@ -8,19 +8,19 @@ Pythonサイドカープロセスで音声認識（STT）処理を担当しま�
 
 ```bash
 cd python-stt
-python3 -m venv venv
+python3 -m venv .venv
 ```
 
 ### 2. 仮想環境の有効化
 
 **macOS/Linux:**
 ```bash
-source venv/bin/activate
+source .venv/bin/activate
 ```
 
 **Windows:**
 ```cmd
-venv\Scripts\activate
+.venv\Scripts\activate
 ```
 
 ### 3. 依存関係のインストール
@@ -85,7 +85,12 @@ which python3  # macOS/Linux
 where python   # Windows
 ```
 
-`venv/bin/python3` や `venv\Scripts\python.exe` が表示されればOK
+`.venv/bin/python3` や `.venv\Scripts\python.exe` が表示されればOK
+
+**AI Coding Agents**: 仮想環境なしで実行する場合:
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
 
 ### pytest が見つからない
 ```bash
