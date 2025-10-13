@@ -783,5 +783,184 @@ class TestResourceMonitorIntegration:
                 await processor.resource_monitor.stop_monitoring()
 
 
+class TestEventStreamProtocol:
+    """
+    Task 7.1.6: Event Stream Protocol Tests
+
+    Tests for real-time event streaming (speech_start, partial_text, final_text, speech_end)
+    Related Requirements:
+    - STT-REQ-003.7: Partial text generation during speech (1s interval)
+    - STT-REQ-003.8: Partial text with is_final=False
+    - STT-REQ-007.1: Backward compatibility (existing process_audio unchanged)
+    """
+
+    @pytest.mark.asyncio
+    async def test_process_audio_stream_sends_multiple_events(self):
+        """
+        RED TEST: process_audio_stream should send speech_start, partial_text, final_text events
+
+        GIVEN AudioProcessor with process_audio_stream handler
+        WHEN Audio data with speech is processed
+        THEN Multiple IPC events should be sent:
+          1. event: speech_start
+          2. event: partial_text (is_final=False)
+          3. event: final_text (is_final=True)
+          4. event: speech_end
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from stt_engine.ipc_handler import IpcHandler
+        from main import AudioProcessor
+
+        # Mock IPC handler to capture sent messages
+        mock_ipc = AsyncMock(spec=IpcHandler)
+        sent_messages = []
+
+        async def capture_message(msg):
+            sent_messages.append(msg)
+
+        mock_ipc.send_message.side_effect = capture_message
+
+        # Create AudioProcessor with mocked components
+        with patch('main.WhisperSTTEngine') as mock_stt_class, \
+             patch('stt_engine.resource_monitor.ResourceMonitor') as mock_resource_class, \
+             patch('main.VoiceActivityDetector') as mock_vad_class, \
+             patch('main.AudioPipeline') as mock_pipeline_class:
+
+            mock_stt = AsyncMock()
+            mock_stt.model_size = 'small'
+            mock_stt.transcribe.return_value = {
+                'text': 'Hello world',
+                'is_final': True,
+                'confidence': 0.95,
+                'language': 'ja'
+            }
+            mock_stt_class.return_value = mock_stt
+
+            mock_resource = MagicMock()
+            mock_resource.initial_model = 'small'
+            mock_resource.current_model = 'small'
+            mock_resource_class.return_value = mock_resource
+
+            # Mock VAD split_into_frames to return some frames
+            mock_vad = MagicMock()
+            mock_vad.split_into_frames.return_value = [[0] * 320 for _ in range(10)]  # 10 frames
+            mock_vad_class.return_value = mock_vad
+
+            # Mock AudioPipeline to return speech events
+            mock_pipeline = AsyncMock()
+            # Simulate events: speech_start, partial_text, final_text, speech_end
+            event_sequence = [
+                {'event': 'speech_start', 'timestamp': 1000},
+                {'event': 'partial_text', 'transcription': {'text': 'Hello', 'is_final': False, 'confidence': 0.9}},
+                {'event': 'final_text', 'transcription': {'text': 'Hello world', 'is_final': True, 'confidence': 0.95, 'language': 'ja'}},
+                {'event': 'speech_end', 'timestamp': 2000}
+            ]
+            mock_pipeline.process_audio_frame_with_partial.side_effect = event_sequence + [None] * 6  # 4 events + 6 None
+            mock_pipeline_class.return_value = mock_pipeline
+
+            processor = AudioProcessor()
+            processor.ipc = mock_ipc  # Inject mock IPC
+
+            # Prepare audio data (simulated speech segment)
+            # 1 second of audio = 16000 samples * 2 bytes = 32000 bytes
+            audio_data = [0] * 32000
+
+            msg = {
+                'id': 'test-stream-001',
+                'type': 'request',
+                'method': 'process_audio_stream',
+                'params': {'audio_data': audio_data}
+            }
+
+            # Act: Process audio stream (should send multiple events)
+            await processor.handle_message(msg)
+
+            # Assert: Multiple events should be sent
+            assert len(sent_messages) >= 3, f"Expected at least 3 events, got {len(sent_messages)}"
+
+            # Verify event types (FIXED: eventType field, not "event")
+            event_types = [msg.get('eventType') for msg in sent_messages]
+            assert 'speech_start' in event_types, "Missing speech_start event"
+            assert 'partial_text' in event_types or 'final_text' in event_types, "Missing text events"
+
+            # Verify partial text has is_final=False (FIXED: data field, not "result")
+            partial_events = [msg for msg in sent_messages if msg.get('eventType') == 'partial_text']
+            if partial_events:
+                assert partial_events[0]['data']['is_final'] is False, "Partial text should have is_final=False"
+
+            # Verify final text has is_final=True (FIXED: data field)
+            final_events = [msg for msg in sent_messages if msg.get('eventType') == 'final_text']
+            assert len(final_events) > 0, "Missing final_text event"
+            assert final_events[0]['data']['is_final'] is True, "Final text should have is_final=True"
+
+            # FIXED: Verify speech_end is sent after final_text (P1 fix)
+            speech_end_events = [msg for msg in sent_messages if msg.get('eventType') == 'speech_end']
+            assert len(speech_end_events) > 0, "Missing speech_end event"
+
+            # Verify speech_end comes after final_text
+            final_text_idx = next(i for i, msg in enumerate(sent_messages) if msg.get('eventType') == 'final_text')
+            speech_end_idx = next(i for i, msg in enumerate(sent_messages) if msg.get('eventType') == 'speech_end')
+            assert speech_end_idx > final_text_idx, "speech_end must come after final_text"
+
+    @pytest.mark.asyncio
+    async def test_process_audio_still_works_for_backward_compatibility(self):
+        """
+        STT-REQ-007.1: Existing process_audio endpoint should remain unchanged
+
+        GIVEN AudioProcessor with both process_audio and process_audio_stream
+        WHEN process_audio is called (legacy endpoint)
+        THEN Single response should be sent (MVP0 behavior)
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from stt_engine.ipc_handler import IpcHandler
+        from main import AudioProcessor
+
+        mock_ipc = AsyncMock(spec=IpcHandler)
+        sent_messages = []
+
+        async def capture_message(msg):
+            sent_messages.append(msg)
+
+        mock_ipc.send_message.side_effect = capture_message
+
+        with patch('main.WhisperSTTEngine') as mock_stt_class, \
+             patch('stt_engine.resource_monitor.ResourceMonitor') as mock_resource_class:
+
+            mock_stt = AsyncMock()
+            mock_stt.model_size = 'small'
+            mock_stt.transcribe.return_value = {
+                'text': 'Hello world',
+                'is_final': True,
+                'confidence': 0.95,
+                'language': 'ja'
+            }
+            mock_stt_class.return_value = mock_stt
+
+            mock_resource = MagicMock()
+            mock_resource.initial_model = 'small'
+            mock_resource.current_model = 'small'
+            mock_resource_class.return_value = mock_resource
+
+            processor = AudioProcessor()
+            processor.ipc = mock_ipc  # Inject mock IPC
+
+            audio_data = [0] * 32000
+
+            msg = {
+                'id': 'test-legacy-001',
+                'type': 'request',
+                'method': 'process_audio',
+                'params': {'audio_data': audio_data}
+            }
+
+            # Act: Process audio (legacy endpoint)
+            await processor.handle_message(msg)
+
+            # Assert: Single response (MVP0 behavior)
+            assert len(sent_messages) == 1, f"Expected 1 response, got {len(sent_messages)}"
+            assert sent_messages[0].get('type') == 'response', "Should be a response message"
+            assert sent_messages[0].get('id') == 'test-legacy-001', "Response should match request ID"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

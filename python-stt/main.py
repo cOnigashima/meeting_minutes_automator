@@ -16,6 +16,7 @@ Related Requirements:
 import sys
 import asyncio
 import logging
+import time
 from typing import Dict, Any
 
 from stt_engine.ipc_handler import IpcHandler
@@ -71,6 +72,7 @@ class AudioProcessor:
         Message types (Task 7.1.5 - New IPC Protocol):
         - request (new): Generic request with method field (STT-REQ-007.1)
           - method=process_audio: Process audio frames through VAD→Pipeline→STT
+          - method=process_audio_stream: Real-time event streaming (Task 7.1.6)
           - method=approve_upgrade: User-approved model upgrade
         - process_audio (legacy): Direct process_audio for backward compatibility
         - approve_upgrade (legacy): Direct approve_upgrade for backward compatibility
@@ -90,6 +92,11 @@ class AudioProcessor:
                     # Extract audio_data from params
                     msg_with_audio = {'id': msg_id, 'audio_data': params.get('audio_data')}
                     await self._handle_process_audio(msg_with_audio)
+
+                elif method == 'process_audio_stream':
+                    # Task 7.1.6: Real-time event streaming
+                    msg_with_audio = {'id': msg_id, 'audio_data': params.get('audio_data')}
+                    await self._handle_process_audio_stream(msg_with_audio)
 
                 elif method == 'approve_upgrade':
                     # Extract target_model from params (new format)
@@ -251,6 +258,126 @@ class AudioProcessor:
                 }
             })
             logger.debug("No final transcription yet, sent empty response")
+
+    async def _handle_process_audio_stream(self, msg: Dict[str, Any]) -> None:
+        """
+        Process audio data with REAL-TIME event streaming (Task 7.1.6).
+
+        This implementation sends multiple IPC events as audio is processed:
+        - speech_start: When speech begins
+        - partial_text: Intermediate transcription results (is_final=False)
+        - final_text: Complete transcription after speech ends (is_final=True)
+        - speech_end: Immediately after final_text
+
+        Related Requirements:
+        - STT-REQ-003.7: Partial text generation during speech (1s interval)
+        - STT-REQ-003.8: Partial text with is_final=False
+        - STT-REQ-007.1: New endpoint (existing process_audio unchanged)
+
+        Args:
+            msg: IPC message with audio_data field
+        """
+        msg_id = msg.get('id', 'unknown')
+        audio_data = msg.get('audio_data', [])
+
+        if not audio_data:
+            logger.warning("Empty audio_data received for stream")
+            return
+
+        # Convert audio data (u8 array from Rust) to bytes
+        audio_bytes = bytes(audio_data)
+
+        # Split into 10ms frames (STT-REQ-003.2)
+        frames = self.vad.split_into_frames(audio_bytes)
+
+        # Process frames and IMMEDIATELY send events
+        for frame in frames:
+            # Use process_audio_frame_with_partial for partial text support
+            result = await self.pipeline.process_audio_frame_with_partial(frame)
+
+            if result:
+                event_type = result.get('event')
+                logger.debug(f"Stream event: {event_type}")
+
+                # Immediately send event to Rust (real-time streaming)
+                # CRITICAL: Match ipc_protocol.rs IpcMessage::Event schema
+                # Schema: { type: "event", version: "1.0", eventType: "...", data: {...} }
+                if event_type == 'speech_start':
+                    await self.ipc.send_message({
+                        'type': 'event',
+                        'version': '1.0',
+                        'eventType': 'speech_start',
+                        'data': {
+                            'requestId': msg_id,
+                            'timestamp': result.get('timestamp')
+                        }
+                    })
+
+                elif event_type == 'partial_text':
+                    transcription = result['transcription']
+                    await self.ipc.send_message({
+                        'type': 'event',
+                        'version': '1.0',
+                        'eventType': 'partial_text',
+                        'data': {
+                            'requestId': msg_id,
+                            'text': transcription['text'],
+                            'is_final': False,  # STT-REQ-003.8
+                            'confidence': transcription.get('confidence'),
+                            'language': transcription.get('language'),
+                            'processing_time_ms': transcription.get('processing_time_ms'),
+                            'model_size': self.stt_engine.model_size
+                        }
+                    })
+
+                elif event_type == 'final_text':
+                    transcription = result['transcription']
+                    # Send final_text event
+                    await self.ipc.send_message({
+                        'type': 'event',
+                        'version': '1.0',
+                        'eventType': 'final_text',
+                        'data': {
+                            'requestId': msg_id,
+                            'text': transcription['text'],
+                            'is_final': True,  # STT-REQ-003.9
+                            'confidence': transcription.get('confidence'),
+                            'language': transcription.get('language'),
+                            'processing_time_ms': transcription.get('processing_time_ms'),
+                            'model_size': self.stt_engine.model_size
+                        }
+                    })
+
+                    # FIXED: Immediately send speech_end after final_text
+                    # AudioPipeline._handle_speech_end() never returns speech_end event
+                    # when STT engine is active (it returns final_text instead).
+                    # We must derive and send speech_end here to satisfy the API contract.
+                    await self.ipc.send_message({
+                        'type': 'event',
+                        'version': '1.0',
+                        'eventType': 'speech_end',
+                        'data': {
+                            'requestId': msg_id,
+                            'timestamp': int(time.time() * 1000)  # Current timestamp
+                        }
+                    })
+                    logger.debug(f"Sent speech_end after final_text for {msg_id}")
+
+                elif event_type == 'speech_end':
+                    # This branch is only hit when STT engine is disabled
+                    # (AudioPipeline._handle_speech_end L258-260)
+                    # In production with Whisper, this never happens.
+                    await self.ipc.send_message({
+                        'type': 'event',
+                        'version': '1.0',
+                        'eventType': 'speech_end',
+                        'data': {
+                            'requestId': msg_id,
+                            'timestamp': result.get('timestamp', int(time.time() * 1000))
+                        }
+                    })
+
+        logger.info(f"Stream processing complete for request {msg_id}")
 
 
     async def _handle_model_downgrade(self, old_model: str, new_model: str) -> None:
