@@ -5,11 +5,44 @@
 
 use crate::audio::AudioDevice;
 use crate::audio_device_adapter::AudioDeviceEvent;
-use crate::ipc_protocol::{IpcMessage as ProtocolMessage, PROTOCOL_VERSION};
+use crate::ipc_protocol::{IpcMessage as ProtocolMessage, VersionCompatibility, PROTOCOL_VERSION};
 use crate::state::AppState;
 use crate::websocket::WebSocketMessage;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::broadcast;
+
+/// Global IPC event reader task (spawned once at startup)
+/// Solves deadlock: single reader distributes events to all listeners via broadcast channel
+/// Related: STT-REQ-007 (Event Stream Protocol deadlock fix)
+async fn start_ipc_reader_task(
+    python_sidecar: Arc<tokio::sync::Mutex<crate::python_sidecar::PythonSidecarManager>>,
+    event_tx: broadcast::Sender<serde_json::Value>,
+) {
+    tokio::spawn(async move {
+        loop {
+            // Acquire mutex ONLY for receive, then immediately drop
+            let event_result = {
+                let mut sidecar = python_sidecar.lock().await;
+                sidecar.receive_message().await
+            }; // Mutex dropped here
+
+            match event_result {
+                Ok(event) => {
+                    // Broadcast to all subscribers (non-blocking)
+                    if let Err(e) = event_tx.send(event.clone()) {
+                        eprintln!("[Meeting Minutes] Failed to broadcast IPC event: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[Meeting Minutes] IPC reader error: {:?}", e);
+                    // Don't break - Python may recover
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+    });
+}
 
 /// Monitor audio device events and notify UI
 /// MVP1 - STT-REQ-004.9/10/11
@@ -146,8 +179,12 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
 
             // Spawn async task to handle IPC communication
             tokio::spawn(async move {
-                // Send audio data to Python sidecar
-                let mut sidecar = python_sidecar.lock().await;
+                // CRITICAL FIX: Narrow mutex scope to prevent deadlock on long utterances
+                // Previous bug: Held mutex from send_message through entire receive loop,
+                // blocking subsequent audio chunks from being sent. This prevented Python
+                // from receiving later frames needed to detect speech_end, causing permanent deadlock.
+                // Fix: Release mutex immediately after send, re-acquire for each receive.
+                // Requirement: STT-REQ-007 (non-blocking event stream)
 
                 // Task 7.1.6: Use event stream protocol (STT-REQ-007.3)
                 // Python側がprocess_audio_streamに対応済み（2025-10-13）
@@ -175,18 +212,46 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                     }
                 };
 
-                if let Err(e) = sidecar.send_message(message_json).await {
-                    eprintln!(
-                        "[Meeting Minutes] Failed to send audio data to Python: {:?}",
-                        e
-                    );
-                    return;
+                // Send message with minimal mutex hold time
+                {
+                    let mut sidecar = python_sidecar.lock().await;
+                    if let Err(e) = sidecar.send_message(message_json).await {
+                        eprintln!(
+                            "[Meeting Minutes] Failed to send audio data to Python: {:?}",
+                            e
+                        );
+                        return;
+                    }
+                    // Mutex dropped here - other audio chunks can now send frames
                 }
 
                 // Task 7.1.6: Receive multiple events (speech_start, partial_text, final_text, speech_end)
                 // Loop until speech_end or error
+                //
+                // REMAINING ISSUE: MutexGuard is held across .await even within {}
+                // This still blocks other chunks from sending. Proper fix requires
+                // dedicated background receiver task (see ADR-XXX).
+                // Current mitigation: 5-second timeout to prevent permanent deadlock.
                 loop {
-                    match sidecar.receive_message().await {
+                    // WARNING: This still holds mutex during await, despite {} block
+                    let response = {
+                        let mut sidecar = python_sidecar.lock().await;
+
+                        // Add timeout to prevent permanent deadlock
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            sidecar.receive_message()
+                        ).await {
+                            Ok(result) => result,
+                            Err(_) => {
+                                eprintln!("[Meeting Minutes] ⏱️ Receive timeout after 5s, assuming stream ended");
+                                break;
+                            }
+                        }
+                        // Mutex dropped here
+                    };
+
+                    match response {
                         Ok(response) => {
                             // Parse IPC message
                             let msg = match serde_json::from_value::<ProtocolMessage>(response.clone()) {
@@ -196,6 +261,75 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                                     break;
                                 }
                             };
+
+                            // Task 7.2: Check version compatibility (STT-REQ-007.6)
+                            match msg.check_version_compatibility() {
+                                VersionCompatibility::MajorMismatch { received, expected } => {
+                                    eprintln!(
+                                        "[Meeting Minutes] ❌ Major version mismatch: received={}, expected={}. Communication rejected.",
+                                        received, expected
+                                    );
+
+                                    // P0 FIX: Send error response to Python before breaking
+                                    // STT-REQ-007.6: "エラー応答を返し、通信を拒否"
+                                    let error_response = ProtocolMessage::Error {
+                                        id: msg.id().to_string(),
+                                        version: PROTOCOL_VERSION.to_string(),
+                                        error_code: "VERSION_MISMATCH_MAJOR".to_string(),
+                                        error_message: format!(
+                                            "Major version mismatch: received={}, expected={}",
+                                            received, expected
+                                        ),
+                                        recoverable: false,
+                                    };
+
+                                    if let Ok(json) = serde_json::to_value(&error_response) {
+                                        let mut sidecar = python_sidecar.lock().await;
+                                        if let Err(e) = sidecar.send_message(json).await {
+                                            eprintln!("[Meeting Minutes] Failed to send version error: {:?}", e);
+                                        }
+                                    }
+
+                                    // Reject communication - exit loop
+                                    break;
+                                }
+                                VersionCompatibility::MinorMismatch { received, expected } => {
+                                    eprintln!(
+                                        "[Meeting Minutes] ⚠️ Minor version mismatch: received={}, expected={}. Continuing with backward compatibility.",
+                                        received, expected
+                                    );
+                                    // Continue processing with backward compatibility
+                                }
+                                VersionCompatibility::Malformed { received } => {
+                                    eprintln!(
+                                        "[Meeting Minutes] ❌ Malformed version string: {}. Communication rejected.",
+                                        received
+                                    );
+
+                                    // P0 FIX: Send error response to Python before breaking
+                                    // STT-REQ-007.6: "エラー応答を返し、通信を拒否"
+                                    let error_response = ProtocolMessage::Error {
+                                        id: msg.id().to_string(),
+                                        version: PROTOCOL_VERSION.to_string(),
+                                        error_code: "VERSION_MALFORMED".to_string(),
+                                        error_message: format!("Malformed version string: {}", received),
+                                        recoverable: false,
+                                    };
+
+                                    if let Ok(json) = serde_json::to_value(&error_response) {
+                                        let mut sidecar = python_sidecar.lock().await;
+                                        if let Err(e) = sidecar.send_message(json).await {
+                                            eprintln!("[Meeting Minutes] Failed to send malformed version error: {:?}", e);
+                                        }
+                                    }
+
+                                    // Reject communication - exit loop
+                                    break;
+                                }
+                                VersionCompatibility::Compatible => {
+                                    // Version is compatible - continue normally
+                                }
+                            }
 
                             match msg {
                                 ProtocolMessage::Event { event_type, data, .. } => {
@@ -243,6 +377,15 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                                         "speech_end" => {
                                             println!("[Meeting Minutes] 🔇 Speech ended");
                                             break; // Exit loop after speech_end
+                                        }
+                                        "no_speech" => {
+                                            // CRITICAL FIX: Handle no_speech to prevent deadlock on silence
+                                            // Python sends this when all frames were silence (no speech detected).
+                                            // Without this handler, Rust would block forever waiting for speech_end.
+                                            // This is the ONLY termination signal for silent chunks.
+                                            // Requirement: STT-REQ-007.7 (stream termination for silent chunks)
+                                            println!("[Meeting Minutes] 🤫 No speech detected");
+                                            break;
                                         }
                                         _ => {
                                             eprintln!("[Meeting Minutes] ⚠️ Unknown event type: {}", event_type);

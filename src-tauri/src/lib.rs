@@ -8,6 +8,8 @@ pub mod commands;
 pub mod ipc_protocol;
 pub mod logger;
 pub mod python_sidecar;
+pub mod ring_buffer; // ADR-013: Phase 2 - Ring Buffer
+pub mod sidecar; // ADR-013: Phase 1 - Facade API
 pub mod state;
 pub mod storage;
 pub mod websocket;

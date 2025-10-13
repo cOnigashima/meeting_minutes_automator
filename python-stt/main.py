@@ -290,19 +290,19 @@ class AudioProcessor:
         # Split into 10ms frames (STT-REQ-003.2)
         frames = self.vad.split_into_frames(audio_bytes)
 
-        # Process frames with REAL-TIME simulation (P0 fix for partial text)
-        # Problem: Without timing control, all frames are processed instantly
-        # and _should_generate_partial() never returns True (time.time() doesn't advance).
-        # Solution: Add 10ms asyncio.sleep() per frame to simulate real-time processing.
+        # Track whether any speech was detected in this request
+        speech_detected = False
+
+        # P1 FIX: Process frames WITHOUT artificial sleep
+        # AudioPipeline now uses frame-count based partial timing (100 frames = 1 second)
+        # instead of wall-clock time, eliminating the need for asyncio.sleep(0.01).
+        # Performance: 2 min recording now processes in seconds instead of 2 min.
         for frame in frames:
             # Use process_audio_frame_with_partial for partial text support
             result = await self.pipeline.process_audio_frame_with_partial(frame)
 
-            # CRITICAL: Simulate real-time 10ms frame interval
-            # This allows _should_generate_partial() to trigger at 1-second intervals
-            await asyncio.sleep(0.01)  # 10ms per frame (STT-REQ-003.2)
-
             if result:
+                speech_detected = True  # Mark that speech was detected
                 event_type = result.get('event')
                 logger.debug(f"Stream event: {event_type}")
 
@@ -404,6 +404,36 @@ class AudioProcessor:
                 else:
                     # Unknown event type - log and continue
                     logger.warning(f"Unknown event type: {event_type}")
+
+        # CRITICAL FIX: VAD-based no_speech detection (ADR-009)
+        # Check VAD state instead of just event emission to prevent false positives.
+        #
+        # Problem scenario (P1 bug):
+        # 1. User is talking continuously
+        # 2. Previous request sent partial_text, reset _frame_count_since_partial
+        # 3. This request processes 30-80 frames, no new partial yet
+        # 4. result is None → speech_detected stays False
+        # 5. OLD CODE: Sends no_speech even though user is still talking!
+        #
+        # Solution: Check VAD state (is_in_speech, has_buffered_speech)
+        # Only send no_speech if VAD confirms silence.
+        if not speech_detected:
+            # Check VAD state to confirm silence (ADR-009 requirement)
+            if not self.pipeline.is_in_speech() and not self.pipeline.has_buffered_speech():
+                logger.debug(f"No speech detected (VAD confirmed silence) for {msg_id}")
+                await self.ipc.send_message({
+                    'type': 'event',
+                    'version': '1.0',
+                    'eventType': 'no_speech',
+                    'data': {
+                        'requestId': msg_id,
+                        'timestamp': int(time.time() * 1000)
+                    }
+                })
+            else:
+                # Speech in progress but no event yet - DO NOT send no_speech
+                # Rust's Receiver Task will keep waiting for next event (ADR-009)
+                logger.debug(f"Speech in progress (VAD active, no event yet) for {msg_id}")
 
         logger.info(f"Stream processing complete for request {msg_id}")
 

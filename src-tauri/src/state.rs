@@ -7,6 +7,7 @@ use crate::audio_device_adapter::{AudioEventReceiver, AudioEventSender};
 use crate::python_sidecar::PythonSidecarManager;
 use crate::websocket::WebSocketServer;
 use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
 
 /// Application state shared across Tauri commands
 pub struct AppState {
@@ -32,6 +33,11 @@ pub struct AppState {
     /// Audio device event receiver for monitoring device health
     /// MVP1 - STT-REQ-004.9/10/11
     pub audio_event_rx: Mutex<Option<AudioEventReceiver>>,
+
+    /// Broadcast channel for IPC events from Python sidecar
+    /// Solves deadlock: single global reader task distributes events to all listeners
+    /// Related: STT-REQ-007 (Event Stream Protocol)
+    pub ipc_event_tx: Mutex<Option<broadcast::Sender<serde_json::Value>>>,
 }
 
 impl AppState {
@@ -43,6 +49,7 @@ impl AppState {
             audio_device: Mutex::new(None),
             audio_event_tx: Mutex::new(None),
             audio_event_rx: Mutex::new(None),
+            ipc_event_tx: Mutex::new(None),
         }
     }
 
@@ -78,5 +85,19 @@ impl AppState {
     pub fn take_audio_event_rx(&self) -> Option<AudioEventReceiver> {
         let mut rx_lock = self.audio_event_rx.lock().unwrap();
         rx_lock.take()
+    }
+
+    /// Set IPC event broadcast channel
+    /// Related: STT-REQ-007 (Event Stream Protocol deadlock fix)
+    pub fn set_ipc_event_channel(&self, tx: broadcast::Sender<serde_json::Value>) {
+        let mut tx_lock = self.ipc_event_tx.lock().unwrap();
+        *tx_lock = Some(tx);
+    }
+
+    /// Subscribe to IPC events
+    /// Returns a receiver for listening to all Python sidecar events
+    pub fn subscribe_ipc_events(&self) -> Option<broadcast::Receiver<serde_json::Value>> {
+        let tx_lock = self.ipc_event_tx.lock().unwrap();
+        tx_lock.as_ref().map(|tx| tx.subscribe())
     }
 }

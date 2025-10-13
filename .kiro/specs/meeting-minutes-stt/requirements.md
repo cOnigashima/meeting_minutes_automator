@@ -287,6 +287,8 @@ meeting-minutes-sttは、meeting-minutes-core（Walking Skeleton）で確立し�
    - マイナーバージョン不一致（例: 1.0 → 1.1）: 警告ログを記録し、後方互換モードで処理継続（ADR-003に基づく）
    - パッチバージョン不一致（例: 1.0.1 → 1.0.2）: 情報ログのみ記録し、通常処理継続
 
+7. **STT-REQ-007.7**: WHEN 長時間Whisper処理（>5秒）が発生 THEN IPC通信プロトコル SHALL 専用セッションタスクによりタイムアウトなしで`final_text`イベントを受信し、オーディオフレーム送信を継続する（ADR-008に基づく）
+
 ---
 
 ### STT-REQ-008: WebSocket Message Extension
@@ -684,7 +686,18 @@ MVP0（Walking Skeleton）では、設計書（`.kiro/specs/meeting-minutes-core
 | STT-REQ-007.2 | IPC拡張フィールド追加 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (TranscriptionResult構造体) | tests/ipc_migration_test.rs, src-tauri/src/ipc_protocol.rs (L426-439) |
 | STT-REQ-007.4 | IPCバージョンフィールド必須化 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (PROTOCOL_VERSION), src-tauri/src/commands.rs | tests/ipc_migration_test.rs, src-tauri/src/ipc_protocol.rs (L317-331) |
 | STT-REQ-007.5 | IPCエラーフォーマット統一 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (IpcMessage::Error), src-tauri/src/commands.rs | tests/ipc_migration_test.rs, src-tauri/src/ipc_protocol.rs (L192-216) |
+| STT-REQ-007.6 | IPCバージョン不一致検出 | Task 7.2 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (check_version_compatibility), src-tauri/src/commands.rs (L265-332) | tests/ipc_version_compatibility_test.rs |
+| STT-REQ-007.7 | IPC長時間処理対応（デッドロック解消） | Task 7.3 | ⏳ 計画中 | src-tauri/src/commands.rs (spawn_recording_session_task - 未実装), src-tauri/src/state.rs (session_task管理 - 未実装) | tests/ipc_long_processing_test.rs (未作成) |
 | ADR-003 | versionデフォルト値設定 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (default_version関数) | src-tauri/src/ipc_protocol.rs (L317-331) |
+| ADR-008 | IPCデッドロック根本解決（Recording Session Task） | Task 7.3 | ⏳ 計画中 | 未実装（ADR/Design.md作成完了） | 未作成 |
+
+**Task 7.3 実装計画** (ADR-008):
+- Task 7.3.1: ✅ 完了（ADR-008, Design.md Section 7.9作成）
+- Task 7.3.2: ⏳ Session Task Infrastructure実装
+- Task 7.3.3: ⏳ Audio Callback Non-blocking化
+- Task 7.3.4: ⏳ Error Handling強化
+- Task 7.3.5: ⏳ E2Eテストと検証
+- Task 7.3.6: ⏳ Metrics and Rollback Strategy
 
 ---
 
@@ -696,3 +709,4 @@ MVP0（Walking Skeleton）では、設計書（`.kiro/specs/meeting-minutes-core
 | 2025-10-02 | 1.1 | Claude Code | 要件ID採番、Traceability Matrix追加、オフライン対応詳細化、動的ダウングレード統合、依存関係明示化 |
 | 2025-10-06 | 1.2 | Claude Code | **MVP0引き継ぎ要件追加**: STT-REQ-IPC-004, IPC-005, LOG-001, SEC-001, E2E-001（`docs/known-issues.md` Traceability連携） |
 | 2025-10-13 | 1.3 | Claude Code | **Task 7.1/7.1.5完了**: Requirement Traceability Matrix追加（STT-REQ-007シリーズ実装状況） |
+| 2025-10-13 | 1.4 | Claude Code | **Task 7.3計画**: STT-REQ-007.7追加（IPC長時間処理対応）、ADR-008トレーサビリティ追加（Recording Session Task実装計画） |

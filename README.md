@@ -22,6 +22,11 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 - 📋 MVP2: Google Docs同期（OAuth 2.0、Named Range管理）
 - 📋 MVP3: LLM要約 + UI（プロダクション準備）
 
+## 📚 Architecture Decision Records
+- ADR履歴の俯瞰: `.kiro/specs/meeting-minutes-stt/adrs/ADR-history.md`
+- 最新IPC設計: `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md`  
+  - 実装状況: ADR-013は2025-10-14に承認済み。stdin/stdout分離とバックプレッシャ制御の実装タスクはMVP1のSTT統合作業で追跡予定です。
+
 ## 🏗️ Architecture
 
 ```

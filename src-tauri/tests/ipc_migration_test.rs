@@ -1,9 +1,11 @@
 // Integration Tests: IPC Protocol Migration
 // Task 7.1.5: Verify new IPC protocol integration and backward compatibility
-// Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, ADR-003
+// Task 7.2: Version compatibility checking (STT-REQ-007.6)
+// Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-007.6, ADR-003
 
 use meeting_minutes_automator_lib::ipc_protocol::{
-    IpcMessage, TranscriptionResult, PROTOCOL_VERSION,
+    check_version_compatibility, IpcMessage, TranscriptionResult, VersionCompatibility,
+    PROTOCOL_VERSION,
 };
 use meeting_minutes_automator_lib::python_sidecar::LegacyIpcMessage;
 use serde_json::json;
@@ -617,4 +619,229 @@ fn test_legacy_stop_processing_conversion() {
     // Assert: Python can parse this
     assert!(json.contains("\"type\":\"request\""));
     assert!(json.contains("\"method\":\"stop_processing\""));
+}
+
+// ============================================================================
+// Task 7.2: Version Compatibility Logic Tests
+// Requirements: STT-REQ-007.6
+// ============================================================================
+
+/// Test: check_version_compatibility() detects major version mismatch
+/// Requirement: STT-REQ-007.6 (Major version: error + reject)
+#[test]
+fn test_version_check_major_mismatch() {
+    // Act: Check version 2.0 against 1.0
+    let result = check_version_compatibility("2.0", "1.0");
+
+    // Assert: MajorMismatch is returned
+    match result {
+        VersionCompatibility::MajorMismatch { received, expected } => {
+            assert_eq!(received, "2.0");
+            assert_eq!(expected, "1.0");
+        }
+        _ => panic!("Expected MajorMismatch, got {:?}", result),
+    }
+}
+
+/// Test: check_version_compatibility() detects minor version mismatch
+/// Requirement: STT-REQ-007.6 (Minor version: warning + backward compat)
+#[test]
+fn test_version_check_minor_mismatch() {
+    // Act: Check version 1.1 against 1.0
+    let result = check_version_compatibility("1.1", "1.0");
+
+    // Assert: MinorMismatch is returned
+    match result {
+        VersionCompatibility::MinorMismatch { received, expected } => {
+            assert_eq!(received, "1.1");
+            assert_eq!(expected, "1.0");
+        }
+        _ => panic!("Expected MinorMismatch, got {:?}", result),
+    }
+}
+
+/// Test: check_version_compatibility() allows patch version difference
+/// Requirement: STT-REQ-007.6 (Patch version: info log only, continue normally)
+#[test]
+fn test_version_check_patch_compatible() {
+    // Act: Check version 1.0.2 against 1.0.1
+    let result = check_version_compatibility("1.0.2", "1.0.1");
+
+    // Assert: Compatible is returned (patch difference ignored)
+    assert_eq!(result, VersionCompatibility::Compatible);
+}
+
+/// Test: check_version_compatibility() detects malformed version
+/// Requirement: STT-REQ-007.6 (Defensive error handling)
+#[test]
+fn test_version_check_malformed() {
+    // Act: Check malformed version strings
+    let result1 = check_version_compatibility("invalid", "1.0");
+    let result2 = check_version_compatibility("1.x", "1.0");
+    let result3 = check_version_compatibility("", "1.0");
+
+    // Assert: Malformed is returned
+    match result1 {
+        VersionCompatibility::Malformed { received } => {
+            assert_eq!(received, "invalid");
+        }
+        _ => panic!("Expected Malformed for 'invalid'"),
+    }
+
+    match result2 {
+        VersionCompatibility::Malformed { received } => {
+            assert_eq!(received, "1.x");
+        }
+        _ => panic!("Expected Malformed for '1.x'"),
+    }
+
+    match result3 {
+        VersionCompatibility::Malformed { received } => {
+            assert_eq!(received, "");
+        }
+        _ => panic!("Expected Malformed for empty string"),
+    }
+}
+
+/// Test: IpcMessage.check_version_compatibility() method integration
+/// Requirement: STT-REQ-007.6
+#[test]
+fn test_ipc_message_version_check_integration() {
+    // Arrange: Create message with version 2.0 (major mismatch)
+    let msg = IpcMessage::Response {
+        id: "test-001".to_string(),
+        version: "2.0".to_string(),
+        result: serde_json::json!({"text": "test", "is_final": true}),
+    };
+
+    // Act: Check compatibility
+    let result = msg.check_version_compatibility();
+
+    // Assert: MajorMismatch is detected
+    match result {
+        VersionCompatibility::MajorMismatch { received, expected } => {
+            assert_eq!(received, "2.0");
+            assert_eq!(expected, PROTOCOL_VERSION);
+        }
+        _ => panic!("Expected MajorMismatch"),
+    }
+}
+
+// ============================================================================
+// Task 7.2: meeting-minutes-core (Fake) Compatibility Tests
+// Requirements: STT-REQ-007.3
+// ============================================================================
+
+/// Test: Fake implementation ignores unknown fields (MVP0 → MVP1 migration)
+/// Requirement: STT-REQ-007.3 (Fake SHALL ignore unknown fields, use only 'text')
+#[test]
+fn test_fake_implementation_compatibility() {
+    // Arrange: MVP1 sends extended TranscriptionResult with new fields
+    let mvp1_json = r#"{
+        "type": "response",
+        "id": "test-mvp1-001",
+        "version": "1.0",
+        "result": {
+            "text": "こんにちは、世界",
+            "is_final": true,
+            "confidence": 0.95,
+            "language": "ja",
+            "processing_time_ms": 450,
+            "model_size": "small"
+        }
+    }"#;
+
+    // Act: MVP0 (Fake) parses this as IpcMessage
+    let msg: IpcMessage = serde_json::from_str(mvp1_json).unwrap();
+
+    // Assert: MVP0 successfully parses and extracts only 'text'
+    match msg {
+        IpcMessage::Response { result, .. } => {
+            let transcription: TranscriptionResult = serde_json::from_value(result).unwrap();
+
+            // MVP0 (Fake) uses only text field
+            assert_eq!(transcription.text, "こんにちは、世界");
+
+            // MVP0 ignores extended fields (they are Option<T> with #[serde(default)])
+            // Verification: These fields may or may not be present in MVP0
+            // The important point is that MVP0 doesn't crash
+        }
+        _ => panic!("Expected Response variant for fake compatibility"),
+    }
+}
+
+/// Test: MVP0 minimal response is accepted by MVP1
+/// Requirement: STT-REQ-007.3 (Backward compatibility)
+#[test]
+fn test_mvp0_minimal_response_accepted_by_mvp1() {
+    // Arrange: MVP0 (Fake) sends minimal response (text + is_final only)
+    let mvp0_json = r#"{
+        "type": "response",
+        "id": "test-mvp0-001",
+        "version": "1.0",
+        "result": {
+            "text": "Hello from MVP0",
+            "is_final": true
+        }
+    }"#;
+
+    // Act: MVP1 parses this
+    let msg: IpcMessage = serde_json::from_str(mvp0_json).unwrap();
+
+    // Assert: MVP1 accepts minimal response
+    match msg {
+        IpcMessage::Response { result, .. } => {
+            let transcription: TranscriptionResult = serde_json::from_value(result).unwrap();
+
+            assert_eq!(transcription.text, "Hello from MVP0");
+            assert_eq!(transcription.is_final, true);
+
+            // Extended fields are None (backward compatibility)
+            assert_eq!(transcription.confidence, None);
+            assert_eq!(transcription.language, None);
+            assert_eq!(transcription.processing_time_ms, None);
+            assert_eq!(transcription.model_size, None);
+        }
+        _ => panic!("Expected Response variant for MVP0 minimal"),
+    }
+}
+
+/// Test: Legacy IpcMessage can coexist with new protocol
+/// Requirement: STT-REQ-007.1 (Migration strategy)
+#[test]
+fn test_legacy_and_new_protocol_coexistence() {
+    // Arrange: Create both legacy and new format messages
+    let legacy = LegacyIpcMessage::TranscriptionResult {
+        text: "Legacy format".to_string(),
+        timestamp: 123456,
+    };
+
+    let new = IpcMessage::Response {
+        id: "test-new-001".to_string(),
+        version: PROTOCOL_VERSION.to_string(),
+        result: serde_json::json!({
+            "text": "New format",
+            "is_final": true
+        }),
+    };
+
+    // Act: Convert legacy to new
+    let legacy_as_new = legacy.to_protocol_message();
+
+    // Assert: Both formats can be processed
+    match legacy_as_new {
+        IpcMessage::Response { result, .. } => {
+            let transcription: TranscriptionResult = serde_json::from_value(result).unwrap();
+            assert_eq!(transcription.text, "Legacy format");
+        }
+        _ => panic!("Expected Response variant for legacy conversion"),
+    }
+
+    match new {
+        IpcMessage::Response { result, .. } => {
+            let transcription: TranscriptionResult = serde_json::from_value(result).unwrap();
+            assert_eq!(transcription.text, "New format");
+        }
+        _ => panic!("Expected Response variant for new protocol"),
+    }
 }

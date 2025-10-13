@@ -106,9 +106,11 @@ class AudioPipeline:
         self._current_speech_buffer = bytearray()
         self._speech_start_time = None
         self._last_partial_time = None
+        self._frame_count_since_partial = 0  # P1 fix: Frame-based partial timing
 
         # Configuration
         self.partial_interval_ms = 1000  # 1 second between partial results
+        self.partial_interval_frames = 100  # P1 fix: 100 frames = 1 second (10ms/frame)
 
         # Statistics
         self.stats = {
@@ -170,7 +172,7 @@ class AudioPipeline:
 
         This method extends basic processing to include:
         - Partial transcriptions during speech
-        - Time-based triggering (1 second intervals)
+        - Frame-count based triggering (100 frames = 1 second)
 
         Args:
             audio_frame: Raw audio frame
@@ -188,6 +190,9 @@ class AudioPipeline:
         if self.vad.is_in_speech:
             # Accumulate audio for partial transcription
             self._current_speech_buffer.extend(audio_frame)
+
+            # P1 FIX: Increment frame counter (instead of checking wall-clock time)
+            self._frame_count_since_partial += 1
 
             # Check if we should generate partial transcription
             if self._should_generate_partial():
@@ -210,21 +215,23 @@ class AudioPipeline:
         """
         Determine if partial transcription should be generated.
 
+        P1 FIX: Frame-count based instead of wall-clock time.
+        This avoids the need for asyncio.sleep() in the caller,
+        preventing performance regression (2 min recording = 2 min processing).
+
         Returns:
             True if partial should be generated
         """
         if not self._speech_start_time:
             return False
 
-        current_time = int(time.time() * 1000)
+        # P1 FIX: Check frame count instead of wall-clock time
+        # 100 frames = 1 second (at 10ms/frame)
+        if self._frame_count_since_partial >= self.partial_interval_frames:
+            self._frame_count_since_partial = 0  # Reset counter
+            return True
 
-        # Initialize last partial time if needed
-        if self._last_partial_time is None:
-            self._last_partial_time = self._speech_start_time
-
-        # Check if interval has elapsed
-        time_since_last = current_time - self._last_partial_time
-        return time_since_last >= self.partial_interval_ms
+        return False
 
     async def _handle_speech_start(self) -> Dict[str, Any]:
         """
@@ -236,6 +243,7 @@ class AudioPipeline:
         self._current_speech_buffer = bytearray()
         self._speech_start_time = int(time.time() * 1000)
         self._last_partial_time = None
+        self._frame_count_since_partial = 0  # P1 fix: Reset frame counter
 
         logger.info("Speech started in pipeline")
 
@@ -401,3 +409,30 @@ class AudioPipeline:
     def get_stats(self) -> Dict[str, Any]:
         """Get pipeline statistics."""
         return self.stats.copy()
+
+    def is_in_speech(self) -> bool:
+        """
+        Check if currently in speech state (VAD detected voice).
+        
+        Returns:
+            bool: True if VAD is currently detecting speech, False otherwise.
+        
+        Requirements:
+            - ADR-009: VAD-based no_speech detection
+            - Prevents false no_speech events during utterance
+        """
+        # Check if VAD is in speech state using actual VoiceActivityDetector field
+        return self.vad.is_in_speech
+
+    def has_buffered_speech(self) -> bool:
+        """
+        Check if there are speech frames buffered for STT processing.
+        
+        Returns:
+            bool: True if speech buffer contains audio data, False otherwise.
+        
+        Requirements:
+            - ADR-009: VAD-based no_speech detection
+            - Prevents false no_speech when frames are queued for STT
+        """
+        return len(self._current_speech_buffer) > 0

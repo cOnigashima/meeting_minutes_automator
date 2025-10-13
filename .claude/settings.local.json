@@ -37,7 +37,10 @@
       "Bash(rustfmt:*)",
       "Bash(.kiro/scripts/validate_adrs.sh:*)",
       "Bash(/kiro:spec-init:*)",
-      "Bash(rustc --version)"
+      "Bash(rustc --version)",
+      "mcp__serena__think_about_task_adherence",
+      "Bash(mv:*)",
+      "SlashCommand(/kiro:validate-design:*)"
     ],
     "deny": [],
     "ask": []

@@ -513,14 +513,169 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - **ビルド検証**: `cargo build`成功（deprecation warning 9件は既存Legacy IPC由来）
   - _Requirements: STT-REQ-003.7, STT-REQ-003.8, STT-REQ-007.1（P0修正完了、完全実装）_
 
-- [ ] 7.2 後方互換性テストとエラー処理
-  - 失敗する統合テストを作成（互換性、未知フィールド無視、バージョン不一致処理）
-  - meeting-minutes-core（Fake実装）との互換性テスト
-  - 未知フィールドの無視動作確認
-  - エラー応答フォーマットの実装（errorCode、errorMessage、recoverable）
-  - バージョン不一致時の処理（メジャー拒否、マイナー警告、パッチ情報のみ）
-  - 統合テストの緑化
-  - _Requirements: STT-REQ-007.3, STT-REQ-007.5, STT-REQ-007.6, STT-REQ-IPC-004, STT-REQ-IPC-005_
+- [x] 7.2 後方互換性テストとエラー処理（✅ 完了、P0修正完了 2025-10-13実施）
+  - **⚠️ P0欠陥発見と修正**: バージョン不一致処理が未実装だった問題を修正
+    - **問題**: テストがバージョン判定ロジックを検証せず、コメントで期待を述べるだけ
+    - **影響**: version 2.xのメッセージも無条件に処理され、STT-REQ-007.6未達成
+  - **バージョン判定ロジック実装**（ipc_protocol.rs L45-107, L127-169）
+    - `VersionCompatibility` enum追加: Compatible, MinorMismatch, MajorMismatch, Malformed
+    - `check_version_compatibility()` 関数実装: セマンティックバージョニング解析
+    - `IpcMessage::check_version_compatibility()` メソッド追加
+  - **commands.rsでバージョンチェック実装**（commands.rs L200-228）
+    - メッセージ受信時に`msg.check_version_compatibility()`呼び出し
+    - `MajorMismatch`: エラーログ + 通信拒否（ループ脱出）
+    - `MinorMismatch`: 警告ログ + 後方互換モードで処理継続
+    - `Malformed`: エラーログ + 通信拒否（ループ脱出）
+  - **バージョン判定ロジック単体テスト**（tests/ipc_migration_test.rs L629-728）
+    - `test_version_check_major_mismatch`: メジャー不一致検出（2.0 vs 1.0）
+    - `test_version_check_minor_mismatch`: マイナー不一致検出（1.1 vs 1.0）
+    - `test_version_check_patch_compatible`: パッチ差異許容（1.0.2 vs 1.0.1）
+    - `test_version_check_malformed`: 不正バージョン検出（"invalid", "1.x", ""）
+    - `test_ipc_message_version_check_integration`: IpcMessage統合テスト
+  - **meeting-minutes-core互換性テスト実装**（tests/ipc_migration_test.rs L730-850）
+    - `test_fake_implementation_compatibility`: MVP0（Fake）が拡張フィールドを無視（STT-REQ-007.3）
+    - `test_mvp0_minimal_response_accepted_by_mvp1`: MVP0最小応答をMVP1が受容（STT-REQ-007.3）
+    - `test_legacy_and_new_protocol_coexistence`: LegacyとNew形式の共存検証（STT-REQ-007.1）
+  - **既存テスト検証**（tests/ipc_migration_test.rs）
+    - `test_forward_compatibility_unknown_fields`: 未知フィールド無視動作（既存）
+    - `test_version_field_omitted_backward_compat`: versionフィールド省略時デフォルト（既存）
+    - `test_new_format_error_response`: エラー応答フォーマット（STT-REQ-007.5、既存）
+  - **全26テスト合格**（18 → 25 → 26に増加、P0修正で実装検証テスト追加）
+  - **エラー応答フォーマット**: 既にTask 7.1で実装済み（IpcMessage::Error）
+  - _Requirements: STT-REQ-007.3, STT-REQ-007.5, STT-REQ-007.6（P0修正完了、完全実装）_
+
+- [ ] 7.3 IPCデッドロック根本解決（IPC Stdin/Stdout Mutex分離 + Audio Callback Backpressure再設計）
+  - **Priority**: 🔴 P0 Critical
+  - **Estimated Time**: 3-4日
+  - **Related ADR**:
+    - ❌ ADR-008 (Rejected - 構造的デッドロック欠陥)
+    - ❌ ADR-009 (Rejected - Mutex共有問題 + blocking_send問題)
+    - ✅ ADR-011 (IPC Stdin/Stdout Mutex Separation)
+    - ✅ ADR-012 (Audio Callback Backpressure Redesign)
+  - **Background**: ADR-009の第3回技術検証で2つの構造的欠陥を発見
+    - **P0 Mutex共有によるシリアライゼーション**: `Arc<Mutex<PythonSidecarManager>>`共有により、Sender/Receiver並行実行が実質シリアライズされ、デッドロックが解消されない
+    - **P0 blocking_send()によるCPALストリーム停止**: Python異常時にオーディオコールバックが最大2秒ブロック → CPALのOSバッファ（128ms）オーバーラン → ストリーム停止
+  - **Solution**:
+    - ADR-011: stdin/stdoutを独立Mutexに分離 → 真の全二重通信実現
+    - ADR-012: try_send() + Large Ring Buffer + UI Notification → CPAL保護
+
+- [ ] 7.3.1 ADR-011/012とDesign.md更新（✅ 完了 2025-10-13）
+  - ADR-009をRejected化（2つの構造的欠陥）
+  - ADR-011作成: IPC Stdin/Stdout Mutex Separation
+  - ADR-012作成: Audio Callback Backpressure Redesign
+  - Design.md Section 7.9全面更新: ADR-011/012準拠
+  - spec.json更新: phase=design-review, BLOCK-002/003追加
+  - _Estimated: 3時間_
+  - _Requirements: STT-REQ-007.7_
+
+- [ ] 7.3.2 PythonSidecarManager構造体変更（ADR-011）
+  - **構造体変更**:
+    - `stdin: Arc<tokio::Mutex<ChildStdin>>` 追加
+    - `stdout: Arc<tokio::Mutex<BufReader<ChildStdout>>>` 追加
+    - `child_handle: Arc<tokio::Mutex<Child>>` に変更
+  - **send_message()実装**: stdinのみロック、即座に解放
+  - **receive_message()実装**: stdoutのみロック、即座に解放
+  - **new()実装**: Child.stdin/stdout取得、Mutex初期化
+  - ユニットテスト: `test_send_receive_independence`
+  - _Estimated: 2時間_
+  - _Requirements: STT-REQ-007.7, ADR-011_
+
+- [ ] 7.3.3 Sender/Receiver並行タスク実装（ADR-011準拠）
+  - **Sender Task**: フレームを連続送信（stdinのみロック）
+  - **Receiver Task**: イベントを連続受信（stdoutのみロック）
+  - `SessionHandle` 構造体実装（sender_handle, receiver_handle, metrics）
+  - mpsc channel: 500フレームバッファ（5秒分、ADR-012準拠）
+  - broadcast channel: 1000イベントバッファ
+  - **重要**: Receiverは`speech_end`でbreakしない（次チャンクのイベントも受信）
+  - ユニットテスト: `test_concurrent_sender_receiver_no_contention`
+  - _Estimated: 3-4時間_
+  - _Requirements: STT-REQ-007.7, ADR-011_
+
+- [ ] 7.3.4 Audio Callback try_send() Backpressure実装（ADR-012）
+  - **Drop detection flag実装**: `Arc<AtomicBool>`
+  - **Audio Callback変更**:
+    - `frame_tx.try_send()` 使用（blocking操作禁止）
+    - `TrySendError::Full` 時、drop_flag.store(true)
+    - コールバックは常に即座にreturn（<10μs）
+  - **UI Notification Task実装**:
+    - 100ms polling、drop_flag確認
+    - `stt_error` イベント発行（Python異常検出）
+  - ユニットテスト: `test_try_send_no_blocking`
+  - _Estimated: 2時間_
+  - _Requirements: STT-REQ-007.7, ADR-012_
+
+- [ ] 7.3.5 フロントエンドエラーハンドリング（ADR-012）
+  - **stt_error リスナー実装**: `src/lib/stores/sttStore.ts`
+  - 録音強制停止（stopRecording）
+  - ユーザーにエラー通知（10秒表示）
+  - 再起動ボタン実装
+  - _Estimated: 1時間_
+  - _Requirements: STT-REQ-007.7, ADR-012_
+
+- [ ] 7.3.6 Python VAD状態ベースno_speech判定実装（✅ 完了 2025-10-13）
+  - **AudioPipeline新規メソッド**:
+    - `is_in_speech() -> bool`: VADが音声検出中かチェック
+    - `has_buffered_speech() -> bool`: STT処理待ちバッファがあるかチェック
+  - **main.py修正**:
+    - `if not speech_detected` 判定でVAD状態確認
+    - `is_in_speech() or has_buffered_speech()` ならno_speech送信しない
+    - VAD無音確認時のみno_speech送信
+  - Pythonユニットテスト: `test_no_false_no_speech_during_utterance`
+  - _Estimated: 1-2時間_
+  - _Requirements: STT-REQ-007.7_
+
+- [ ] 7.3.7 Error Handling & Graceful Shutdown（ADR-011）
+  - **stdin/stdout独立エラーハンドリング**:
+    - stdin書き込みエラー: Sender Taskのみ影響、Receiver継続
+    - stdout読み込みエラー: Receiver Taskのみ影響、Sender継続
+  - **JSONパースエラー処理**（Receiver Taskで実施）:
+    - `serde_json::from_value()` 失敗時に破損イベントをbroadcastしない
+    - エラーカウンタ増加、10回連続でタスク終了
+  - **Exponential backoff**（Receiver Taskで実施）:
+    - IPC受信エラー時: 100ms * 2^n（max 3.2s）
+    - 10回連続エラーでReceiver終了
+  - **Graceful shutdown**:
+    - `frame_tx.close()` → Sender終了
+    - `sender_handle.await` → Sender完了待ち
+    - `receiver_handle.abort()` → Receiver強制終了
+    - `metrics.report()` → 最終レポート
+  - ユニットテスト: `test_error_recovery_with_backoff`
+  - _Estimated: 2時間_
+  - _Requirements: STT-REQ-007.7, ADR-011_
+
+- [ ] 7.3.8 E2Eテストと検証（ADR-011/012）
+  - **ADR-011 Tests**:
+    - `test_concurrent_send_receive`: 100フレーム送信中に50イベント受信、Mutex競合なし確認
+    - `test_long_utterance_no_deadlock`: 1200フレーム（120秒）送信、タイムアウトなし確認
+    - `test_stdin_error_independence`: stdin書き込みエラー時もreceive継続確認
+    - `test_stdout_error_independence`: stdout読み込みエラー時もsend継続確認
+  - **ADR-012 Tests**:
+    - `test_python_hang_detection`: Python 10秒sleep、501フレーム目でUI通知確認
+    - `test_normal_operation_no_drop`: 10000フレーム送信、フレームドロップ率 < 0.01%確認
+    - `test_temporary_load_no_drop`: Python 3秒遅延、500フレーム内でドロップなし確認
+    - `test_no_false_no_speech_during_utterance`: 発話継続中のno_speech誤送信なし確認（Python側実装済み）
+  - _Estimated: 4-5時間_
+  - _Requirements: STT-REQ-007.7, ADR-011/012_
+
+- [ ] 7.3.9 Metrics and Rollback Strategy（ADR-011/012）
+  - **SessionMetrics実装**:
+    - フィールド追加: `mutex_contention_count`, `stdin_lock_duration_us`, `stdout_lock_duration_us`, `concurrent_operations_count`, `python_hangs_detected`, `callback_duration_us`
+    - セッション終了時に `report()` メソッドで一括出力
+  - **Alert Conditions実装**:
+    - mutex_contention_count > 100/秒（想定0）
+    - frames_dropped > 100（Python異常）
+    - callback_duration_us > 100（CPAL停止リスク）
+  - Feature flag追加（`USE_STDIN_STDOUT_SEPARATED_MUTEX`）
+  - Rollback手順文書化
+  - **Success Criteria検証** (ADR-011/012):
+    - ✅ 長時間発話（120秒）デッドロックなし（ADR-011）
+    - ✅ Mutex競合発生率 = 0%（ADR-011）
+    - ✅ CPAL保護（Audio callback <10μs）（ADR-012）
+    - ✅ Python異常検出 < 100ms（ADR-012）
+    - ✅ 正常動作時のフレームdrop率 < 0.01%（ADR-012）
+    - ✅ 既存テスト合格（Rust 26 + Python 143）
+  - _Estimated: 2時間_
+  - _Requirements: STT-REQ-007.7, ADR-011/012_
 
 - [ ] 8. WebSocketメッセージ拡張（Rust側）
 - [ ] 8.1 WebSocketメッセージ拡張とChrome拡張連携

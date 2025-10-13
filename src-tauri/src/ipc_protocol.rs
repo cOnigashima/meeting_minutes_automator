@@ -42,6 +42,70 @@ fn default_version() -> String {
     PROTOCOL_VERSION.to_string()
 }
 
+/// Check version compatibility according to STT-REQ-007.6
+///
+/// Semantic versioning rules:
+/// - Major version mismatch (1.x → 2.x): MajorMismatch (error + reject)
+/// - Minor version mismatch (1.0 → 1.1): MinorMismatch (warning + backward compat)
+/// - Patch version mismatch (1.0.1 → 1.0.2): Compatible (info log only)
+///
+/// # Arguments
+/// * `received` - Version string from IPC message
+/// * `expected` - Expected protocol version (PROTOCOL_VERSION)
+pub fn check_version_compatibility(received: &str, expected: &str) -> VersionCompatibility {
+    // Parse received version
+    let received_parts: Vec<&str> = received.split('.').collect();
+    let expected_parts: Vec<&str> = expected.split('.').collect();
+
+    // Validate version format (at least major.minor)
+    if received_parts.len() < 2 || expected_parts.len() < 2 {
+        return VersionCompatibility::Malformed {
+            received: received.to_string(),
+        };
+    }
+
+    // Parse major and minor versions
+    let received_major = match received_parts[0].parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => {
+            return VersionCompatibility::Malformed {
+                received: received.to_string(),
+            }
+        }
+    };
+
+    let received_minor = match received_parts[1].parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => {
+            return VersionCompatibility::Malformed {
+                received: received.to_string(),
+            }
+        }
+    };
+
+    let expected_major = expected_parts[0].parse::<u32>().unwrap();
+    let expected_minor = expected_parts[1].parse::<u32>().unwrap();
+
+    // Check major version (STT-REQ-007.6: Major mismatch → reject)
+    if received_major != expected_major {
+        return VersionCompatibility::MajorMismatch {
+            received: received.to_string(),
+            expected: expected.to_string(),
+        };
+    }
+
+    // Check minor version (STT-REQ-007.6: Minor mismatch → warning + backward compat)
+    if received_minor != expected_minor {
+        return VersionCompatibility::MinorMismatch {
+            received: received.to_string(),
+            expected: expected.to_string(),
+        };
+    }
+
+    // Patch version difference is ignored (STT-REQ-007.6: Patch → info log only)
+    VersionCompatibility::Compatible
+}
+
 /// Transcription result with extended fields
 /// Related requirement: STT-REQ-007.2
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -124,6 +188,20 @@ pub enum IpcMessage {
     },
 }
 
+/// Version compatibility check result
+/// Requirement: STT-REQ-007.6
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionCompatibility {
+    /// Versions are fully compatible
+    Compatible,
+    /// Minor version mismatch (warning log, backward compat mode)
+    MinorMismatch { received: String, expected: String },
+    /// Major version mismatch (error, reject communication)
+    MajorMismatch { received: String, expected: String },
+    /// Malformed version string (error, reject communication)
+    Malformed { received: String },
+}
+
 impl IpcMessage {
     /// Get the version from any message type
     pub fn version(&self) -> &str {
@@ -143,6 +221,15 @@ impl IpcMessage {
             IpcMessage::Error { id, .. } => id,
             IpcMessage::Event { .. } => "N/A", // Events don't have request IDs
         }
+    }
+
+    /// Check version compatibility according to STT-REQ-007.6
+    ///
+    /// - Major version mismatch (1.x → 2.x): Error + Reject
+    /// - Minor version mismatch (1.0 → 1.1): Warning + Backward compat
+    /// - Patch version mismatch (1.0.1 → 1.0.2): Info log only
+    pub fn check_version_compatibility(&self) -> VersionCompatibility {
+        check_version_compatibility(self.version(), PROTOCOL_VERSION)
     }
 
     /// Try to parse result as TranscriptionResult
