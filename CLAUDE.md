@@ -40,10 +40,10 @@ Kiro-style Spec Driven Development implementation using claude code slash comman
 - **コード探索**: Serenaツール（`mcp__serena__*`）で効率的にコードを理解
 - **実装フェーズ**: 両方を組み合わせて、仕様とコードの整合性を維持
 
-### プロジェクトステータス（2025-10-10現在）
+### プロジェクトステータス（2025-10-14現在）
 
 - **MVP0 (meeting-minutes-core)**: ✅ 完了（Walking Skeleton実装済み、44テスト合格）
-- **MVP1 (meeting-minutes-stt)**: 🔵 実装中（タスク2.4完了、requirements/design承認済み）
+- **MVP1 (meeting-minutes-stt)**: 🔵 実装中（ADR-013承認済み。stdin/stdout分離とバックプレッシャ再設計はMVP1タスクで追跡中。詳細は `.kiro/specs/meeting-minutes-stt/adrs/ADR-history.md` を参照）
 - **MVP2以降**: ⚪ 初期化済み
 
 ### フェーズ別ツール使用ガイド
@@ -299,4 +299,3 @@ Managed by `/kiro:steering` command. Updates here reflect command changes.
 - [ ] ADR採番の場合は`validate_adrs.sh`実行
 
 ---
-

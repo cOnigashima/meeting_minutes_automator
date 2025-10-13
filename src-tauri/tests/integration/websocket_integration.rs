@@ -73,6 +73,10 @@ async fn it_websocket_server_broadcast() {
         session_id: "test-session".to_string(),
         text: "Test transcription".to_string(),
         timestamp: 12345,
+        is_partial: None,
+        confidence: None,
+        language: None,
+        processing_time_ms: None,
     };
 
     server
@@ -127,6 +131,10 @@ async fn it_websocket_server_multiple_broadcasts() {
             session_id: "test-session".to_string(),
             text: format!("Message {}", i),
             timestamp: i as u64,
+            is_partial: None,
+            confidence: None,
+            language: None,
+            processing_time_ms: None,
         };
         server.broadcast(msg).await.expect("Should broadcast");
     }

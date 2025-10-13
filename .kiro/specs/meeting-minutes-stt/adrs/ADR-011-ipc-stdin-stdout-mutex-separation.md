@@ -1,14 +1,14 @@
 # ADR-011: IPC Stdin/Stdout Mutex Separation
 
 **Date**: 2025-10-13
-**Status**: ✅ **Proposed** - Replaces ADR-009 (Part 1/2)
-**Related**: ADR-008 (Rejected), ADR-009 (Rejected), ADR-012 (Audio Backpressure)
+**Status**: ❌ **Superseded** by ADR-013 (2025-10-14)
+**Related**: ADR-008 (Rejected), ADR-009 (Rejected), ADR-012 (Audio Backpressure), ADR-013 (Approved)
 
 ---
 
 ## Context
 
-ADR-009が提案した**Sender/Receiver Concurrent Architecture**は、以下の構造的欠陥（P0）を持つことが判明しました：
+ADR-009が提案した**Sender/Receiver Concurrent Architecture**は、以下の構造的欠陥（P0）を持つことが判明しました（本ADRは暫定対策として検討され、最終的にADR-013で統合されています）：
 
 ### 問題1: Mutex共有によるシリアライゼーション
 
@@ -157,6 +157,11 @@ tokio::spawn({
 
 - **Mutex粒度**: stdin/stdout分離により、Mutexスコープが最小化（send/receive時のみ）
 - **メモリオーバーヘッド**: `Arc<Mutex<T>>`が2つに増えるが、サイズは無視できるレベル（数十バイト）
+
+---
+
+**Supersession Note (2025-10-14)**  
+本ADRで定義したstdin/stdout分離方針はADR-013「Sidecar Full-Duplex IPC Final Design」に統合され、FacadeベースのAPI設計やバッファ契約と共に正式採択されました。詳細な実装および後続のP0修正はADR-013およびADR-013 P0 Bug Fixesを参照してください。
 
 ---
 

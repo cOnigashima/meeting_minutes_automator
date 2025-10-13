@@ -807,15 +807,17 @@ pub enum DiskSpaceStatus {
 
 ---
 
-### 7.9 IPC Event Distribution System (ADR-011 + ADR-012)
+### 7.9 IPC Event Distribution System (ADR-013 Supersession)
 
 **目的**: Sender/Receiver並行実行により、デッドロックを根本的に解決します。
 
 **関連ADR**:
 - ❌ ADR-008 (Rejected - 構造的デッドロック欠陥)
 - ❌ ADR-009 (Rejected - Mutex共有問題 + blocking_send問題)
-- ✅ ADR-011 (IPC Stdin/Stdout Mutex Separation)
-- ✅ ADR-012 (Audio Callback Backpressure Redesign)
+- ❌ ADR-011 (Superseded - IPC Stdin/Stdout Mutex Separation)
+- ❌ ADR-012 (Superseded - Audio Callback Backpressure Redesign)
+- ✅ ADR-013 (Sidecar Full-Duplex IPC Final Design)
+- ✅ ADR-013 P0 Bug Fixes (Post-approval critical fixes)
 
 #### 7.9.1 アーキテクチャ概要
 
@@ -825,9 +827,11 @@ pub enum DiskSpaceStatus {
 3. **blocking_send()によるCPALストリーム停止（P0）**: Python異常時にオーディオコールバックが最大2秒ブロック → CPALのOSバッファ（128ms）オーバーラン → ストリーム停止（ADR-009）
 4. **Python偽no_speech検出（P1）**: イベント発行の有無だけで判定するため、発話継続中でもイベント間にno_speechを誤送信（ADR-008/009共通）
 
-**ADR-011/012の解決策**: Stdin/Stdout分離 + try_send() Backpressure
-- **ADR-011**: stdin/stdoutを独立したMutexに分離 → 真の全二重通信実現
-- **ADR-012**: blocking_send() → try_send() + UI Notification → CPAL保護
+**ADR-013の最終設計**: Stdin/Stdout分離 + try_send() Backpressure + Sidecar Facade  
+（詳細は `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md`、P0フォローアップは `ADR-013-P0-bug-fixes.md` を参照）
+- **ADR-011**: stdin/stdoutを独立したMutexに分離 → 真の全二重通信実現（ADR-013に統合）
+- **ADR-012**: blocking_send() → try_send() + UI Notification → CPAL保護（ADR-013に統合）
+- **ADR-013**: Facade API化、LDJSONフレーミング、バッファポリシー明確化
 - **Sender Task**: フレームを連続的にPythonへ送信（stdinのみロック）
 - **Receiver Task**: Pythonからイベントを連続的に受信（stdoutのみロック）
 - 両タスクは完全に独立、互いにブロックしない
@@ -1338,4 +1342,3 @@ fn spawn_python_health_monitor(
 - Pythonプロセス再起動成功率 > 90%
 
 ---
-

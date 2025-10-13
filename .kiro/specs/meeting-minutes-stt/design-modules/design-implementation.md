@@ -104,11 +104,16 @@
 - IPC通信プロトコル拡張 (version, confidence, language等)
 - WebSocketメッセージ拡張
 - 後方互換性検証
+ - ADR-013に準拠したSidecar Facade・Backpressure実装
 
 **タスク**:
 1. IPC通信プロトコルv1.0拡張フィールド追加
 2. WebSocketメッセージ拡張フィールド追加
 3. meeting-minutes-core (Fake実装) との後方互換性テスト
+ 4. Sidecar Facade (ADR-013) とリングバッファP0修正の適用確認 (`ADR-013-P0-bug-fixes.md`)
+
+> 参照: `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md`（ADR-011/012を統合した最終設計）  
+> フォローアップ: `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-P0-bug-fixes.md`
 
 ---
 

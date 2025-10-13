@@ -94,7 +94,9 @@ erDiagram
 
 ### Data Contracts & Integration
 
-**IPC拡張フィールド** (Rust → Python):
+**IPC拡張フィールド** (Rust → Python):  
+> ℹ️ 詳細設計は `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md` を参照。  
+> ℹ️ 実装後のクリティカル修正は `ADR-013-P0-bug-fixes.md` に記録。
 
 ```typescript
 interface IpcRequest {
@@ -238,4 +240,3 @@ fn is_compatible(version1: &str, version2: &str) -> bool {
 **参照**: `.kiro/specs/meeting-minutes-stt/adrs/ADR-003-ipc-versioning.md`
 
 ---
-

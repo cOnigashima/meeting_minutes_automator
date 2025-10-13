@@ -42,6 +42,22 @@ pub enum WebSocketMessage {
         session_id: String,
         text: String,
         timestamp: u64,
+        /// Optional: Is this a partial (interim) result?
+        /// STT-REQ-008.1: New field for MVP1
+        #[serde(rename = "isPartial", skip_serializing_if = "Option::is_none")]
+        is_partial: Option<bool>,
+        /// Optional: Confidence score (0.0-1.0)
+        /// STT-REQ-008.1: New field for MVP1
+        #[serde(skip_serializing_if = "Option::is_none")]
+        confidence: Option<f64>,
+        /// Optional: Language code (e.g., "ja", "en")
+        /// STT-REQ-008.1: New field for MVP1
+        #[serde(skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        /// Optional: Processing time in milliseconds
+        /// STT-REQ-008.1: New field for MVP1
+        #[serde(rename = "processingTimeMs", skip_serializing_if = "Option::is_none")]
+        processing_time_ms: Option<u64>,
     },
 
     /// Error message

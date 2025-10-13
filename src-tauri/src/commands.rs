@@ -12,6 +12,15 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast;
 
+/// Helper: Extract extended fields from IPC event data (STT-REQ-008.1)
+/// Used by both partial_text and final_text branches to avoid code duplication
+fn extract_extended_fields(data: &serde_json::Map<String, serde_json::Value>) -> (Option<f64>, Option<String>, Option<u64>) {
+    let confidence = data.get("confidence").and_then(|v| v.as_f64());
+    let language = data.get("language").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let processing_time_ms = data.get("processing_time_ms").and_then(|v| v.as_u64());
+    (confidence, language, processing_time_ms)
+}
+
 /// Global IPC event reader task (spawned once at startup)
 /// Solves deadlock: single reader distributes events to all listeners via broadcast channel
 /// Related: STT-REQ-007 (Event Stream Protocol deadlock fix)
@@ -341,12 +350,54 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                                         "partial_text" => {
                                             if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
                                                 println!("[Meeting Minutes] 📝 Partial: {}", text);
-                                                // TODO: Emit partial transcription to frontend
+
+                                                // Extract optional extended fields (STT-REQ-008.1)
+                                                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object() {
+                                                    extract_extended_fields(obj)
+                                                } else {
+                                                    (None, None, None)
+                                                };
+
+                                                // Broadcast partial transcription to WebSocket clients
+                                                let ws_message = WebSocketMessage::Transcription {
+                                                    message_id: format!(
+                                                        "ws-{}",
+                                                        std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap()
+                                                            .as_millis()
+                                                    ),
+                                                    session_id: "session-1".to_string(),
+                                                    text: text.to_string(),
+                                                    timestamp: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .unwrap()
+                                                        .as_millis() as u64,
+                                                    is_partial: Some(true), // partial_text is always partial
+                                                    confidence,
+                                                    language,
+                                                    processing_time_ms,
+                                                };
+
+                                                let ws_server = websocket_server.lock().await;
+                                                if let Err(e) = ws_server.broadcast(ws_message).await {
+                                                    eprintln!(
+                                                        "[Meeting Minutes] Failed to broadcast partial transcription: {:?}",
+                                                        e
+                                                    );
+                                                }
                                             }
                                         }
                                         "final_text" => {
                                             if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
                                                 println!("[Meeting Minutes] ✅ Final: {}", text);
+
+                                                // Extract optional extended fields (STT-REQ-008.1)
+                                                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object() {
+                                                    extract_extended_fields(obj)
+                                                } else {
+                                                    (None, None, None)
+                                                };
 
                                                 // Broadcast final transcription to WebSocket clients
                                                 let ws_message = WebSocketMessage::Transcription {
@@ -363,12 +414,16 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                                                         .duration_since(std::time::UNIX_EPOCH)
                                                         .unwrap()
                                                         .as_millis() as u64,
+                                                    is_partial: Some(false), // final_text is always final
+                                                    confidence,
+                                                    language,
+                                                    processing_time_ms,
                                                 };
 
                                                 let ws_server = websocket_server.lock().await;
                                                 if let Err(e) = ws_server.broadcast(ws_message).await {
                                                     eprintln!(
-                                                        "[Meeting Minutes] Failed to broadcast transcription: {:?}",
+                                                        "[Meeting Minutes] Failed to broadcast final transcription: {:?}",
                                                         e
                                                     );
                                                 }

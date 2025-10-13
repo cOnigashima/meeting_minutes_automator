@@ -1,14 +1,14 @@
 # ADR-012: Audio Callback Backpressure Redesign
 
 **Date**: 2025-10-13
-**Status**: ✅ **Proposed** - Replaces ADR-009 (Part 2/2)
-**Related**: ADR-008 (Rejected), ADR-009 (Rejected), ADR-011 (IPC Mutex Separation)
+**Status**: ❌ **Superseded** by ADR-013 (2025-10-14)
+**Related**: ADR-008 (Rejected), ADR-009 (Rejected), ADR-011 (Superseded), ADR-013 (Approved)
 
 ---
 
 ## Context
 
-ADR-009が提案した**Audio Callback Blocking Backpressure**は、以下の構造的欠陥（P0）を持つことが判明しました：
+ADR-009が提案した**Audio Callback Blocking Backpressure**は、以下の構造的欠陥（P0）を持つことが判明しました（本ADRは暫定対策として検討され、最終的にADR-013に統合）：
 
 ### 問題2: blocking_send()によるCPALストリーム停止
 
@@ -188,6 +188,11 @@ std::thread::spawn(move || {
     }
 });
 ```
+
+---
+
+**Supersession Note (2025-10-14)**  
+本ADRで検討したバックプレッシャー戦略はADR-013「Sidecar Full-Duplex IPC Final Design」で正式なキュー設計とUI通知ポリシーに統合されました。承認済み実装と後続のP0修正はADR-013およびADR-013 P0 Bug Fixesを参照してください。
 
 **Consequences**:
 - ✅ **完全Lock-free**: Audio Callbackは常に数μs以内に戻る

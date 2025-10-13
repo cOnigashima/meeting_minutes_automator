@@ -273,7 +273,7 @@ impl Sidecar {
             child
                 .wait()
                 .await
-                .map_err(|e| SidecarError::ProcessTerminated)
+                .map_err(|_| SidecarError::ProcessTerminated)
         } else {
             Err(SidecarError::ProcessTerminated)
         }
@@ -281,14 +281,23 @@ impl Sidecar {
 
     /// Kill child process
     pub async fn kill(&mut self) -> Result<(), SidecarError> {
-        if let Some(mut child) = self.ctrl.child.as_mut() {
+        if let Some(child) = self.ctrl.child.as_mut() {
             child
                 .kill()
                 .await
-                .map_err(|e| SidecarError::ProcessTerminated)
+                .map_err(|_| SidecarError::ProcessTerminated)
         } else {
             Err(SidecarError::ProcessTerminated)
         }
+    }
+
+    /// Terminate sidecar process (kill + wait) and consume self
+    pub async fn shutdown(mut self) -> Result<(), SidecarError> {
+        if let Err(err) = self.kill().await {
+            tracing::warn!("Failed to send kill to sidecar: {:?}", err);
+        }
+        let _ = self.wait().await;
+        Ok(())
     }
 }
 
