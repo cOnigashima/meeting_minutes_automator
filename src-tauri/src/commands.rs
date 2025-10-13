@@ -149,8 +149,8 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                 // Send audio data to Python sidecar
                 let mut sidecar = python_sidecar.lock().await;
 
-                // Task 7.1.5: Use new IPC protocol format (STT-REQ-007.1)
-                // Python側が新形式に対応済み（2025-10-13）
+                // Task 7.1.6: Use event stream protocol (STT-REQ-007.3)
+                // Python側がprocess_audio_streamに対応済み（2025-10-13）
                 let message = ProtocolMessage::Request {
                     id: format!(
                         "audio-{}",
@@ -160,7 +160,7 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                             .as_millis()
                     ),
                     version: PROTOCOL_VERSION.to_string(),
-                    method: "process_audio".to_string(),
+                    method: "process_audio_stream".to_string(),
                     params: serde_json::json!({ "audio_data": audio_data }),
                 };
 
@@ -183,74 +183,89 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                     return;
                 }
 
-                // Receive response from Python
-                match sidecar.receive_message().await {
-                    Ok(response) => {
-                        // Task 7.1.5: Try new format first, fallback to legacy
-                        let text = if let Ok(msg) =
-                            serde_json::from_value::<ProtocolMessage>(response.clone())
-                        {
-                            // New format: result is serde_json::Value, extract text field
-                            match msg {
-                                ProtocolMessage::Response { result, .. } => {
-                                    // Try to parse as TranscriptionResult
-                                    result.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                // Task 7.1.6: Receive multiple events (speech_start, partial_text, final_text, speech_end)
+                // Loop until speech_end or error
+                loop {
+                    match sidecar.receive_message().await {
+                        Ok(response) => {
+                            // Parse IPC message
+                            let msg = match serde_json::from_value::<ProtocolMessage>(response.clone()) {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    eprintln!("[Meeting Minutes] Failed to parse IPC message: {:?}", e);
+                                    break;
                                 }
-                                ProtocolMessage::Error {
-                                    error_message, ..
-                                } => {
-                                    eprintln!(
-                                        "[Meeting Minutes] Python sidecar error: {}",
-                                        error_message
-                                    );
-                                    None
-                                }
-                                _ => None,
-                            }
-                        } else if let Some(text) = response.get("text").and_then(|v| v.as_str()) {
-                            // Legacy format: top-level text (backward compatibility)
-                            eprintln!("[Meeting Minutes] ⚠️ Received legacy IPC format (deprecated)");
-                            Some(text.to_string())
-                        } else {
-                            eprintln!(
-                                "[Meeting Minutes] ⚠️ Unknown IPC response format: {:?}",
-                                response
-                            );
-                            None
-                        };
-
-                        if let Some(text) = text {
-                            // Broadcast to WebSocket clients
-                            let ws_message = WebSocketMessage::Transcription {
-                                message_id: format!(
-                                    "ws-{}",
-                                    std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_millis()
-                                ),
-                                session_id: "session-1".to_string(), // TODO: Use actual session ID
-                                text: text.to_string(),
-                                timestamp: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_millis() as u64,
                             };
 
-                            let ws_server = websocket_server.lock().await;
-                            if let Err(e) = ws_server.broadcast(ws_message).await {
-                                eprintln!(
-                                    "[Meeting Minutes] Failed to broadcast transcription: {:?}",
-                                    e
-                                );
+                            match msg {
+                                ProtocolMessage::Event { event_type, data, .. } => {
+                                    match event_type.as_str() {
+                                        "speech_start" => {
+                                            println!("[Meeting Minutes] 🎤 Speech detected");
+                                            // TODO: Emit to frontend if needed
+                                        }
+                                        "partial_text" => {
+                                            if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                                                println!("[Meeting Minutes] 📝 Partial: {}", text);
+                                                // TODO: Emit partial transcription to frontend
+                                            }
+                                        }
+                                        "final_text" => {
+                                            if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                                                println!("[Meeting Minutes] ✅ Final: {}", text);
+
+                                                // Broadcast final transcription to WebSocket clients
+                                                let ws_message = WebSocketMessage::Transcription {
+                                                    message_id: format!(
+                                                        "ws-{}",
+                                                        std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap()
+                                                            .as_millis()
+                                                    ),
+                                                    session_id: "session-1".to_string(),
+                                                    text: text.to_string(),
+                                                    timestamp: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .unwrap()
+                                                        .as_millis() as u64,
+                                                };
+
+                                                let ws_server = websocket_server.lock().await;
+                                                if let Err(e) = ws_server.broadcast(ws_message).await {
+                                                    eprintln!(
+                                                        "[Meeting Minutes] Failed to broadcast transcription: {:?}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        "speech_end" => {
+                                            println!("[Meeting Minutes] 🔇 Speech ended");
+                                            break; // Exit loop after speech_end
+                                        }
+                                        _ => {
+                                            eprintln!("[Meeting Minutes] ⚠️ Unknown event type: {}", event_type);
+                                        }
+                                    }
+                                }
+                                ProtocolMessage::Error { error_message, .. } => {
+                                    eprintln!("[Meeting Minutes] Python sidecar error: {}", error_message);
+                                    break;
+                                }
+                                _ => {
+                                    eprintln!("[Meeting Minutes] ⚠️ Unexpected message type: {:?}", msg);
+                                    break;
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[Meeting Minutes] Failed to receive Python response: {:?}",
-                            e
-                        );
+                        Err(e) => {
+                            eprintln!(
+                                "[Meeting Minutes] Failed to receive Python event: {:?}",
+                                e
+                            );
+                            break;
+                        }
                     }
                 }
             });

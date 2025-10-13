@@ -961,6 +961,72 @@ class TestEventStreamProtocol:
             assert sent_messages[0].get('type') == 'response', "Should be a response message"
             assert sent_messages[0].get('id') == 'test-legacy-001', "Response should match request ID"
 
+    @pytest.mark.asyncio
+    async def test_process_audio_stream_handles_error_events(self):
+        """
+        P0 FIX TEST: Error events should be sent to prevent Rust-side hang
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from stt_engine.ipc_handler import IpcHandler
+        from main import AudioProcessor
+
+        mock_ipc = AsyncMock(spec=IpcHandler)
+        sent_messages = []
+
+        async def capture_message(msg):
+            sent_messages.append(msg)
+
+        mock_ipc.send_message.side_effect = capture_message
+
+        with patch('main.WhisperSTTEngine') as mock_stt_class, \
+             patch('stt_engine.resource_monitor.ResourceMonitor') as mock_resource_class, \
+             patch('main.VoiceActivityDetector') as mock_vad_class, \
+             patch('main.AudioPipeline') as mock_pipeline_class:
+
+            # Mock setup
+            mock_stt = AsyncMock()
+            mock_stt.model_size = 'small'
+            mock_stt_class.return_value = mock_stt
+
+            mock_vad = MagicMock()
+            mock_vad.split_into_frames.return_value = [[0] * 320 for _ in range(5)]
+            mock_vad_class.return_value = mock_vad
+
+            # Mock AudioPipeline to return error event
+            mock_pipeline = AsyncMock()
+            error_event = {'event': 'error', 'message': 'Test error message'}
+            mock_pipeline.process_audio_frame_with_partial.side_effect = [
+                None,
+                None,
+                error_event,  # Error on 3rd frame
+                None,
+                None
+            ]
+            mock_pipeline_class.return_value = mock_pipeline
+
+            processor = AudioProcessor()
+            processor.ipc = mock_ipc
+
+            msg = {
+                'id': 'test-error-001',
+                'type': 'request',
+                'method': 'process_audio_stream',
+                'params': {'audio_data': [0] * 32000}
+            }
+
+            await processor.handle_message(msg)
+
+            # Verify error message was sent
+            error_messages = [m for m in sent_messages if m.get('type') == 'error']
+            assert len(error_messages) == 1, "Error event should be sent"
+
+            error_msg = error_messages[0]
+            assert error_msg.get('id') == 'test-error-001', "Error must include request id"
+            assert error_msg.get('errorCode') == 'AUDIO_PIPELINE_ERROR'
+            assert error_msg.get('errorMessage') == 'Test error message'
+            assert error_msg.get('recoverable') == True
+            assert error_msg.get('version') == '1.0'
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

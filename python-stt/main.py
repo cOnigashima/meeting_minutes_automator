@@ -290,10 +290,17 @@ class AudioProcessor:
         # Split into 10ms frames (STT-REQ-003.2)
         frames = self.vad.split_into_frames(audio_bytes)
 
-        # Process frames and IMMEDIATELY send events
+        # Process frames with REAL-TIME simulation (P0 fix for partial text)
+        # Problem: Without timing control, all frames are processed instantly
+        # and _should_generate_partial() never returns True (time.time() doesn't advance).
+        # Solution: Add 10ms asyncio.sleep() per frame to simulate real-time processing.
         for frame in frames:
             # Use process_audio_frame_with_partial for partial text support
             result = await self.pipeline.process_audio_frame_with_partial(frame)
+
+            # CRITICAL: Simulate real-time 10ms frame interval
+            # This allows _should_generate_partial() to trigger at 1-second intervals
+            await asyncio.sleep(0.01)  # 10ms per frame (STT-REQ-003.2)
 
             if result:
                 event_type = result.get('event')
@@ -376,6 +383,27 @@ class AudioProcessor:
                             'timestamp': result.get('timestamp', int(time.time() * 1000))
                         }
                     })
+
+                elif event_type == 'error':
+                    # P0 FIX: Handle error events to prevent Rust-side hang
+                    # Without this, Rust's receive_message() will block forever
+                    # CRITICAL: IpcMessage::Error requires 'id' field (ipc_protocol.rs L104)
+                    error_msg = result.get('message', 'Unknown error')
+                    logger.error(f"AudioPipeline error: {error_msg}")
+                    await self.ipc.send_message({
+                        'type': 'error',
+                        'id': msg_id,  # FIXED: id field is mandatory for IpcMessage::Error
+                        'version': '1.0',
+                        'errorCode': 'AUDIO_PIPELINE_ERROR',
+                        'errorMessage': error_msg,
+                        'recoverable': True
+                    })
+                    # Exit loop after sending error
+                    break
+
+                else:
+                    # Unknown event type - log and continue
+                    logger.warning(f"Unknown event type: {event_type}")
 
         logger.info(f"Stream processing complete for request {msg_id}")
 

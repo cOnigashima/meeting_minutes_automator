@@ -482,15 +482,36 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
     - **次ステップ**: Task 7.2でPython側を新形式対応後、再度新形式へ移行
   - **要件充足状況**: ⚠️ STT-REQ-007.1/007.2/007.4/007.5は**未達成**（Python側未対応のため実際の通信で使用不可）
   - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-007.5, ADR-003（Rust側実装完了、Python側対応待ち）_
-- [ ] 7.1.6 イベントストリーム型プロトコル追加（Task 4.3引継ぎ）
-  - 失敗する統合テストを作成（イベントストリーム配信、複数イベント受信）
-  - Python側: `_handle_process_audio_stream()` 実装（中間イベント即座送信）
-  - Rust側: `receive_message()` ループ実装（複数イベント受信）
-  - イベントタイプ: `speech_start`, `partial_text`, `final_text`, `speech_end`
-  - STT-REQ-003.7/003.8対応: 1秒間隔の部分テキスト配信
-  - 後方互換性維持: 既存 `process_audio` エンドポイントは変更なし
-  - 統合テストの緑化
-  - _Requirements: STT-REQ-003.7, STT-REQ-003.8, STT-REQ-007.1_
+- [x] 7.1.6 イベントストリーム型プロトコル追加（✅ 完了、P0修正完了 2025-10-13実施）
+  - **Python側実装完了**（main.py L261-406）
+    - `_handle_process_audio_stream()` メソッド実装（L262-406）
+    - イベントタイプ: `speech_start`, `partial_text`, `final_text`, `speech_end`, `error`
+    - **P0修正1**: JSON形式をRust schema完全準拠（`eventType`/`data`フィールド使用）
+    - **P0修正2**: リアルタイムタイムスライス実装（L303: `asyncio.sleep(0.01)`で10msフレーム間隔シミュレート）
+      - 問題: フレーム一気処理でtime.time()変化せず、`_should_generate_partial()`が常にFalse
+      - 対応: 各フレーム処理後に10ms待機で壁時計時刻を進行させ、1秒間隔partial_text発火を実現
+    - **P0修正3**: エラーイベント送信実装（L387-402: `event_type == 'error'`ケース追加）
+      - 問題1: AudioPipelineエラー時、Python側が何も送信せずRust側が`receive_message()`でハング
+      - 対応1: `type: 'error'`メッセージ送信でRust側ループを確実に終了
+      - 問題2: エラーメッセージに`id`フィールドがなく、IpcMessage::Errorデシリアライズ失敗
+      - 対応2: L395で`'id': msg_id`追加（ipc_protocol.rs L104必須フィールド準拠）
+    - **P1修正**: `speech_end`イベント送信実装（AudioPipelineが返さないため手動送信）
+  - **Rust側実装完了**（commands.rs L152-270）
+    - メソッド名変更: `process_audio` → `process_audio_stream`（L163）
+    - イベント受信ループ実装（L188-270）
+    - イベントタイプ別処理: speech_start, partial_text, final_text, speech_end
+    - エラーハンドリング: `ProtocolMessage::Error`でループ終了（L252-254）
+    - `final_text`でWebSocket配信、`speech_end`でループ終了
+  - **統合テスト実装**（python-stt/tests/test_audio_integration.py L786-1028）
+    - `test_process_audio_stream_sends_multiple_events`: イベント配信検証
+    - `test_process_audio_still_works_for_backward_compatibility`: 後方互換性検証
+    - `test_process_audio_stream_handles_error_events`: エラーイベント送信検証（P0修正検証）
+      - L1024: `id`フィールド検証追加（IpcMessage::Error必須フィールド）
+    - **全3テスト合格**
+  - **後方互換性維持**: 既存 `process_audio` エンドポイント変更なし
+  - **STT-REQ-003.7/003.8対応**: リアルタイム部分テキスト配信完全実装（P0修正により実現）
+  - **ビルド検証**: `cargo build`成功（deprecation warning 9件は既存Legacy IPC由来）
+  - _Requirements: STT-REQ-003.7, STT-REQ-003.8, STT-REQ-007.1（P0修正完了、完全実装）_
 
 - [ ] 7.2 後方互換性テストとエラー処理
   - 失敗する統合テストを作成（互換性、未知フィールド無視、バージョン不一致処理）
