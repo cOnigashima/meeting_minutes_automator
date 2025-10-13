@@ -1,9 +1,11 @@
 // Tauri Commands
 // Walking Skeleton (MVP0) - Recording Commands Implementation
 // MVP1 - Audio Device Event Monitoring
+// Task 7.1.5: IPC Protocol Migration Support
 
 use crate::audio::AudioDevice;
 use crate::audio_device_adapter::AudioDeviceEvent;
+use crate::ipc_protocol::{IpcMessage as ProtocolMessage, PROTOCOL_VERSION};
 use crate::state::AppState;
 use crate::websocket::WebSocketMessage;
 use std::sync::Arc;
@@ -147,16 +149,33 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                 // Send audio data to Python sidecar
                 let mut sidecar = python_sidecar.lock().await;
 
-                let message = serde_json::json!({
-                    "type": "process_audio",
-                    "id": format!("audio-{}", std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()),
-                    "audio_data": audio_data,
-                });
+                // Task 7.1.5: Use new IPC protocol format (STT-REQ-007.1)
+                // Python側が新形式に対応済み（2025-10-13）
+                let message = ProtocolMessage::Request {
+                    id: format!(
+                        "audio-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    ),
+                    version: PROTOCOL_VERSION.to_string(),
+                    method: "process_audio".to_string(),
+                    params: serde_json::json!({ "audio_data": audio_data }),
+                };
 
-                if let Err(e) = sidecar.send_message(message).await {
+                let message_json = match serde_json::to_value(&message) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        eprintln!(
+                            "[Meeting Minutes] Failed to serialize IPC message: {:?}",
+                            e
+                        );
+                        return;
+                    }
+                };
+
+                if let Err(e) = sidecar.send_message(message_json).await {
                     eprintln!(
                         "[Meeting Minutes] Failed to send audio data to Python: {:?}",
                         e
@@ -167,8 +186,40 @@ pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
                 // Receive response from Python
                 match sidecar.receive_message().await {
                     Ok(response) => {
-                        // Extract transcription text
-                        if let Some(text) = response.get("text").and_then(|v| v.as_str()) {
+                        // Task 7.1.5: Try new format first, fallback to legacy
+                        let text = if let Ok(msg) =
+                            serde_json::from_value::<ProtocolMessage>(response.clone())
+                        {
+                            // New format: result is serde_json::Value, extract text field
+                            match msg {
+                                ProtocolMessage::Response { result, .. } => {
+                                    // Try to parse as TranscriptionResult
+                                    result.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                }
+                                ProtocolMessage::Error {
+                                    error_message, ..
+                                } => {
+                                    eprintln!(
+                                        "[Meeting Minutes] Python sidecar error: {}",
+                                        error_message
+                                    );
+                                    None
+                                }
+                                _ => None,
+                            }
+                        } else if let Some(text) = response.get("text").and_then(|v| v.as_str()) {
+                            // Legacy format: top-level text (backward compatibility)
+                            eprintln!("[Meeting Minutes] ⚠️ Received legacy IPC format (deprecated)");
+                            Some(text.to_string())
+                        } else {
+                            eprintln!(
+                                "[Meeting Minutes] ⚠️ Unknown IPC response format: {:?}",
+                                response
+                            );
+                            None
+                        };
+
+                        if let Some(text) = text {
                             // Broadcast to WebSocket clients
                             let ws_message = WebSocketMessage::Transcription {
                                 message_id: format!(

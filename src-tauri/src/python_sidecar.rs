@@ -1,10 +1,16 @@
 // Python Sidecar Process Manager
 // Walking Skeleton (MVP0) - Python Interpreter Detection Implementation
+// Task 7.1.5: IPC Protocol Migration Support
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+// Task 7.1.5: Import new IPC protocol module
+use crate::ipc_protocol::{
+    IpcMessage as ProtocolMessage, TranscriptionResult, PROTOCOL_VERSION,
+};
 
 /// Python interpreter detection errors (design.md compliant)
 #[derive(Error, Debug)]
@@ -41,10 +47,16 @@ pub enum PythonSidecarError {
     DetectionFailed(#[from] PythonDetectionError),
 }
 
-/// IPC message types for communication with Python sidecar
+/// Legacy IPC message types (MVP0 - Walking Skeleton)
+/// DEPRECATED: Use crate::ipc_protocol::IpcMessage instead
+/// Kept for backward compatibility with old Python code
+#[deprecated(
+    since = "Task 7.1.5",
+    note = "Use crate::ipc_protocol::IpcMessage instead for new code"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
-pub enum IpcMessage {
+pub enum LegacyIpcMessage {
     /// Request to start processing audio
     StartProcessing { audio_data: Vec<u8> },
 
@@ -59,6 +71,73 @@ pub enum IpcMessage {
 
     /// Error from Python
     Error { message: String },
+}
+
+impl LegacyIpcMessage {
+    /// Convert legacy message to new protocol message
+    /// Used for backward compatibility during migration
+    pub fn to_protocol_message(&self) -> ProtocolMessage {
+        match self {
+            LegacyIpcMessage::TranscriptionResult { text, .. } => {
+                let transcription = TranscriptionResult {
+                    text: text.clone(),
+                    is_final: true,
+                    confidence: None,
+                    language: None,
+                    processing_time_ms: None,
+                    model_size: None,
+                };
+                ProtocolMessage::Response {
+                    id: "legacy".to_string(),
+                    version: PROTOCOL_VERSION.to_string(),
+                    result: serde_json::to_value(&transcription).unwrap(),
+                }
+            }
+            LegacyIpcMessage::Error { message } => ProtocolMessage::Error {
+                id: "legacy-error".to_string(),
+                version: PROTOCOL_VERSION.to_string(),
+                error_code: "LEGACY_ERROR".to_string(),
+                error_message: message.clone(),
+                recoverable: true,
+            },
+            LegacyIpcMessage::Ready => {
+                // Ready is not part of new protocol, convert to Response
+                let transcription = TranscriptionResult {
+                    text: "ready".to_string(),
+                    is_final: true,
+                    confidence: None,
+                    language: None,
+                    processing_time_ms: None,
+                    model_size: None,
+                };
+                ProtocolMessage::Response {
+                    id: "ready".to_string(),
+                    version: PROTOCOL_VERSION.to_string(),
+                    result: serde_json::to_value(&transcription).unwrap(),
+                }
+            }
+            LegacyIpcMessage::StartProcessing { audio_data } => {
+                // StartProcessing is equivalent to process_audio in new protocol
+                ProtocolMessage::Request {
+                    id: "legacy-request".to_string(),
+                    version: PROTOCOL_VERSION.to_string(),
+                    method: "process_audio".to_string(),
+                    params: serde_json::json!({ "audio_data": audio_data }),
+                }
+            }
+            LegacyIpcMessage::StopProcessing => {
+                // StopProcessing has no direct equivalent in new protocol
+                // In new protocol, recording stop is handled by Rust side only
+                // Return a no-op request for compatibility
+                ProtocolMessage::Request {
+                    id: "legacy-request".to_string(),
+                    version: PROTOCOL_VERSION.to_string(),
+                    method: "stop_processing".to_string(),
+                    params: serde_json::json!({}),
+                }
+            }
+        }
+    }
 }
 
 /// Python sidecar process manager

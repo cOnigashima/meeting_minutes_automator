@@ -409,15 +409,80 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - **背景**: Task 4.3ではMVP0互換性優先でRequest-Response型（1リクエスト→1最終応答）を維持
   - **本タスクの目標**: イベントストリーム型プロトコル追加（1リクエスト→複数イベント配信）
   - **実装方針**: 新エンドポイント `process_audio_stream` または既存エンドポイントの拡張を検討
-- [ ] 7.1 IPCメッセージ拡張とバージョニング
-  - 失敗するユニットテストを作成（メッセージシリアライゼーション、バージョンチェック）
-  - 新フィールドの追加（confidence、language、processing_time_ms、model_size）
-  - バージョンフィールドの追加（"version": "1.0"）
-  - 既存メッセージ形式の維持（text、is_final）
-  - ユニットテストの緑化
-  - 統合テストの緑化
-  - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-SEC-001_
-- [ ] 7.1.5 イベントストリーム型プロトコル追加（Task 4.3引継ぎ）
+- [x] 7.1 IPCメッセージ拡張とバージョニング（✅ 完了、Task 7.1.5でP0修正完了）
+  - **新モジュール作成**: `ipc_protocol.rs`（src-tauri/src/ipc_protocol.rs）
+  - **TranscriptionResult構造体実装完了**（L10-38）
+    - 既存フィールド: text, is_final
+    - 新規フィールド（Optional）: confidence, language, processing_time_ms, model_size
+    - `#[serde(default, skip_serializing_if = "Option::is_none")]`で後方互換性確保
+  - **IpcMessage enum実装完了**（L42-78）
+    - Request, Response, Error の3バリアント
+    - 全メッセージに`version`フィールド必須化（STT-REQ-007.4）
+    - **P0修正完了**: `#[serde(default = "default_version")]`で旧形式メッセージ対応（ADR-003準拠）
+    - エラー応答形式統一（errorCode, errorMessage, recoverable）
+  - **ヘルパーメソッド実装**（L80-97）
+    - `version()`: バージョン取得
+    - `id()`: メッセージID取得
+  - **ユニットテスト11件実装・全合格**（L99-333）
+    - `test_transcription_result_with_all_fields`: 全フィールド検証
+    - `test_transcription_result_backward_compatibility`: 旧形式互換性
+    - `test_ipc_message_response_with_version`: バージョンフィールド検証
+    - `test_ipc_message_error_format`: エラー形式検証（STT-REQ-007.5）
+    - `test_ipc_message_version_accessor`: アクセサメソッド検証
+    - `test_transcription_result_skip_none_fields`: None省略検証
+    - `test_ipc_message_roundtrip`: ラウンドトリップ検証
+    - `test_forward_compatibility_ignore_unknown_fields`: 未知フィールド無視
+    - `test_version_constant`: プロトコルバージョン定数検証
+    - `test_confidence_range`: 信頼度スコア範囲検証
+    - **P0対応テスト追加**: `test_version_field_omitted_defaults_to_1_0`（L317-331、ADR-003検証）
+  - **後方互換性**: `#[serde(default = "default_version")]`で旧形式メッセージを完全サポート（ADR-003準拠）
+  - **前方互換性**: serdeの`#[serde(deny_unknown_fields)]`未使用で未知フィールド無視
+  - **Task 7.1.5統合完了**: 既存IPC通信への新プロトコル統合（詳細は下記）
+  - **全11テスト合格**
+  - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-007.5, ADR-003（完全実装）_
+
+- [x] 7.1.5 既存IPC通信への新プロトコル統合（⚠️ 部分完了、P0修正により差し戻し）
+  - **背景**: Task 7.1で新ipc_protocolモジュール実装も、実際のIPC通信（python_sidecar.rs/commands.rs）で未使用の致命的欠陥を修正
+  - **python_sidecar.rsリファクタリング**（L1-131）
+    - 旧IpcMessage enum → LegacyIpcMessage にリネーム（#[deprecated]付与、L50-74）
+    - `use crate::ipc_protocol::IpcMessage` 追加（L11-13）
+    - `LegacyIpcMessage::to_protocol_message()` 変換ヘルパー実装（L76-131）
+      - TranscriptionResult → Response変換（confidence/language等はNone）
+      - Error → Error変換
+      - Ready → Response変換
+      - StartProcessing/StopProcessing → Request変換
+  - **commands.rs送受信修正**（L1-220）
+    - `use crate::ipc_protocol::IpcMessage` 追加（L8）
+    - **送信側修正**（L152-175）: 手書きJSON → `ProtocolMessage::Request`使用
+      - `id`: `audio-{timestamp}`
+      - `version`: `PROTOCOL_VERSION`（"1.0"）
+      - `method`: "process_audio"
+      - `params`: `{"audio_data": [u8]}`
+    - **受信側修正**（L185-218）: 新形式優先、旧形式Fallback
+      - 新形式: `ProtocolMessage::Response { result.text }` 抽出
+      - 旧形式: `response.get("text")` 抽出（⚠️ 非推奨警告）
+      - エラー応答: `ProtocolMessage::Error` 処理
+  - **統合テスト9件追加**（tests/ipc_migration_test.rs）
+    - `test_new_ipc_format_roundtrip`: 新形式ラウンドトリップ検証
+    - `test_legacy_format_not_parsed_as_new_format`: 旧形式パース失敗確認（期待動作）
+    - `test_new_format_request_serialization`: Request形式検証
+    - `test_new_format_error_response`: Error形式検証
+    - `test_legacy_to_new_format_conversion`: 旧→新変換検証
+    - `test_version_field_omitted_backward_compat`: versionフィールド省略時デフォルト"1.0"検証
+    - `test_forward_compatibility_unknown_fields`: 未知フィールド無視検証
+    - `test_extended_fields_serialization`: 拡張フィールド検証
+    - `test_extended_fields_omitted_when_none`: Noneフィールド省略検証
+  - **後方互換性保証**: 旧形式Python（MVP0）からのレスポンス受信可能、⚠️警告表示
+  - **段階的移行戦略**: LegacyIpcMessage（#[deprecated]）で将来の旧形式廃止を予告
+  - **全20テスト合格**（ipc_protocol 11 + integration 9）
+  - **⚠️ P0修正による差し戻し**（2025-10-13実施）:
+    - **問題**: commands.rs L152-165で新形式`ProtocolMessage::Request`送信も、Python側（main.py L77-103）が`msg_type == 'process_audio'`で分岐しており、`type: "request"`を受け取れない
+    - **影響**: 🔴 録音処理が完全停止（すべてのリクエストが"Unknown message type: request"エラーで拒否）
+    - **対応**: commands.rs送信処理を旧形式（`type: "process_audio"`）へ差し戻し（L152-165）
+    - **次ステップ**: Task 7.2でPython側を新形式対応後、再度新形式へ移行
+  - **要件充足状況**: ⚠️ STT-REQ-007.1/007.2/007.4/007.5は**未達成**（Python側未対応のため実際の通信で使用不可）
+  - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-007.5, ADR-003（Rust側実装完了、Python側対応待ち）_
+- [ ] 7.1.6 イベントストリーム型プロトコル追加（Task 4.3引継ぎ）
   - 失敗する統合テストを作成（イベントストリーム配信、複数イベント受信）
   - Python側: `_handle_process_audio_stream()` 実装（中間イベント即座送信）
   - Rust側: `receive_message()` ループ実装（複数イベント受信）

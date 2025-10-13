@@ -199,13 +199,14 @@ mod e2e_tests {
     /// Interface Type Compatibility Test
     /// Verifies that message types are correctly defined and serializable
     #[test]
+    #[allow(deprecated)]
     fn test_message_type_definitions() {
-        use meeting_minutes_automator_lib::python_sidecar::IpcMessage;
+        use meeting_minutes_automator_lib::python_sidecar::LegacyIpcMessage;
         use meeting_minutes_automator_lib::websocket::WebSocketMessage;
         use serde_json;
 
-        // Test IPC message serialization
-        let ipc_msg = IpcMessage::Ready;
+        // Test IPC message serialization (legacy format)
+        let ipc_msg = LegacyIpcMessage::Ready;
         let json = serde_json::to_string(&ipc_msg).expect("Should serialize");
         assert!(json.contains("Ready") || json.contains("ready"));
 

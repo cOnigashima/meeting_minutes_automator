@@ -5,6 +5,7 @@
 pub mod audio;
 pub mod audio_device_adapter;
 pub mod commands;
+pub mod ipc_protocol;
 pub mod logger;
 pub mod python_sidecar;
 pub mod state;

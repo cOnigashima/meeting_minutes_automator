@@ -36,7 +36,8 @@
       "Bash(/kiro:spec-status meeting-minutes-stt)",
       "Bash(rustfmt:*)",
       "Bash(.kiro/scripts/validate_adrs.sh:*)",
-      "Bash(/kiro:spec-init:*)"
+      "Bash(/kiro:spec-init:*)",
+      "Bash(rustc --version)"
     ],
     "deny": [],
     "ask": []

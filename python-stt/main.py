@@ -68,9 +68,12 @@ class AudioProcessor:
         Args:
             msg: IPC message dictionary
 
-        Message types:
-        - process_audio: Process audio frames through VAD→Pipeline→STT
-        - approve_upgrade: User-approved model upgrade (Task 5.4, STT-REQ-006.12)
+        Message types (Task 7.1.5 - New IPC Protocol):
+        - request (new): Generic request with method field (STT-REQ-007.1)
+          - method=process_audio: Process audio frames through VAD→Pipeline→STT
+          - method=approve_upgrade: User-approved model upgrade
+        - process_audio (legacy): Direct process_audio for backward compatibility
+        - approve_upgrade (legacy): Direct approve_upgrade for backward compatibility
         - ping: Health check (respond with pong)
         - shutdown: Graceful shutdown
         """
@@ -78,10 +81,50 @@ class AudioProcessor:
         msg_id = msg.get('id', 'unknown')
 
         try:
-            if msg_type == 'process_audio':
+            # New format: type="request" + method field (STT-REQ-007.1)
+            if msg_type == 'request':
+                method = msg.get('method')
+                params = msg.get('params', {})
+
+                if method == 'process_audio':
+                    # Extract audio_data from params
+                    msg_with_audio = {'id': msg_id, 'audio_data': params.get('audio_data')}
+                    await self._handle_process_audio(msg_with_audio)
+
+                elif method == 'approve_upgrade':
+                    # Extract target_model from params (new format)
+                    params = msg.get('params', {})
+                    msg_with_target = {'id': msg_id, 'target_model': params.get('target_model')}
+                    await self._handle_approve_upgrade(msg_with_target)
+
+                elif method == 'stop_processing':
+                    # Legacy compatibility: stop_processing converted from LegacyIpcMessage::StopProcessing
+                    # In new protocol, stop is handled by Rust side, so just acknowledge
+                    logger.debug("⚠️ Received legacy stop_processing (converted from old IPC)")
+                    await self.ipc.send_message({
+                        'type': 'response',
+                        'id': msg_id,
+                        'version': '1.0',
+                        'result': {'status': 'acknowledged'}
+                    })
+
+                else:
+                    logger.warning(f"Unknown request method: {method}")
+                    await self.ipc.send_message({
+                        'type': 'error',
+                        'id': msg_id,
+                        'errorCode': 'UNKNOWN_METHOD',
+                        'errorMessage': f"Unknown request method: {method}",
+                        'recoverable': True
+                    })
+
+            # Legacy format: type="process_audio" (backward compatibility)
+            elif msg_type == 'process_audio':
+                logger.debug("⚠️ Received legacy format: type='process_audio' (deprecated)")
                 await self._handle_process_audio(msg)
 
             elif msg_type == 'approve_upgrade':
+                logger.debug("⚠️ Received legacy format: type='approve_upgrade' (deprecated)")
                 await self._handle_approve_upgrade(msg)
 
             elif msg_type == 'ping':
@@ -99,7 +142,9 @@ class AudioProcessor:
                 await self.ipc.send_message({
                     'type': 'error',
                     'id': msg_id,
-                    'error': f"Unknown message type: {msg_type}"
+                    'errorCode': 'UNKNOWN_TYPE',
+                    'errorMessage': f"Unknown message type: {msg_type}",
+                    'recoverable': True
                 })
 
         except Exception as e:
@@ -107,7 +152,9 @@ class AudioProcessor:
             await self.ipc.send_message({
                 'type': 'error',
                 'id': msg_id,
-                'error': str(e)
+                'errorCode': 'INTERNAL_ERROR',
+                'errorMessage': str(e),
+                'recoverable': False
             })
 
     async def _handle_process_audio(self, msg: Dict[str, Any]) -> None:
@@ -132,12 +179,19 @@ class AudioProcessor:
 
         if not audio_data:
             logger.warning("Empty audio_data received")
-            # Send empty response for empty audio (MVP0 compatible)
+            # Send empty response for empty audio (Task 7.1.5 new format)
             await self.ipc.send_message({
                 'id': msg_id,
                 'type': 'response',
                 'version': '1.0',
-                'text': None
+                'result': {
+                    'text': '',
+                    'is_final': True,
+                    'confidence': None,
+                    'language': None,
+                    'processing_time_ms': None,
+                    'model_size': None
+                }
             })
             return
 
@@ -166,17 +220,19 @@ class AudioProcessor:
 
         if final_event:
             transcription = final_event['transcription']
-            # Send response with flat structure (MVP0 compatible + MVP1 extensions)
-            # STT-REQ-007.2/007.3: text field at root level for backward compatibility
+            # Task 7.1.5: Send response with nested result structure (STT-REQ-007.2)
             await self.ipc.send_message({
                 'id': msg_id,
                 'type': 'response',
                 'version': '1.0',
-                'text': transcription['text'],  # MVP0 compatible (root level)
-                'is_final': transcription['is_final'],  # MVP1 extension
-                'confidence': transcription.get('confidence', 0.0),  # MVP1 extension
-                'language': transcription.get('language', 'ja'),  # MVP1 extension
-                'processing_time_ms': transcription.get('processing_time_ms', 0),  # MVP1 extension
+                'result': {  # Nested structure (new format)
+                    'text': transcription['text'],
+                    'is_final': transcription['is_final'],
+                    'confidence': transcription.get('confidence'),  # None if not available
+                    'language': transcription.get('language'),
+                    'processing_time_ms': transcription.get('processing_time_ms'),
+                    'model_size': self.stt_engine.model_size  # STT-REQ-007.2
+                }
             })
             logger.info(f"Sent final transcription: {transcription['text'][:50]}...")
         else:
@@ -185,7 +241,14 @@ class AudioProcessor:
                 'id': msg_id,
                 'type': 'response',
                 'version': '1.0',
-                'text': None
+                'result': {
+                    'text': '',
+                    'is_final': True,
+                    'confidence': None,
+                    'language': None,
+                    'processing_time_ms': None,
+                    'model_size': None
+                }
             })
             logger.debug("No final transcription yet, sent empty response")
 
@@ -215,14 +278,17 @@ class AudioProcessor:
             # Update ResourceMonitor state (only after successful load)
             self.resource_monitor.current_model = new_model
 
-            # Send IPC notification to UI (STT-REQ-006.9)
+            # Send IPC notification to UI (STT-REQ-006.9, STT-REQ-007.1 Event format)
             if self.ipc:
                 await self.ipc.send_message({
                     'type': 'event',
-                    'event': 'model_change',
-                    'old_model': old_model,
-                    'new_model': new_model,
-                    'reason': 'cpu_high' if self.resource_monitor.cpu_high_start_time else 'memory_high'
+                    'version': '1.0',
+                    'eventType': 'model_change',
+                    'data': {
+                        'old_model': old_model,
+                        'new_model': new_model,
+                        'reason': 'cpu_high' if self.resource_monitor.cpu_high_start_time else 'memory_high'
+                    }
                 })
                 logger.info(f"Sent model_change IPC notification: {old_model} → {new_model}")
 
@@ -246,14 +312,17 @@ class AudioProcessor:
         logger.info(f"Upgrade proposal: {current_model} → {proposed_model}")
 
         try:
-            # Send IPC notification to UI (STT-REQ-006.10)
+            # Send IPC notification to UI (STT-REQ-006.10, STT-REQ-007.1 Event format)
             if self.ipc:
                 await self.ipc.send_message({
                     'type': 'event',
-                    'event': 'upgrade_proposal',
-                    'current_model': current_model,
-                    'proposed_model': proposed_model,
-                    'message': f'Resources have recovered. Upgrade to {proposed_model}?'
+                    'version': '1.0',
+                    'eventType': 'upgrade_proposal',
+                    'data': {
+                        'current_model': current_model,
+                        'proposed_model': proposed_model,
+                        'message': f'Resources have recovered. Upgrade to {proposed_model}?'
+                    }
                 })
                 logger.info(f"Sent upgrade_proposal IPC notification: {current_model} → {proposed_model}")
 
@@ -270,13 +339,16 @@ class AudioProcessor:
         logger.warning("Recording pause requested: tiny model insufficient for current resources")
 
         try:
-            # Send IPC notification to UI (STT-REQ-006.11)
+            # Send IPC notification to UI (STT-REQ-006.11, STT-REQ-007.1 Event format)
             if self.ipc:
                 await self.ipc.send_message({
                     'type': 'event',
-                    'event': 'recording_paused',
-                    'reason': 'insufficient_resources',
-                    'message': 'System resources are critically low. Recording paused.'
+                    'version': '1.0',
+                    'eventType': 'recording_paused',
+                    'data': {
+                        'reason': 'insufficient_resources',
+                        'message': 'System resources are critically low. Recording paused.'
+                    }
                 })
                 logger.info("Sent recording_paused IPC notification")
 
@@ -308,10 +380,14 @@ class AudioProcessor:
         if not target_model:
             logger.error("approve_upgrade message missing 'target_model' field")
             if self.ipc:
+                # STT-REQ-007.5: Unified error format
                 await self.ipc.send_message({
                     'type': 'error',
                     'id': msg_id,
-                    'error': "Missing 'target_model' field"
+                    'version': '1.0',
+                    'errorCode': 'MISSING_PARAMETER',
+                    'errorMessage': "Missing 'target_model' field in approve_upgrade request",
+                    'recoverable': True
                 })
             return
 
@@ -325,25 +401,31 @@ class AudioProcessor:
             # Update ResourceMonitor state (only after successful load)
             self.resource_monitor.current_model = target_model
 
-            # Send IPC messages (STT-REQ-006.12, STT-REQ-007.1)
+            # Send IPC messages (STT-REQ-006.12, STT-REQ-007.1, STT-REQ-007.2)
             if self.ipc:
-                # 1. id付きレスポンス（STT-REQ-007.1: Request-Response契約準拠）
+                # 1. id付きレスポンス（STT-REQ-007.1: Request-Response契約準拠、STT-REQ-007.2: ネスト構造）
                 await self.ipc.send_message({
-                    'type': 'response',
                     'id': msg_id,
-                    'success': True,
-                    'old_model': old_model,
-                    'new_model': target_model
+                    'type': 'response',
+                    'version': '1.0',
+                    'result': {  # Nested structure (new format)
+                        'success': True,
+                        'old_model': old_model,
+                        'new_model': target_model
+                    }
                 })
                 logger.info(f"Sent approve_upgrade response: {old_model} → {target_model}")
 
-                # 2. イベント通知（UI通知用、オプショナル）
+                # 2. イベント通知（UI通知用、オプショナル、STT-REQ-007.1 Event format）
                 await self.ipc.send_message({
                     'type': 'event',
-                    'event': 'upgrade_success',
-                    'old_model': old_model,
-                    'new_model': target_model,
-                    'message': f'Model upgraded successfully to {target_model}'
+                    'version': '1.0',
+                    'eventType': 'upgrade_success',
+                    'data': {
+                        'old_model': old_model,
+                        'new_model': target_model,
+                        'message': f'Model upgraded successfully to {target_model}'
+                    }
                 })
                 logger.info(f"Sent upgrade_success event notification")
 
@@ -351,12 +433,15 @@ class AudioProcessor:
             logger.error(f"Failed to handle approved upgrade: {e}", exc_info=True)
             # Don't update current_model - it stays at old_model (automatic rollback)
 
-            # Send failure IPC notification to UI
+            # Send failure IPC notification to UI (STT-REQ-007.5)
             if self.ipc:
                 await self.ipc.send_message({
                     'type': 'error',
                     'id': msg_id,
-                    'error': f"Failed to upgrade model: {str(e)}"
+                    'version': '1.0',
+                    'errorCode': 'MODEL_LOAD_ERROR',
+                    'errorMessage': f"Failed to upgrade model: {str(e)}",
+                    'recoverable': False  # Model loading failure is not recoverable
                 })
 
 

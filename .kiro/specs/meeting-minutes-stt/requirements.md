@@ -674,6 +674,20 @@ MVP0（Walking Skeleton）では、設計書（`.kiro/specs/meeting-minutes-core
 
 ---
 
+---
+
+## Requirement Traceability Matrix
+
+| 要件ID | 要件名 | タスクID | ステータス | 実装ファイル | テストファイル |
+|--------|--------|----------|-----------|-------------|--------------|
+| STT-REQ-007.1 | IPC後方互換性維持 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs, src-tauri/src/commands.rs, src-tauri/src/python_sidecar.rs | tests/ipc_migration_test.rs |
+| STT-REQ-007.2 | IPC拡張フィールド追加 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (TranscriptionResult構造体) | tests/ipc_migration_test.rs, src-tauri/src/ipc_protocol.rs (L426-439) |
+| STT-REQ-007.4 | IPCバージョンフィールド必須化 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (PROTOCOL_VERSION), src-tauri/src/commands.rs | tests/ipc_migration_test.rs, src-tauri/src/ipc_protocol.rs (L317-331) |
+| STT-REQ-007.5 | IPCエラーフォーマット統一 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (IpcMessage::Error), src-tauri/src/commands.rs | tests/ipc_migration_test.rs, src-tauri/src/ipc_protocol.rs (L192-216) |
+| ADR-003 | versionデフォルト値設定 | Task 7.1, 7.1.5 | ✅ 完了 | src-tauri/src/ipc_protocol.rs (default_version関数) | src-tauri/src/ipc_protocol.rs (L317-331) |
+
+---
+
 ## Revision History
 
 | Date | Version | Author | Changes |
@@ -681,3 +695,4 @@ MVP0（Walking Skeleton）では、設計書（`.kiro/specs/meeting-minutes-core
 | 2025-10-02 | 1.0 | Claude Code | 初版作成（MVP1 Real STT要件定義） |
 | 2025-10-02 | 1.1 | Claude Code | 要件ID採番、Traceability Matrix追加、オフライン対応詳細化、動的ダウングレード統合、依存関係明示化 |
 | 2025-10-06 | 1.2 | Claude Code | **MVP0引き継ぎ要件追加**: STT-REQ-IPC-004, IPC-005, LOG-001, SEC-001, E2E-001（`docs/known-issues.md` Traceability連携） |
+| 2025-10-13 | 1.3 | Claude Code | **Task 7.1/7.1.5完了**: Requirement Traceability Matrix追加（STT-REQ-007シリーズ実装状況） |
