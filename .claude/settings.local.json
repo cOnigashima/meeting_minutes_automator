@@ -42,7 +42,11 @@
       "Bash(mv:*)",
       "SlashCommand(/kiro:validate-design:*)",
       "Bash(.venv/bin/python:*)",
-      "Bash(.venv/bin/python -m pytest tests/test_audio_pipeline.py -v)"
+      "Bash(.venv/bin/python -m pytest tests/test_audio_pipeline.py -v)",
+      "Bash(rg:*)",
+      "SlashCommand(/kiro:validate-gap:*)",
+      "Bash(touch:*)",
+      "Bash(timeout 20 cargo test --test e2e_test)"
     ],
     "deny": [],
     "ask": []

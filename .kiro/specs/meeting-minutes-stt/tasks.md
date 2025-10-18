@@ -640,100 +640,137 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - **コンパイル成功**: P0修正後にwarningのみ（既存deprecation warning）
   - _Requirements: STT-REQ-008.1, STT-REQ-008.2, Principle 3（セキュリティ責任境界）（P0修正完了、完全実装）_
 
-- [ ] 9. UI拡張とユーザー設定機能（Rust/React）
+---
+
+## Task 9: UI拡張とユーザー設定機能（MVP1完成フェーズ）
+
+**期間**: 5-7日
+**優先度**: 🔴 P0 Critical（MVP1必須）
+**目的**: Phase 7/8で安定化した基盤の上にユーザー設定UIを実装し、MVP1完成状態にする
+
 - [ ] 9.1 音声デバイス選択UI
-  - 失敗するE2Eテストを作成（デバイス選択フロー）
-  - デバイス一覧表示コンポーネント
-  - デバイス選択ドロップダウン
-  - 選択デバイスの設定保存機能
-  - E2Eテストの緑化
-  - _Requirements: STT-REQ-001.3_
+  - 利用可能な音声入力デバイス一覧を取得して表示
+  - デバイス選択ドロップダウンコンポーネント（React）実装
+  - 選択されたデバイスIDの設定保存機能（Tauri Command経由）
+  - デバイスメタデータ（名前、サンプルレート、チャンネル数）の表示
+  - _Requirements: STT-REQ-001.2, STT-REQ-001.3_
 
 - [ ] 9.2 Whisperモデル選択UI
-  - 失敗するE2Eテストを作成（モデル選択フロー、警告表示）
-  - モデルサイズ選択ドロップダウン（tiny、base、small、medium、large-v3）
-  - 自動選択とカスタマイズのトグル
-  - リソース超過警告の表示
-  - E2Eテストの緑化
-  - _Requirements: STT-REQ-006.4_
+  - モデルサイズ選択ドロップダウン（tiny/base/small/medium/large-v3）実装
+  - 自動選択/カスタマイズトグルスイッチ
+  - 現在のシステムリソースに基づく推奨モデル表示
+  - リソース超過警告メッセージ表示（手動選択時）
+  - モデル選択の設定保存機能
+  - _Requirements: STT-REQ-006.4, STT-REQ-006.5_
 
-- [ ] 9.3 オフラインモード設定UI
-  - 失敗するE2Eテストを作成（オフラインモード設定フロー）
-  - オフラインモード強制のチェックボックス
-  - バンドルモデル使用状態の表示
-  - 設定保存機能
-  - E2Eテストの緑化
+- [ ] 9.3 オフラインモード設定UI（オプション、MVP1スコープ外候補）
+  - オフラインモード強制チェックボックス
+  - バンドルモデル使用状態の表示インジケーター
+  - HuggingFace Hub接続スキップの動作確認
   - _Requirements: STT-REQ-002.6_
 
-- [ ] 9.4 リソース監視とモデル切り替え通知UI
-  - 失敗するE2Eテストを作成（通知表示、ダイアログ操作）
-  - トースト通知コンポーネント
-  - モデル切り替え通知の表示（「モデル変更: {old}→{new}」）
-  - モデルアップグレード提案ダイアログ
-  - E2Eテストの緑化
-  - _Requirements: STT-REQ-006.9, STT-REQ-006.10_
+- [ ] 9.4 リソース監視通知UI（オプション、MVP1スコープ外候補）
+  - トースト通知コンポーネント（React）実装
+  - モデル切り替え通知「モデル変更: {old} → {new}」の表示
+  - システムリソース不足警告の表示
+  - 通知の自動消去タイマー（5秒）
+  - _Requirements: STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.10_
 
-- [ ] 9.5 セッション管理UI
-  - 失敗するE2Eテストを作成（セッション一覧、再生、削除フロー）
-  - セッション一覧表示コンポーネント
-  - セッション詳細表示（メタデータ、文字起こし結果）
-  - 音声再生機能
-  - セッション削除機能
-  - E2Eテストの緑化
+- [ ] 9.5 セッション管理UI（オプション、MVP1スコープ外候補）
+  - 過去のセッション一覧表示（日時降順ソート）
+  - セッション選択による詳細表示（メタデータ、文字起こし結果）
+  - 音声再生機能（audio.wav playback）
+  - セッション削除機能（確認ダイアログ付き）
   - _Requirements: STT-REQ-005.5, STT-REQ-005.6_
 
-- [ ] 9.6 実装とのギャップ検証
-  - /kiro:validate-gap meeting-minutes-stt を実行
-  - 検出されたギャップを記録し、修正タスクを作成
-  - _Requirements: 全要件（ギャップ検証）_
+---
 
+## Task 10: 統合テスト・E2Eテスト（コア機能検証）
 
-- [ ] 10. 統合とE2Eテスト
-- [ ] 10.1 音声録音→VAD→STT→保存の完全フロー統合テスト
-  - 失敗するE2Eテストを作成（全体フロー）
-  - RealAudioDevice→AudioStreamBridge→PythonSidecar→VAD→WhisperSTTEngine→LocalStorageServiceの統合
-  - 部分テキストと確定テキストの配信検証
-  - ローカルストレージへの保存検証
-  - E2Eテストの緑化
+**期間**: 2-3日
+**優先度**: 🔴 P0 Critical（Gap分析：Option B検証優先アプローチ）
+**目的**: Phase 1-6で実装済みのコア機能（音声録音→VAD→STT→保存）の統合動作を検証し、統合問題を早期発見する
+
+**実装状況**（2025-10-18更新）:
+- ⚠️ **Task 10はPending状態**（スケルトンのみ、実装未完了）
+- ✅ **E2Eテストスケルトン作成**（`src-tauri/tests/stt_e2e_test.rs`、175行）
+  - 7テストケース定義済み（すべて`#[ignore]`属性付き）
+  - 5/7のテストが`unimplemented!()`で即座にpanic
+  - 2/7のテストはコメントのみ（実装なし）
+- 🔴 **重大ブロッカー: Pythonサイドカーハンドシェイク問題**（P0）
+  - エラー: "Failed to parse ready message: EOF while parsing a value"
+  - 影響: Rust側E2Eテスト実行不可（tests/e2e_test.rs で2テスト失敗）
+  - **Option B違反**: 「E2Eテスト先行」の原則に反し、実際には検証されていない
+- ✅ **Python側統合テスト**（148 tests、4件失敗、143件合格）
+  - VAD→AudioPipeline→STT統合テスト: 4件合格
+  - ResourceMonitor統合テスト: 4件失敗（Task 11.6で修正予定）
+- ⚠️ **Rust側既存テスト**: 71件合格、2件失敗（Pythonサイドカー起動問題）
+
+**Phase 7終了基準未達**:
+- ❌ 統合問題の早期発見: 実現されていない（テスト未実行）
+- ❌ Rust側E2Eテスト: 0件実行（すべて`#[ignore]`または失敗）
+- ⚠️ Python側統合テスト: 部分的カバレッジのみ
+
+**Critical Blockers**:
+- **P0**: Pythonサイドカーハンドシェイク問題修正（Task 10実装の前提条件）
+- **P0**: MockAudioDataGenerator作成（CI環境での決定論的テスト実行用）
+- **P0**: 実行可能なテストヘルパー実装（fixture WAV + mock device）
+
+**Task 10は再オープンが必要**。現在の状態は「スケルトンのみ」であり、実装完了ではありません。
+
+- [ ] 10.1 音声録音→VAD→STT→保存の完全フロー検証（❌ 未実装、コメントのみ）
+  - 実音声デバイスからの録音開始から文字起こし結果の保存までのE2Eフロー実行
+  - 部分テキスト（isPartial=true）と確定テキスト（isPartial=false）の正しい配信を確認
+  - ローカルストレージへのセッション保存（audio.wav, transcription.jsonl, session.json）を検証
+  - WebSocket経由でChrome拡張へのメッセージ配信を確認
   - _Requirements: STT-REQ-001, STT-REQ-002, STT-REQ-003, STT-REQ-005_
 
-- [ ] 10.2 オフラインモデルフォールバックE2Eテスト
-  - ネットワーク切断シミュレーション
-  - バンドルbaseモデルへのフォールバック検証
-  - オフライン起動から文字起こし完了までのフロー検証
-  - _Requirements: STT-REQ-002.4, STT-REQ-002.5, STT-REQ-002.6_
+- [ ] 10.2 オフラインモデルフォールバックE2Eテスト（❌ 未実装、`unimplemented!()`）
+  - ネットワーク切断状態をシミュレーション（HuggingFace Hub接続タイムアウト）
+  - バンドルbaseモデルへの自動フォールバックを検証
+  - オフラインモード強制設定時のローカルモデル使用を確認
+  - _Note: Python側でtest_offline_model_fallback実装済み（Task 3.3）、Rust側E2E未実装_
+  - _Requirements: STT-REQ-002.4, STT-REQ-002.6_
 
-- [ ] 10.3 動的モデルダウングレードE2Eテスト
-  - CPU/メモリ負荷シミュレーション
-  - リアルタイムモデルダウングレード検証
-  - 音声セグメント境界でのシームレス切り替え検証
-  - UI通知の表示確認
+- [ ] 10.3 動的モデルダウングレードE2Eテスト（❌ 未実装、`unimplemented!()`）
+  - CPU使用率85%を60秒継続するシミュレーション
+  - メモリ使用量3GB/4GB到達時のモデル自動ダウングレードを検証
+  - UIトースト通知「モデル変更: {old} → {new}」の表示確認
+  - モデル切り替え履歴ログの記録確認
+  - _Note: Python側test_model_downgrade_on_high_cpu/memory失敗中（Task 11.6で修正）、Rust側E2E未実装_
   - _Requirements: STT-REQ-006.6, STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9_
 
-- [ ] 10.4 デバイス切断/再接続E2Eテスト
-  - デバイス切断シミュレーション
-  - 自動再接続フロー検証（最大3回）
-  - ユーザー通知の表示確認
+- [ ] 10.4 デバイス切断/再接続E2Eテスト（❌ 未実装、`unimplemented!()`）
+  - 音声デバイス切断イベントをシミュレーション
+  - 5秒後の自動再接続試行（最大3回）を検証
+  - ユーザー通知「音声デバイスが切断されました」の表示確認
+  - 再接続失敗時の最終エラーハンドリングを確認
+  - _Note: Task 2.5で検出機能実装済み、E2Eテスト未実装_
   - _Requirements: STT-REQ-004.9, STT-REQ-004.10, STT-REQ-004.11_
 
-- [ ] 10.5 クロスプラットフォームE2Eテスト
-  - macOS、Windows、Linux各環境での音声録音検証
-  - ループバックオーディオキャプチャ検証
-  - OS固有API統合の動作確認
-  - _Requirements: STT-REQ-004.3, STT-REQ-004.4, STT-REQ-004.5, STT-REQ-004.6, STT-REQ-004.7, STT-REQ-004.8_
+- [ ] 10.5 クロスプラットフォームE2Eテスト（❌ 未実装、`unimplemented!()`）
+  - macOS/Windows/Linuxの各環境で音声デバイス列挙を実行
+  - 各OS固有のループバックオーディオキャプチャ（BlackHole/WASAPI/PulseAudio）を検証
+  - 全環境で録音→STT→保存の基本フロー動作確認
+  - _Note: Task 2.4でループバックデバイス認識実装済み、E2Eテスト未実装_
+  - _Requirements: STT-REQ-004.3, STT-REQ-004.4, STT-REQ-004.5, STT-NFR-003.1_
 
-- [ ] 10.6 IPC/WebSocket後方互換性E2Eテスト
-  - meeting-minutes-core（Fake実装）との互換性検証
-  - 拡張フィールド追加後の動作確認
-  - Chrome拡張での表示確認
-  - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.3, STT-REQ-008.1, STT-REQ-E2E-001_
+- [ ] 10.6 IPC/WebSocket後方互換性テスト（❌ 未実装、コメントのみ）
+  - Phase 6で拡張したIPCフィールド（confidence/language/processingTimeMs/modelSize）の送受信検証
+  - WebSocket拡張フィールド（isPartial/confidence/language/speakerSegment/processingTimeMs）の配信確認
+  - meeting-minutes-core（Fake実装）との互換性確認（拡張フィールド無視）
+  - バージョン不一致時のフォールバック動作（マイナーバージョン=警告、メジャーバージョン=エラー）を検証
+  - _Note: tests/ipc_migration_test.rs (26 tests)、tests/websocket_message_extension_test.rs (6 tests)で**ユニットテスト**カバー済み、E2E統合テスト未実装_
+  - _Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.3, STT-REQ-007.6, STT-REQ-008.1, STT-REQ-008.2_
 
-- [ ] 10.7 非機能要件検証テスト
-  - Reliability検証（自動再起動、異常終了対応、エラー回復）
-  - Compatibility検証（OS別動作確認、依存関係バージョン検証）
-  - Security検証（TLS通信、ハッシュ検証、アクセス許可）
-  - 統合テストの緑化
-  - _Requirements: STT-NFR-002, STT-NFR-003, STT-NFR-004_
+- [ ] 10.7 非機能要件検証（SLA、パフォーマンス、リソース制約）（❌ 未実装、`unimplemented!()`）
+  - 部分テキスト応答時間 < 0.5秒を測定（VAD発話検出から部分テキスト配信まで）
+  - 確定テキスト応答時間 < 2秒を測定（VAD発話終了検出から確定テキスト配信まで）
+  - 2時間連続録音時のメモリ使用量 < 2GBを検証
+  - 継続録音時のCPU使用率 < 50%を測定
+  - faster-whisper推論時間の目標達成確認（tiny/base: <0.2s, small: <0.5s, medium: <1s, large: <2s）
+  - _Note: Task 11.1-11.3と重複、統合実装予定_
+  - _Requirements: STT-NFR-001.1, STT-NFR-001.2, STT-NFR-001.4_
 
 - [ ] 11. パフォーマンス最適化と非機能要件検証
 - [ ] 11.1 レイテンシ最適化
