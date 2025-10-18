@@ -46,7 +46,10 @@
       "Bash(rg:*)",
       "SlashCommand(/kiro:validate-gap:*)",
       "Bash(touch:*)",
-      "Bash(timeout 20 cargo test --test e2e_test)"
+      "Bash(timeout 20 cargo test --test e2e_test)",
+      "Bash(APP_PYTHON=../python-stt/.venv/bin/python cargo test test_python_sidecar_start -- --nocapture)",
+      "Bash(export:*)",
+      "Bash(../../../python-stt/.venv/bin/python generate_test_audio.py)"
     ],
     "deny": [],
     "ask": []

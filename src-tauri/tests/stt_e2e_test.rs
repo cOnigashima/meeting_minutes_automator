@@ -10,15 +10,18 @@
 //
 // Implementation Status:
 // - Task 10.1-10.7: Test skeletons created with #[ignore] attribute
-// - Tests require real audio device or mock audio file playback
+// - ✅ BLOCK-006 resolved: Test audio fixtures created (test_audio_short/long/silence.wav)
 // - Tests require Whisper model (base or tiny for CI)
 // - Tests require Python sidecar integration (known issue in e2e_test.rs)
 //
 // Next Steps:
-// 1. Fix Python sidecar startup issue (Task 5.4 follow-up)
-// 2. Create mock audio data generator for CI
-// 3. Implement test helpers (verify_partial_final_text_distribution, etc.)
+// 1. ✅ Fix Python sidecar startup issue (BLOCK-005 resolved)
+// 2. ✅ Create mock audio data generator for CI (BLOCK-006 resolved)
+// 3. Implement test helpers (verify_partial_final_text_distribution, etc.) - BLOCK-007
 // 4. Remove #[ignore] attributes and enable tests in CI
+
+// BLOCK-006: Test audio fixtures
+mod fixtures;
 
 /// Task 10.1: 音声録音→VAD→STT→保存の完全フロー検証
 ///

@@ -24,7 +24,7 @@
     }
   },
   "ready_for_implementation": false,
-  "notes": "Tasks status (2025-10-18更新): Phase 1-8完了済み（71 Rust tests合格、143 Python tests合格）。Task 9（UI拡張）・Task 10（E2Eテスト）追加済みだが、Task 10は未実装（スケルトンのみ）。BLOCK-005（Pythonサイドカーハンドシェイク問題）により、Rust側E2Eテスト実行不可。Option B（検証優先）未達成：E2Eテスト0件実行。ready_for_implementation=falseに変更（P0ブロッカー解決まで実装準備未完了）。",
+  "notes": "Tasks status (2025-10-18更新): Phase 1-8完了済み（Rust: 71合格/2失敗、Python: 143合格/4失敗）。Task 9（UI拡張）・Task 10（E2Eテスト）追加済みだが、Task 10は未実装（スケルトンのみ）。P0ブロッカー3件: BLOCK-005（Pythonサイドカーハンドシェイク）、BLOCK-006（MockAudioDataGenerator）、BLOCK-007（実行可能なテストヘルパー）。Option B（検証優先）未達成：E2Eテスト0件実行。ready_for_implementation=falseに変更（P0ブロッカー解決まで実装準備未完了）。",
   "blockers": [
     {
       "id": "BLOCK-001",
@@ -207,6 +207,103 @@
       },
       "priority": "P0",
       "impact": "Task 10（E2Eテスト）実装の前提条件。未解決の場合、Rust側E2Eテストが実行不可能で、Option B（検証優先）アプローチが実現できない。"
+    },
+    {
+      "id": "BLOCK-006",
+      "description": "MockAudioDataGenerator作成（CI環境での決定論的テスト実行用）",
+      "blocking_phase": "implementation",
+      "resolution_required": "テスト用音声データ生成ツールの実装、CI環境でのE2Eテスト実行基盤確立",
+      "reference": "src-tauri/tests/stt_e2e_test.rs, tasks.md Task 10実装状況",
+      "status": "open",
+      "created_at": "2025-10-18",
+      "resolution_actions": {
+        "design_mock_audio_generator": {
+          "description": "MockAudioDataGeneratorの設計",
+          "requirements": [
+            "16kHz mono 16bit PCM形式の音声データ生成",
+            "決定論的なテストデータ（同じ入力で同じ出力）",
+            "VAD検出可能な音声パターン（0.3秒以上の音声 + 0.5秒以上の無音）",
+            "faster-whisper推論可能な形式（numpy array互換）"
+          ]
+        },
+        "implementation_options": {
+          "option_a_sine_wave": {
+            "description": "正弦波ベースのダミー音声生成",
+            "pros": "実装が簡単、依存関係なし",
+            "cons": "faster-whisperが認識できない可能性"
+          },
+          "option_b_fixture_wav": {
+            "description": "テスト用WAVファイルをリソースとして埋め込み",
+            "pros": "実際の音声データを使用、faster-whisper認識確実",
+            "cons": "リポジトリサイズ増加、著作権考慮必要"
+          },
+          "option_c_tts_generation": {
+            "description": "TTS（Text-to-Speech）でテスト音声生成",
+            "pros": "多様なテストケース生成可能",
+            "cons": "追加依存関係、CI環境での実行時間増加"
+          }
+        },
+        "implementation": {
+          "owner": "未定",
+          "estimated_days": 1,
+          "deliverables": [
+            "src-tauri/tests/fixtures/mock_audio_generator.rs または python-stt/tests/fixtures/audio_generator.py",
+            "テスト用WAVファイル（Option B採用時、tests/fixtures/test_audio.wav）",
+            "使用例ドキュメント（tests/stt_e2e_test.rsでの使用方法）"
+          ]
+        }
+      },
+      "priority": "P0",
+      "impact": "Task 10（E2Eテスト）のCI環境での実行を可能にする。未解決の場合、E2Eテストは手動実行のみとなり、自動リグレッション検出ができない。"
+    },
+    {
+      "id": "BLOCK-007",
+      "description": "実行可能なテストヘルパー実装（fixture WAV + mock device統合）",
+      "blocking_phase": "implementation",
+      "resolution_required": "stt_e2e_test.rsの7テストケースを実行可能な状態にする実装",
+      "reference": "src-tauri/tests/stt_e2e_test.rs L48-152, tasks.md Task 10実装状況",
+      "status": "open",
+      "created_at": "2025-10-18",
+      "resolution_actions": {
+        "replace_unimplemented": {
+          "description": "unimplemented!()を実際のテストコードに置き換え",
+          "affected_tests": [
+            "test_offline_model_fallback (L77)",
+            "test_dynamic_model_downgrade (L93)",
+            "test_device_disconnection_reconnection (L108)",
+            "test_cross_platform_compatibility (L123)",
+            "test_non_functional_requirements (L167)"
+          ]
+        },
+        "implement_helpers": {
+          "description": "テストヘルパー関数の実装",
+          "helpers": [
+            "verify_partial_final_text_distribution() - isPartialフラグ検証",
+            "verify_local_storage_session(session_id) - audio.wav/transcription.jsonl/session.json検証",
+            "measure_partial_text_latency() - 部分テキスト応答時間測定（<0.5s）",
+            "measure_final_text_latency() - 確定テキスト応答時間測定（<2s）",
+            "monitor_memory_usage_long_running() - 2時間メモリ監視（<2GB）",
+            "monitor_cpu_usage_during_recording() - CPU使用率監視（<50%）"
+          ]
+        },
+        "integration_with_sidecar": {
+          "description": "tests/sidecar_full_duplex_e2e.rsの既存インフラ活用",
+          "approach": "sidecar_full_duplex_e2e.rsで使用されているPythonサイドカー起動ロジックを再利用し、MockAudioDataGeneratorと統合",
+          "dependency": "BLOCK-005（Pythonサイドカーハンドシェイク）解決が前提"
+        },
+        "implementation": {
+          "owner": "未定",
+          "estimated_days": 2,
+          "deliverables": [
+            "test_audio_recording_to_transcription_full_flow: 実装完了、#[ignore]削除",
+            "test_offline_model_fallback: 実装完了、#[ignore]削除",
+            "test_ipc_websocket_backward_compatibility: 実装完了、#[ignore]削除",
+            "他4テストは#[ignore]維持（特殊ハードウェア要求のため）"
+          ]
+        }
+      },
+      "priority": "P0",
+      "impact": "Task 10（E2Eテスト）の実行可能な状態への移行。未解決の場合、すべてのE2Eテストが#[ignore]のままで、統合問題の早期発見（Option B）が実現できない。"
     }
   ]
 }

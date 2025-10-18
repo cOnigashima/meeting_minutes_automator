@@ -1,0 +1,7 @@
+# Cargo configuration for meeting-minutes-automator
+# BLOCK-005 Fix: Set APP_PYTHON to use python-stt/.venv for E2E tests
+
+[env]
+# Python executable for E2E tests (BLOCK-005 resolution)
+# Uses python-stt/.venv/bin/python instead of system python
+APP_PYTHON = { value = "../python-stt/.venv/bin/python", relative = true }
