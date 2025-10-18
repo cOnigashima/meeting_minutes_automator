@@ -14,6 +14,7 @@ import logging
 import psutil
 import asyncio
 import time
+import os
 from typing import Dict, Any, Optional, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ class ResourceMonitor:
         self.monitoring_task = None
         self.monitoring_running = False
         self.monitoring_cycle_count = 0
+
+        # Process handle for app-specific memory tracking
+        self.process = psutil.Process(os.getpid())
 
         logger.info("ResourceMonitor initialized")
 
@@ -145,14 +149,14 @@ class ResourceMonitor:
 
     def get_current_memory_usage(self) -> float:
         """
-        Get current memory usage in GB (STT-REQ-006.6)
+        Get current application memory usage in GB (STT-REQ-006.6)
 
         Returns:
-            Current memory usage in GB
+            Current application memory usage in GB (RSS - Resident Set Size)
         """
-        memory_info = psutil.virtual_memory()
-        used_memory_gb = memory_info.used / (1024 ** 3)
-        return used_memory_gb
+        memory_info = self.process.memory_info()
+        app_memory_gb = memory_info.rss / (1024 ** 3)
+        return app_memory_gb
 
     def get_current_cpu_usage(self) -> float:
         """
@@ -188,19 +192,27 @@ class ResourceMonitor:
         Check if memory-based downgrade is needed (STT-REQ-006.8)
 
         Args:
-            memory_gb: Current memory usage in GB (absolute amount)
+            memory_gb: Current application memory usage in GB (not system-wide)
 
         Returns:
             Tuple of (should_downgrade, target_model)
             - should_downgrade: True if downgrade is needed
             - target_model: 'base' for immediate downgrade, or None for gradual
+
+        Note: Thresholds are for application memory usage (RSS), not system-wide.
+              Whisper models typically use:
+              - tiny: ~100MB, base: ~200MB, small: ~500MB, medium: ~1.5GB, large-v3: ~3GB
         """
-        # Memory >= 4GB: immediate downgrade to base (STT-REQ-006.8)
-        if memory_gb >= 4.0:
+        # App memory >= 2.0GB: immediate downgrade to base (critical threshold)
+        # This indicates the model itself is consuming excessive memory
+        if memory_gb >= 2.0:
+            logger.warning(f"Application memory critically high: {memory_gb:.2f}GB (>= 2.0GB)")
             return (True, 'base')
 
-        # Memory >= 3GB: gradual downgrade (1 step)
-        if memory_gb >= 3.0:
+        # App memory >= 1.5GB: gradual downgrade (1 step)
+        # Prevents reaching critical threshold
+        if memory_gb >= 1.5:
+            logger.warning(f"Application memory high: {memory_gb:.2f}GB (>= 1.5GB)")
             return (True, None)  # Gradual downgrade (1 step)
 
         return (False, None)
@@ -371,11 +383,11 @@ class ResourceMonitor:
 
         Conditions:
         - Current model is 'tiny' AND resources still insufficient
-        - Memory usage >= 4GB OR CPU >= 85%
+        - App memory usage >= 2.0GB OR CPU >= 85%
 
         Args:
             current_model: Current model name
-            memory_gb: Current memory usage in GB (absolute amount)
+            memory_gb: Current application memory usage in GB (not system-wide)
             cpu_percent: Current CPU usage percentage (0-100)
 
         Returns:
@@ -386,12 +398,14 @@ class ResourceMonitor:
             return False
 
         # Check if resources are still insufficient
-        # Memory usage >= 4GB (critical threshold, STT-REQ-006.8)
-        if memory_gb >= 4.0:
+        # App memory usage >= 2.0GB (critical threshold for application)
+        if memory_gb >= 2.0:
+            logger.error(f"Tiny model still uses {memory_gb:.2f}GB (>= 2.0GB), pausing recording")
             return True
 
         # CPU >= 85% (downgrade threshold)
         if cpu_percent >= 85:
+            logger.error(f"CPU still at {cpu_percent:.1f}% (>= 85%) with tiny model, pausing recording")
             return True
 
         return False
@@ -465,13 +479,17 @@ class ResourceMonitor:
         """
         # Get current resource usage
         cpu_percent = self.get_current_cpu_usage()
-        memory_info = psutil.virtual_memory()
-        memory_percent = memory_info.percent
-        memory_gb = memory_info.used / (1024**3)  # Convert bytes to GB
+        app_memory_gb = self.get_current_memory_usage()  # Application memory (RSS)
+
+        # System memory for informational logging
+        system_memory = psutil.virtual_memory()
+        system_memory_percent = system_memory.percent
 
         # Log current status (STT-NFR-005.4)
         logger.debug(
-            f"Resource monitoring: CPU={cpu_percent:.1f}%, Memory={memory_percent:.1f}% ({memory_gb:.2f}GB), "
+            f"Resource monitoring: CPU={cpu_percent:.1f}%, "
+            f"App Memory={app_memory_gb:.2f}GB, "
+            f"System Memory={system_memory_percent:.1f}%, "
             f"Model={self.current_model}"
         )
 
@@ -488,7 +506,8 @@ class ResourceMonitor:
             self.cpu_high_start_time = None
 
         # Track low resource duration for upgrade proposal (STT-REQ-006.10)
-        if memory_percent < 60 and cpu_percent < 50:  # Resource recovery conditions
+        # Use app memory < 500MB (not system-wide) as low resource indicator
+        if app_memory_gb < 0.5 and cpu_percent < 50:  # Resource recovery conditions
             if self.low_resource_start_time is None:
                 self.low_resource_start_time = current_time
                 logger.debug("Low resource period started")
@@ -499,14 +518,14 @@ class ResourceMonitor:
             self.low_resource_start_time = None
 
         # Check for memory-based downgrade trigger (STT-REQ-006.8)
-        should_downgrade_mem, target_model = self.should_downgrade_memory(memory_gb)
+        should_downgrade_mem, target_model = self.should_downgrade_memory(app_memory_gb)
         if should_downgrade_mem:
             # Skip downgrade if already at tiny model (cannot downgrade further)
             if self.current_model == 'tiny':
                 logger.debug("Already at tiny model, cannot downgrade further for memory")
             elif target_model == 'base':
-                # Immediate downgrade to base (memory >= 4GB)
-                logger.error(f"Critical memory usage {memory_gb:.2f}GB (>= 4GB), forcing downgrade to base")
+                # Immediate downgrade to base (app memory >= 2.0GB)
+                logger.error(f"Critical app memory usage {app_memory_gb:.2f}GB (>= 2.0GB), forcing downgrade to base")
                 old_model = self.current_model
                 # Don't update current_model here - let callback handle it after success
                 if old_model == 'base':
@@ -517,8 +536,8 @@ class ResourceMonitor:
                     # Reset CPU timer as we just downgraded
                     self.cpu_high_start_time = None
             else:
-                # Gradual downgrade (memory >= 3GB)
-                logger.warning(f"High memory usage {memory_gb:.2f}GB (>= 3GB), triggering gradual downgrade")
+                # Gradual downgrade (app memory >= 1.5GB)
+                logger.warning(f"High app memory usage {app_memory_gb:.2f}GB (>= 1.5GB), triggering gradual downgrade")
                 old_model = self.current_model
                 new_model = self.get_downgrade_target(old_model)
                 # Don't update current_model here - let callback handle it after success
@@ -569,7 +588,7 @@ class ResourceMonitor:
 
         # Check for recording pause (STT-REQ-006.11)
         if self.current_model == 'tiny':
-            if self.should_pause_recording('tiny', memory_gb, cpu_percent):
+            if self.should_pause_recording('tiny', app_memory_gb, cpu_percent):
                 logger.error("Tiny model insufficient, pausing recording")
                 if on_pause_recording:
                     await on_pause_recording()

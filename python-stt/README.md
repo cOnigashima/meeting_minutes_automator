@@ -10,6 +10,8 @@ Pythonサイドカープロセスで音声認識（STT）処理を担当しま�
 cd python-stt
 python3 -m venv .venv
 ```
+> プロジェクト全体の設定（`.cargo/config.toml`など）が `.venv` を前提にしています。  
+> `venv` など別名のディレクトリを作るとRustテストが失敗するので注意。
 
 ### 2. 仮想環境の有効化
 

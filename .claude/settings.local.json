@@ -49,7 +49,11 @@
       "Bash(timeout 20 cargo test --test e2e_test)",
       "Bash(APP_PYTHON=../python-stt/.venv/bin/python cargo test test_python_sidecar_start -- --nocapture)",
       "Bash(export:*)",
-      "Bash(../../../python-stt/.venv/bin/python generate_test_audio.py)"
+      "Bash(../../../python-stt/.venv/bin/python generate_test_audio.py)",
+      "Bash(timeout 30 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture --ignored)",
+      "Bash(timeout 120 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture --ignored)",
+      "Read(//Users/tonishi/.cache/huggingface/hub/models--Systran--faster-whisper-small/**)",
+      "mcp__serena__find_referencing_symbols"
     ],
     "deny": [],
     "ask": []

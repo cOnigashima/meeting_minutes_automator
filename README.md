@@ -89,6 +89,17 @@ python3 --version
 ls python-stt/main.py
 ```
 
+4. **Python仮想環境（必ず `.venv` を使用）**
+```bash
+cd python-stt
+python3 -m venv .venv
+source .venv/bin/activate  # Windowsは .venv\Scripts\activate
+pip install -r requirements-dev.txt
+cd ..
+```
+> Rust側の `.cargo/config.toml` は `python-stt/.venv/bin/python` を指しています。  
+> フォルダ名を `venv` などに変えるとテストが失敗するので、必ず `.venv` を使ってください。
+
 ### 開発モードでの起動
 
 ```bash

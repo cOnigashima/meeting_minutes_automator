@@ -646,7 +646,28 @@ async def main():
         # Initialize IPC handler with message callback
         processor.ipc = IpcHandler(message_handler=processor.handle_message)
 
-        # Send ready signal to Rust backend
+        # CRITICAL: Initialize WhisperSTTEngine before sending ready signal
+        # Without this, transcribe() will raise "WhisperSTTEngine not initialized"
+        # Decision: Fail fast on initialization errors (no graceful degradation)
+        logger.info("Initializing WhisperSTTEngine (may take a few seconds)...")
+        try:
+            await processor.stt_engine.initialize()
+            logger.info(f"WhisperSTTEngine initialized with model: {processor.stt_engine.model_size}")
+
+            # Sync ResourceMonitor.current_model after initialization
+            # (model_size may have changed due to bundled fallback)
+            # IMPORTANT: Keep initial_model unchanged - it represents the resource-based
+            # recommendation and serves as the upgrade ceiling (STT-REQ-006.10/006.12)
+            processor.resource_monitor.current_model = processor.stt_engine.model_size
+            logger.info(f"ResourceMonitor.current_model synced to: {processor.stt_engine.model_size}")
+            logger.info(f"ResourceMonitor.initial_model (upgrade ceiling): {processor.resource_monitor.initial_model}")
+        except Exception as e:
+            logger.error(f"Failed to initialize WhisperSTTEngine: {e}", exc_info=True)
+            logger.error("Cannot start sidecar without STT engine. Aborting.")
+            # Do NOT send ready signal - let Rust side detect failure
+            sys.exit(1)
+
+        # Send ready signal to Rust backend (only after successful initialization)
         await processor.ipc.send_message({
             'type': 'ready',
             'message': 'Python sidecar ready (MVP1 Real STT)'

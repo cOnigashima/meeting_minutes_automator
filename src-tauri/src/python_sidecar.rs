@@ -187,7 +187,17 @@ impl PythonSidecarManager {
                 }
                 // If validation failed, fall through to other detection methods
             } else {
-                // If it's a command name, try to find it with which
+                // Option C: Try to resolve as relative path first (from current working directory)
+                if let Ok(cwd) = std::env::current_dir() {
+                    let relative_path = cwd.join(&configured_path);
+                    if relative_path.exists() {
+                        if Self::validate_python(&relative_path, &supported_versions).await? {
+                            return Ok(relative_path);
+                        }
+                    }
+                }
+
+                // If relative path resolution failed, try to find it with which
                 match which::which(&configured_path) {
                     Ok(resolved_path) => {
                         if Self::validate_python(&resolved_path, &supported_versions).await? {
@@ -407,24 +417,36 @@ impl PythonSidecarManager {
             .as_mut()
             .ok_or_else(|| PythonSidecarError::ProcessNotRunning)?;
 
-        let mut line = String::new();
-        stdout
-            .read_line(&mut line)
-            .await
-            .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
+        // Read lines until we find 'ready' message
+        // Skip intermediate events like 'whisper_model_ready'
+        loop {
+            let mut line = String::new();
+            let bytes_read = stdout
+                .read_line(&mut line)
+                .await
+                .map_err(|e| PythonSidecarError::CommunicationFailed(e.to_string()))?;
 
-        let msg: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
-            PythonSidecarError::CommunicationFailed(format!("Failed to parse ready message: {}", e))
-        })?;
+            if bytes_read == 0 {
+                return Err(PythonSidecarError::CommunicationFailed(
+                    "Unexpected EOF while waiting for ready signal".to_string(),
+                ));
+            }
 
-        if msg.get("type").and_then(|v| v.as_str()) != Some("ready") {
-            return Err(PythonSidecarError::CommunicationFailed(format!(
-                "Expected 'ready' message, got: {:?}",
-                msg
-            )));
+            let msg: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
+                PythonSidecarError::CommunicationFailed(format!(
+                    "Failed to parse message: {} (line: {})",
+                    e, line
+                ))
+            })?;
+
+            // Check if this is the 'ready' message
+            if msg.get("type").and_then(|v| v.as_str()) == Some("ready") {
+                return Ok(());
+            }
+
+            // Skip other messages (e.g., whisper_model_ready event)
+            // Continue reading until we find 'ready'
         }
-
-        Ok(())
     }
 
     /// Send a JSON message to Python sidecar via stdin

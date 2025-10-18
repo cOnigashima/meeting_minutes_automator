@@ -292,17 +292,18 @@ class WhisperSTTEngine:
 
     def _detect_model_path(self) -> str:
         """
-        Detect model path following priority order (STT-REQ-002.1):
+        Detect model path following priority order (STT-REQ-002.1, STT-REQ-002.4, STT-REQ-002.6):
         1. User-specified path (~/.config/meeting-minutes-automator/whisper_model_path)
         2. HuggingFace Hub cache (~/.cache/huggingface/hub/models--Systran--faster-whisper-*)
-        3. Try HuggingFace Hub download (if not offline mode)
-        4. Bundled model ([app_resources]/models/faster-whisper/base)
+        3. Bundled model (multiple installation paths checked)
+        4. Try HuggingFace Hub download (if not offline mode)
+        5. HuggingFace Hub model ID (automatic download, online mode only)
 
         Returns:
             str: Detected model path
 
         Raises:
-            FileNotFoundError: If no model path is found
+            FileNotFoundError: If no model path is found (offline mode with no cache/bundle)
         """
         # Priority 1: User-specified path
         user_config_path = Path.home() / ".config" / "meeting-minutes-automator" / "whisper_model_path"
@@ -316,24 +317,77 @@ class WhisperSTTEngine:
         # Priority 2: HuggingFace Hub cache
         hf_cache_base = Path.home() / ".cache" / "huggingface" / "hub"
         model_name_in_cache = f"models--Systran--faster-whisper-{self.model_size}"
-        hf_model_path = hf_cache_base / model_name_in_cache
+        hf_model_dir = hf_cache_base / model_name_in_cache
 
-        if hf_model_path.exists():
-            logger.info(f"Using HuggingFace cache model: {hf_model_path}")
-            return str(hf_model_path)
+        if hf_model_dir.exists():
+            # HuggingFace cache uses snapshots/<hash>/ structure
+            # Find the latest snapshot
+            snapshots_dir = hf_model_dir / "snapshots"
+            if snapshots_dir.exists():
+                snapshots = list(snapshots_dir.iterdir())
+                if snapshots:
+                    # Use the first (and typically only) snapshot
+                    snapshot_path = snapshots[0]
+                    logger.info(f"Using HuggingFace cache model: {snapshot_path}")
+                    return str(snapshot_path)
 
-        # Priority 3: Try HuggingFace Hub download (unless offline mode)
+            # Fallback: use the model directory directly (older cache format)
+            logger.info(f"Using HuggingFace cache model: {hf_model_dir}")
+            return str(hf_model_dir)
+
+        # Priority 3: Bundled model (STT-REQ-002.4/002.6)
+        # Check for bundled model in application resources
+        # MVP1: Check common installation paths
+        bundled_base_dirs = [
+            Path(__file__).parent.parent.parent / "models" / "faster-whisper",
+            Path.home() / ".local" / "share" / "meeting-minutes-automator" / "models" / "faster-whisper",
+            Path("/opt/meeting-minutes-automator/models/faster-whisper"),
+        ]
+
+        # First, try the requested model size
+        for base_dir in bundled_base_dirs:
+            bundled_path = base_dir / self.model_size
+            if bundled_path.exists() and (bundled_path / "model.bin").exists():
+                logger.info(f"Using bundled model: {bundled_path}")
+                return str(bundled_path)
+
+        # STT-REQ-002.4/002.6: If requested size not found, fallback to bundled 'base' model
+        # Typical scenario: installer bundles only 'base' (lightweight), but user's system
+        # resources recommend 'small' or higher
+        if self.model_size != 'base':
+            logger.warning(f"Requested model '{self.model_size}' not found in bundle, falling back to 'base'")
+            for base_dir in bundled_base_dirs:
+                bundled_base_path = base_dir / "base"
+                if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
+                    logger.info(f"Using bundled fallback model: {bundled_base_path}")
+                    # Update model_size to reflect actual model being loaded
+                    self.model_size = "base"
+                    return str(bundled_base_path)
+
+        # Priority 4: Try HuggingFace Hub download (unless offline mode)
         if not self.offline_mode:
             downloaded_path = self._try_download_from_hub(self.model_size)
             if downloaded_path:
                 logger.info(f"Using downloaded model: {downloaded_path}")
                 return downloaded_path
 
-        # Priority 4: Bundled model (fallback to base model)
-        bundled_path = f"[app_resources]/models/faster-whisper/base"
-        logger.info(f"オフラインモードで起動: バンドルbaseモデル使用")
-        logger.info(f"Falling back to bundled model: {bundled_path}")
-        return bundled_path
+            # Priority 5: HuggingFace Hub model ID (automatic download fallback)
+            # Only in online mode - faster-whisper will auto-download if not cached
+            model_id = f"Systran/faster-whisper-{self.model_size}"
+            logger.info(f"No cached model found, using HuggingFace Hub: {model_id}")
+            logger.info(f"Model will be automatically downloaded on first use")
+            return model_id
+
+        # Offline mode: No model available after all fallbacks
+        # STT-REQ-002.4/002.6: Bundled model paths checked but not found
+        raise FileNotFoundError(
+            f"No Whisper model found for '{self.model_size}' in offline mode. "
+            f"Checked locations:\n"
+            f"  - User config: {user_config_path}\n"
+            f"  - HuggingFace cache: {hf_cache_base / model_name_in_cache}\n"
+            f"  - Bundled base dirs: {', '.join(str(d) for d in bundled_base_dirs)}\n"
+            f"Please download the model manually or run in online mode."
+        )
 
     async def initialize(self) -> None:
         """
@@ -351,14 +405,20 @@ class WhisperSTTEngine:
             Exception: If model loading fails even with bundled model
         """
         try:
-            # Detect model path with network error handling
+            # Detect model path with error handling
             try:
                 self.model_path = self._detect_model_path()
+            except FileNotFoundError as e:
+                # Offline mode with no cached model - cannot proceed
+                logger.error(f"Model detection failed: {e}")
+                raise  # Re-raise to abort initialization
             except (TimeoutError, ConnectionError, OSError) as network_error:
-                # Network error occurred, fallback to bundled model (STT-REQ-002.4)
+                # Network error during download attempt
+                # This should not happen if _detect_model_path() works correctly,
+                # but keep as safety fallback
                 logger.warning(f"Network error during model detection: {network_error}")
-                logger.info("オフラインモードで起動: バンドルbaseモデル使用")
-                self.model_path = "[app_resources]/models/faster-whisper/base"
+                logger.info("Attempting fallback to HuggingFace Hub model ID: Systran/faster-whisper-base")
+                self.model_path = "Systran/faster-whisper-base"
 
             logger.info(f"Detected model path: {self.model_path}")
 
@@ -422,11 +482,15 @@ class WhisperSTTEngine:
             # Re-detect model path for new size
             try:
                 self.model_path = self._detect_model_path()
+            except FileNotFoundError as e:
+                # Offline mode with no cached model - rollback
+                logger.error(f"Model detection failed: {e}")
+                raise  # Will trigger rollback in outer except block
             except (TimeoutError, ConnectionError, OSError) as network_error:
-                # Fallback to bundled model if network error
+                # Network error during download attempt
                 logger.warning(f"Network error during model detection: {network_error}")
-                logger.info(f"オフラインモードで起動: バンドル{new_model_size}モデル使用")
-                self.model_path = f"[app_resources]/models/faster-whisper/{new_model_size}"
+                logger.info(f"Attempting fallback to HuggingFace Hub model ID: Systran/faster-whisper-{new_model_size}")
+                self.model_path = f"Systran/faster-whisper-{new_model_size}"
 
             logger.info(f"Loading new model: {new_model_size} from {self.model_path}")
 
