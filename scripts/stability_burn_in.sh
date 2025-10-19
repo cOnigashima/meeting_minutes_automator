@@ -93,6 +93,14 @@ fi
     echo "Python via APP_PYTHON: ${APP_PYTHON}"
   fi
   echo "Log file: ${LOG_FILE}"
+  echo "Session directory: ${SESSION_DIR}"
+  echo ""
+  echo "Suggested parallel commands:"
+  echo "  npm run tauri dev | tee ${SESSION_DIR}/tauri-dev.log"
+  echo "  # macOS/Linux snapshot every 30 min"
+  echo "  ps -o pid,%cpu,%mem,etime -p \$(pgrep -f tauri) | tee -a ${SESSION_DIR}/snapshot-notes.txt"
+  echo "  # Windows snapshot (PowerShell)"
+  echo "  Get-Process Meeting* | Select-Object Id,CPU,PM,StartTime >> ${SESSION_DIR//\//\\}/snapshot-notes.txt"
 } | tee "${SUMMARY_FILE}"
 
 CARGO_MANIFEST="${PROJECT_ROOT}/src-tauri/Cargo.toml"

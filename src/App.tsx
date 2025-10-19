@@ -51,9 +51,9 @@ function App() {
     }
 
     try {
-      // Task 9.1: Use snake_case for Tauri command parameters (Rust convention)
+      // Task 9.1: Tauri (v2) expects camelCase keys when bridging to Rust parameters
       const result = await invoke<string>("start_recording", {
-        device_id: selectedDeviceId,
+        deviceId: selectedDeviceId,
       });
       setStatusMsg(result);
       setIsRecording(true);
