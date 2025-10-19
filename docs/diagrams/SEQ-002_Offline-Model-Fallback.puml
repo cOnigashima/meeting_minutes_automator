@@ -1,0 +1,151 @@
+@startuml SEQ-002_Offline-Model-Fallback
+title Offline Model Fallback Sequence (ADR-016)
+' Related: STT-REQ-002.4, STT-REQ-002.5
+' Task 10.2 (Python unit tests: 14/14 passed)
+
+participant "Python\nSidecar" as Sidecar
+participant "Whisper\nSTTEngine" as Whisper
+participant "HuggingFace\nHub" as Hub
+participant "Local\nFilesystem" as FS
+participant "Bundled\nModels" as Bundled
+
+== Initialization (Normal Flow) ==
+Sidecar -> Whisper : initialize(model_size="small")
+activate Whisper
+
+Whisper -> Whisper : _detect_model_path("small")
+activate Whisper
+
+== Step 1: Check HuggingFace Cache ==
+Whisper -> FS : check ~/.cache/huggingface/hub/\nmodels--Systran--faster-whisper-small
+FS --> Whisper : exists=True
+note right
+  Model found in cache
+  Skip download
+end note
+Whisper --> Whisper : return cache_path
+deactivate Whisper
+
+Whisper -> Whisper : WhisperModel(cache_path, device="cpu")
+Whisper --> Sidecar : Ok(model loaded)
+deactivate Whisper
+
+== Initialization (Network Error Scenario) ==
+Sidecar -> Whisper : initialize(model_size="small")
+activate Whisper
+
+Whisper -> Whisper : _detect_model_path("small")
+activate Whisper
+
+== Step 1: Check HuggingFace Cache ==
+Whisper -> FS : check ~/.cache/huggingface/hub/
+FS --> Whisper : exists=False
+note right
+  Model not in cache
+  Attempt download
+end note
+
+== Step 2: Try Download from Hub (with timeout) ==
+Whisper -> Hub : download_model("Systran/faster-whisper-small")
+note right
+  ADR-016: 10s timeout
+  Proxy support (HTTPS_PROXY env)
+end note
+
+alt Download Timeout
+    Hub --> Whisper : TimeoutError (after 10s)
+    note right
+      Network slow/unavailable
+      Trigger offline fallback
+    end note
+
+else Network Error
+    Hub --> Whisper : requests.exceptions.ConnectionError
+    note right
+      No internet connection
+      Trigger offline fallback
+    end note
+
+else SSL Error
+    Hub --> Whisper : requests.exceptions.SSLError
+    note right
+      Certificate validation failure
+      Trigger offline fallback
+    end note
+end
+
+== Step 3: Offline Fallback to Bundled Model ==
+Whisper -> Whisper : _detect_bundled_model_path()
+activate Whisper
+
+Whisper -> FS : check bundle_base/models/whisper-base/
+note right
+  ADR-016: Bundled base model
+  Guaranteed offline availability
+end note
+FS --> Whisper : exists=True
+
+Whisper --> Whisper : return bundled_path
+deactivate Whisper
+
+Whisper -> Whisper : WhisperModel(bundled_path, device="cpu")
+note right
+  Load bundled base model
+  Downgrade from requested "small"
+end note
+
+Whisper -> Sidecar : emit_event("model_change", {\n  "old_model": "small",\n  "new_model": "base",\n  "reason": "offline_fallback"\n})
+note right
+  STT-REQ-002.5: User notification
+  UI displays model downgrade warning
+end note
+
+Whisper --> Whisper : return bundled_path
+deactivate Whisper
+
+Whisper --> Sidecar : Ok(model loaded with fallback)
+deactivate Whisper
+
+== Offline Mode (Explicit) ==
+Sidecar -> Whisper : initialize(model_size="small", offline_mode=True)
+activate Whisper
+
+note right
+  STT-REQ-002.6: Explicit offline mode
+  Skip Hub connection entirely
+end note
+
+Whisper -> Whisper : _detect_model_path("small")
+activate Whisper
+
+Whisper -> FS : check ~/.cache/huggingface/hub/
+FS --> Whisper : exists=False
+
+Whisper -> Whisper : offline_mode=True, skip Hub download
+note right
+  Immediately fallback to bundled
+  No network attempt
+end note
+
+Whisper -> Whisper : _detect_bundled_model_path()
+Whisper -> FS : check bundle_base/models/whisper-base/
+FS --> Whisper : exists=True
+
+Whisper --> Whisper : return bundled_path
+deactivate Whisper
+
+Whisper -> Whisper : WhisperModel(bundled_path, device="cpu")
+Whisper --> Sidecar : Ok(model loaded in offline mode)
+deactivate Whisper
+
+note over Sidecar, Bundled
+  **Python Unit Test Coverage (Task 10.2)**
+  ✅ 14/14 tests passed
+  - Hub download timeout simulation
+  - Network error handling
+  - offline_mode=True behavior
+  - Bundled model fallback path detection
+  - Proxy environment variable support
+end note
+
+@enduml

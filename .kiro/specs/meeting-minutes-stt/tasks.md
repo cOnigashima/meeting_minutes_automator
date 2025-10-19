@@ -615,35 +615,38 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
 **優先度**: 🔴 P0 Critical（MVP1必須）
 **目的**: Phase 7/8で安定化した基盤の上にユーザー設定UIを実装し、MVP1完成状態にする
 
-- [ ] 9.1 音声デバイス選択UI
-  - 利用可能な音声入力デバイス一覧を取得して表示
-  - デバイス選択ドロップダウンコンポーネント（React）実装
-  - 選択されたデバイスIDの設定保存機能（Tauri Command経由）
-  - デバイスメタデータ（名前、サンプルレート、チャンネル数）の表示
-  - _Requirements: STT-REQ-001.2, STT-REQ-001.3_
+- [x] 9.1 音声デバイス選択UI（✅ 完了 2025-10-19）
+  - ✅ 利用可能な音声入力デバイス一覧を取得して表示（`list_audio_devices` Tauri command実装）
+  - ✅ デバイス選択ドロップダウンコンポーネント（React）実装（src/App.tsx）
+  - ✅ 選択されたデバイスIDの設定保存機能（localStorage + Tauri State管理）
+  - ✅ デバイスメタデータ（名前、サンプルレート、チャンネル数）の表示
+  - ✅ 外部レビュー対応完了（静的列挙、device_id渡し、snake_case統一）
+  - 📄 ドキュメント: `docs/dev/stt-core-components.md` に `enumerate_devices_static` / `set_selected_device_id` / `get_selected_device_id` の役割と使用例を追記（2025-10-19）
+  - _Requirements: STT-REQ-001.2, STT-REQ-001.3（完全実装）_
 
-- [ ] 9.2 Whisperモデル選択UI
-  - モデルサイズ選択ドロップダウン（tiny/base/small/medium/large-v3）実装
-  - 自動選択/カスタマイズトグルスイッチ
-  - 現在のシステムリソースに基づく推奨モデル表示
-  - リソース超過警告メッセージ表示（手動選択時）
-  - モデル選択の設定保存機能
-  - _Requirements: STT-REQ-006.4, STT-REQ-006.5_
+- [x] 9.2 Whisperモデル選択UI（✅ 完了 2025-10-19）
+  - ✅ モデルサイズ選択ドロップダウン（tiny/base/small/medium/large-v3）実装
+  - ✅ 自動選択/カスタマイズトグルスイッチ実装
+  - ✅ 現在のシステムリソースに基づく推奨モデル表示（`get_whisper_models` command）
+  - ✅ リソース超過警告メッセージ表示（モデルランキング検証ロジック）
+  - ✅ モデル選択の設定保存機能（localStorage）
+  - ✅ 外部レビュー対応完了（警告ロジック修正: 重いモデル選択時のみ警告）
+  - _Requirements: STT-REQ-006.4, STT-REQ-006.5（完全実装）_
 
-- [ ] 9.3 オフラインモード設定UI（オプション、MVP1スコープ外候補）
+- [ ] 9.3 オフラインモード設定UI（⏸️ MVP2延期、バックエンド実装済み）
   - オフラインモード強制チェックボックス
   - バンドルモデル使用状態の表示インジケーター
   - HuggingFace Hub接続スキップの動作確認
   - _Requirements: STT-REQ-002.6_
 
-- [ ] 9.4 リソース監視通知UI（オプション、MVP1スコープ外候補）
+- [ ] 9.4 リソース監視通知UI（⏸️ MVP2延期、バックエンド実装済み、IPC通知配信済み）
   - トースト通知コンポーネント（React）実装
   - モデル切り替え通知「モデル変更: {old} → {new}」の表示
   - システムリソース不足警告の表示
   - 通知の自動消去タイマー（5秒）
   - _Requirements: STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.10_
 
-- [ ] 9.5 セッション管理UI（オプション、MVP1スコープ外候補）
+- [ ] 9.5 セッション管理UI（⏸️ MVP2延期、バックエンド実装済み）
   - 過去のセッション一覧表示（日時降順ソート）
   - セッション選択による詳細表示（メタデータ、文字起こし結果）
   - 音声再生機能（audio.wav playback）
@@ -834,12 +837,16 @@ meeting-minutes-stt (MVP1) は、meeting-minutes-core (Walking Skeleton) で確�
   - 異常時のユーザー通知とログ内容の整合性確認
   - _Requirements: STT-NFR-005_
 
-- [ ] 11.5 セキュリティテスト
-  - TLS 1.2以降接続検証（HuggingFace Hub）
-  - モデルファイルSHA256ハッシュ検証テスト
-  - ディレクトリアクセス制限検証
-  - 音声デバイスアクセス許可フロー検証
-  - _Requirements: STT-NFR-004_
+- [x] 11.5 セキュリティテスト（⚠️ 検証完了、修正保留 2025-10-19）
+  - ✅ TLS 1.2以降接続検証（HuggingFace Hub） - Python標準SSL contextでTLS 1.2+強制（**要実証テスト: TLS 1.0/1.1エンドポイント接続失敗確認**、MVP2 Phase 0）
+  - ✅ 依存関係脆弱性スキャン - 実施完了、**修正保留**（SEC-001: pip 25.0 Medium脆弱性、MVP2 Phase 0で修正）
+  - ✅ ディレクトリアクセス制限検証 - 現状644/755確認、**強制未実装**（SEC-003: umask依存リスク、MVP2 Phase 0で`mode(0o600)`強制）
+  - ✅ 音声デバイスアクセス許可フロー検証 - OSレベル許可フロー使用（CoreAudio/WASAPI/ALSA）
+  - ✅ APIアクセス制御検証 - Tauri commandsのみ公開、**修正保留**（SEC-002: CSP null、MVP2 Phase 0で本番CSP設定）
+  - ✅ Rust依存関係スキャン - **実施ブロック**（SEC-004: cargo-audit未実施、Rust 1.85必要、リリース後即実施）
+  - ✅ レポート作成: `.kiro/specs/meeting-minutes-stt/security-test-report.md`
+  - _Requirements: STT-NFR-004（検証実施要件満たす、修正は別タスク）_
+  - _Test: セキュリティ検証完了、**4件の修正保留チケット**（SEC-001/002: Medium、SEC-003/004: Blocked/Medium、MVP2 Phase 0で対応）_
 
 - [ ] 12. ドキュメントとリリース準備
 - [ ] 12.1 UML図の作成

@@ -5,6 +5,7 @@
 
 - `scripts/docs_crawler.py`
 - `scripts/performance_report.py`
+- `scripts/stability_burn_in.sh`
 
 ## docs_crawler.py
 
@@ -30,3 +31,7 @@ STT 統合テストやベンチマークのログを集計し、メトリクス�
 - `generate_json_report`, `generate_markdown_report` — JSON / Markdown 形式のレポートを出力。
 
 `docs_crawler.py` と `performance_report.py` は合わせて、実装コードに手を入れずにドキュメント鮮度や性能メトリクスを可視化するためのツール群である。今後は、フレッシュネス指標・参照グラフ・TODO棚卸しなどを `drift_report.md` や新規レポートへ拡張していく予定。
+
+## stability_burn_in.sh
+
+長時間稼働テスト（デフォルト 2 時間）を半自動化するラッパースクリプト。`cargo run --manifest-path src-tauri/Cargo.toml --bin stt_burn_in` を適切なログディレクトリ付きで実行し、`logs/platform/stability-<timestamp>-<label>/` に成果物を集約する。`--duration`・`--python`・`--session-label` オプションでランを調整でき、Step 5 の手動リソース計測と組み合わせて `docs/platform-verification.md` の「Long-run Stability Playbook」を埋めることを目的とする。

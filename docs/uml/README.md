@@ -16,3 +16,8 @@
 - 図は PlantUML ソースのみをコミットし、生成画像は CI もしくはレビューコメントで共有する。
 - CI で図の再生成を自動化する場合は、生成スクリプトを `scripts/` に配置し README に使い方を記載する。
 
+## Review Checklist
+- 仕様変更がコードへ影響する場合は、対応する spec から `#[[file:...]]` 参照を追加・更新し、PR で差分を確認する。
+- フェーズごとの必須図: requirements では UseCase、design では Component + Dependency + Class 骨子、tasks では Sequence（必要に応じて Activity）、implementation では StateMachine + Class 詳細を網羅する。
+- 図を更新したら、PR テンプレートの図版チェックボックスをオンにし、理由と関連ドキュメントを記載する。
+- 四半期ごとに本 README をレビューし、最新の設計原則と矛盾が無いか確認する。

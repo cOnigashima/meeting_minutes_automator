@@ -27,6 +27,20 @@ Cross-platform compatibility verification for Meeting Minutes Automator.
 - `scripts/platform_smoke.sh` — ローカル/CI 共通のスモークテスト。`cargo test -- --ignored platform`、リングバッファ往復ベンチ、Python サイドカー起動確認を順番に実行。
 - `cargo run --bin stt_burn_in -- --duration-secs 1800` — Pythonサイドカーを実際に起動し、30分以上の連続送信でADR-013のバッファ水準・UI通知前提を検証（ログは `logs/platform/<epoch>-burnin.log` に保存）。
 
+## Long-run Stability Playbook (2h)
+
+| Step | Command / Action | Notes |
+|------|------------------|-------|
+| 1 | `python -m venv .venv && source .venv/bin/activate`<br>`pip install -r python-stt/requirements-dev.txt` | 事前準備。Windows では `.\.venv\Scripts\activate`。 |
+| 2 | `npm install` | 初回のみ。 |
+| 3 | `./scripts/stability_burn_in.sh --duration 7200 --session-label macos` | `cargo run --manifest-path src-tauri/Cargo.toml --bin stt_burn_in` を内部で実行。ログは `logs/platform/stability-<timestamp>-macos/` に保存。 |
+| 4 | 別ターミナルで `npm run tauri dev` | UI と WebSocket の状態を監視。ログを `logs/platform/<timestamp>-tauri.log` に保存（手動で `tee` 推奨）。 |
+| 5 | 30 分ごとにリソース使用量を記録 | macOS/Linux: `ps -o pid,%cpu,%mem,etime -p $(pgrep -f tauri)` を `tee` で `snapshot-notes.txt` へ追記。<br>Windows: `Get-Process Meeting* | Select-Object Id,CPU,PM,StartTime >> snapshot-notes.txt`。 |
+| 6 | 完了後 `python3 scripts/performance_report.py <burnin.log>` | メトリクスから平均・P95 を算出。出力先は `target/performance_reports/`。 |
+| 7 | `docs/platform-verification.md` の該当プラットフォーム行に `Last Verified` / ログパスを追記 | `logs/platform/stability-<timestamp>-<label>/` を参照。 |
+
+> ❗ Windows / Linux では `./scripts/stability_burn_in.sh` 呼び出し前に PowerShell 等で同等のディレクトリを作成しておくこと。
+
 ---
 
 ## Chrome Extension Manual Smoke Test (MVP1)

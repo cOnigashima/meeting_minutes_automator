@@ -1,0 +1,127 @@
+@startuml SEQ-001_Audio-Recording-to-Transcription
+title Audio Recording to Transcription Flow (Task 10.1 E2E)
+' Related: STT-REQ-001, STT-REQ-002, STT-REQ-003
+' MVP1 Core Implementation - Full Flow (23.49s execution)
+
+actor User
+participant "UI\n(React)" as UI
+participant "Tauri\nCommands" as Commands
+participant "Audio\nDeviceAdapter" as Adapter
+participant "Ring\nBuffer" as Ring
+participant "Python\nSidecar" as Sidecar
+participant "Audio\nPipeline" as Pipeline
+participant "VAD" as VAD
+participant "Whisper\nSTTEngine" as Whisper
+participant "LocalStorage" as Storage
+participant "WebSocket\nServer" as WS
+
+== Initialization ==
+User -> UI : Click "Start Recording"
+UI -> Commands : invoke("start_recording", {device_id})
+Commands -> Adapter : start_capture(device_id)
+Adapter -> Ring : create(capacity=160KB)
+note right
+  ADR-013: 5-second buffer
+  80000 samples * 2 bytes
+end note
+Adapter -> Adapter : build_input_stream()
+activate Adapter
+Adapter --> Commands : Ok("Recording started")
+Commands --> UI : setIsRecording(true)
+
+== Audio Frame Collection (Continuous Loop) ==
+loop Every 10ms (CPAL callback)
+    Adapter -> Ring : push(audio_chunk) [lock-free]
+    note right
+      Non-blocking operation
+      Prevents CPAL stream stall
+    end note
+end
+
+== IPC Audio Streaming ==
+Commands -> Sidecar : send_audio_stream(ring_buffer)
+activate Sidecar
+loop Every 100ms
+    Sidecar -> Ring : pop() [blocking with timeout]
+    Ring --> Sidecar : audio_chunk (1600 samples)
+    Sidecar -> Pipeline : process_audio_frame_with_partial(chunk)
+    activate Pipeline
+
+    == VAD Processing ==
+    Pipeline -> VAD : is_speech(chunk)
+    VAD --> Pipeline : speech_detected
+
+    alt Speech Detected
+        Pipeline -> Pipeline : append to audio_buffer
+        Pipeline -> Sidecar : {"type":"event", "eventType":"speech_start"}
+        Sidecar -> Commands : IPC event (stdout)
+        Commands -> UI : emit("speech_start")
+
+        == Partial Text Generation ==
+        Pipeline -> Whisper : transcribe(audio_buffer, task="transcribe")
+        activate Whisper
+        Whisper -> Whisper : faster-whisper inference
+        Whisper --> Pipeline : partial_segments
+        deactivate Whisper
+
+        Pipeline -> Sidecar : {"type":"event", "eventType":"partial_text",\n"data":{"text":"こんにちは", "is_final":false}}
+        Sidecar -> Commands : IPC event
+        Commands -> UI : emit("partial_text")
+        Commands -> WS : broadcast(partial_text)
+        WS -> WS : Chrome Extension
+
+    else Silence After Speech
+        Pipeline -> Sidecar : {"type":"event", "eventType":"speech_end"}
+
+        == Final Text Generation ==
+        Pipeline -> Whisper : transcribe(complete_audio, task="transcribe")
+        activate Whisper
+        Whisper -> Whisper : faster-whisper full inference
+        Whisper --> Pipeline : final_segments
+        deactivate Whisper
+
+        Pipeline -> Sidecar : {"type":"event", "eventType":"final_text",\n"data":{"text":"こんにちは、世界", "is_final":true,\n"confidence":0.95, "language":"ja"}}
+        Sidecar -> Commands : IPC event
+        Commands -> UI : emit("final_text")
+        Commands -> WS : broadcast(final_text)
+
+        == Local Storage ==
+        Pipeline -> Storage : write_audio(audio.wav)
+        Pipeline -> Storage : write_transcript(transcription.jsonl)
+        Storage --> Pipeline : Ok()
+
+    else No Speech Detected
+        Pipeline -> Sidecar : {"type":"event", "eventType":"no_speech"}
+        note right
+          VAD detected silence
+          No STT processing
+        end note
+    end
+
+    deactivate Pipeline
+end
+
+== Stop Recording ==
+User -> UI : Click "Stop Recording"
+UI -> Commands : invoke("stop_recording")
+Commands -> Adapter : stop_capture()
+Adapter -> Ring : flush()
+deactivate Adapter
+Adapter --> Commands : Ok("Recording stopped")
+
+Commands -> Sidecar : finalize_session()
+Sidecar -> Pipeline : save_session_metadata()
+Pipeline -> Storage : save_metadata(session.json)
+deactivate Sidecar
+
+Commands --> UI : setIsRecording(false)
+
+note over UI, Storage
+  **Performance (Task 10.1 E2E Test)**
+  Total execution: 23.49s
+  Partial text latency: <0.5s (STT-NFR-001.1)
+  Final text latency: <2s (STT-NFR-001.2)
+  0% frame loss (ADR-013 guarantee)
+end note
+
+@enduml

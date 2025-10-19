@@ -57,7 +57,10 @@
       "Bash(timeout:*)",
       "Bash(gtimeout 120 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture --ignored)",
       "Bash(gtimeout 120 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(pip-audit:*)",
+      "Bash(npm audit:*)",
+      "Bash(.venv/bin/pip-audit:*)"
     ],
     "deny": [],
     "ask": []

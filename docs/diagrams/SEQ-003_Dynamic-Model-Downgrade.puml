@@ -1,0 +1,170 @@
+@startuml SEQ-003_Dynamic-Model-Downgrade
+title Dynamic Model Downgrade (Resource Monitoring)
+' Related: STT-REQ-006.6, STT-REQ-006.7, STT-REQ-006.8, STT-REQ-006.9
+' Task 10.3 (Python unit tests: 58/60 passed = 96.7%)
+
+participant "Audio\nPipeline" as Pipeline
+participant "Resource\nMonitor" as Monitor
+participant "Whisper\nSTTEngine" as Whisper
+participant "System\nResources" as System
+participant "Tauri\nCommands" as Commands
+participant "UI" as UI
+
+== Initialization ==
+Pipeline -> Monitor : start_monitoring(\n  interval_seconds=30,\n  on_downgrade=_handle_downgrade,\n  on_upgrade_proposal=_handle_upgrade\n)
+activate Monitor
+
+note right
+  STT-REQ-006.6: 30-second monitoring
+  CPU, Memory, GPU usage tracking
+end note
+
+== Normal Operation ==
+loop Every 30 seconds
+    Monitor -> System : get_cpu_percent()
+    System --> Monitor : 45%
+    Monitor -> System : get_memory_info()
+    System --> Monitor : 1.2GB / 4GB
+
+    note right
+      Resources within threshold
+      No action needed
+    end note
+end
+
+== High CPU Scenario (Sustained) ==
+Monitor -> System : get_cpu_percent()
+System --> Monitor : 87%
+note right
+  CPU > 85% threshold
+  Start 60-second observation
+end note
+
+loop 60 seconds
+    Monitor -> System : get_cpu_percent()
+    System --> Monitor : 86%, 88%, 89%
+end
+
+note right
+  STT-REQ-006.7: Sustained high CPU
+  Trigger automatic downgrade
+end note
+
+Monitor -> Monitor : calculate_downgrade_target("small")
+note right
+  Model ranking: tiny < base < small < medium < large-v3
+  Current: small → Target: base
+end note
+
+Monitor -> Pipeline : on_downgrade("base", reason="cpu_high")
+activate Pipeline
+
+Pipeline -> Whisper : load_model("base")
+activate Whisper
+Whisper -> Whisper : WhisperModel("base", device="cpu")
+Whisper --> Pipeline : Ok(model loaded)
+deactivate Whisper
+
+Pipeline -> Commands : emit_event("model_change", {\n  "old_model": "small",\n  "new_model": "base",\n  "reason": "cpu_high",\n  "cpu_usage": 87\n})
+Commands -> UI : show_notification(\n  "⚠️ モデルをsmall→baseへ変更\n  (CPU使用率高: 87%)"\n)
+note right
+  STT-REQ-006.8: User notification
+  Transparent resource management
+end note
+
+Pipeline --> Monitor : Ok(downgrade completed)
+deactivate Pipeline
+
+== Memory Pressure Scenario ==
+Monitor -> System : get_memory_info()
+System --> Monitor : 3.8GB / 4GB (95%)
+note right
+  Memory > 75% threshold (3GB/4GB)
+  STT-REQ-006.7: Immediate downgrade
+end note
+
+Monitor -> Monitor : calculate_downgrade_target("medium")
+note right
+  Current: medium (2GB estimate)
+  Target: small (1GB estimate)
+end note
+
+Monitor -> Pipeline : on_downgrade("small", reason="memory_high")
+activate Pipeline
+
+Pipeline -> Whisper : load_model("small")
+Whisper --> Pipeline : Ok(model loaded)
+
+Pipeline -> Commands : emit_event("model_change", {\n  "old_model": "medium",\n  "new_model": "small",\n  "reason": "memory_high",\n  "memory_usage_gb": 3.8\n})
+Commands -> UI : show_notification(\n  "⚠️ モデルをmedium→smallへ変更\n  (メモリ使用量高: 3.8GB)"\n)
+
+Pipeline --> Monitor : Ok(downgrade completed)
+deactivate Pipeline
+
+== Resource Recovery & Upgrade Proposal ==
+note right
+  Wait 5 minutes after downgrade
+  before proposing upgrade
+end note
+
+Monitor -> Monitor : sleep(300s)
+
+Monitor -> System : get_cpu_percent()
+System --> Monitor : 40%
+Monitor -> System : get_memory_info()
+System --> Monitor : 1.5GB / 4GB
+
+note right
+  Resources recovered
+  Propose upgrade to user
+end note
+
+Monitor -> Pipeline : on_upgrade_proposal("medium", reason="resources_recovered")
+activate Pipeline
+
+Pipeline -> Commands : emit_event("upgrade_proposal", {\n  "current_model": "small",\n  "proposed_model": "medium",\n  "reason": "resources_recovered",\n  "cpu_usage": 40,\n  "memory_usage_gb": 1.5\n})
+Commands -> UI : show_dialog(\n  "リソースに余裕があります。\n  モデルをmediumへアップグレードしますか？"\n)
+
+UI --> Commands : user_response="accept"
+Commands -> Pipeline : upgrade_model("medium")
+
+Pipeline -> Whisper : load_model("medium")
+Whisper --> Pipeline : Ok(model loaded)
+
+Pipeline -> Commands : emit_event("model_change", {\n  "old_model": "small",\n  "new_model": "medium",\n  "reason": "user_approved_upgrade"\n})
+
+Pipeline --> Monitor : Ok(upgrade completed)
+deactivate Pipeline
+
+== Recording Pause (Critical Memory) ==
+Monitor -> System : get_memory_info()
+System --> Monitor : 3.95GB / 4GB (98.75%)
+note right
+  Memory > 95% critical threshold
+  STT-REQ-006.9: Pause recording
+end note
+
+Monitor -> Pipeline : on_pause_recording(reason="memory_critical")
+activate Pipeline
+
+Pipeline -> Pipeline : pause_audio_processing()
+Pipeline -> Commands : emit_event("recording_paused", {\n  "reason": "memory_critical",\n  "memory_usage_gb": 3.95\n})
+Commands -> UI : show_warning(\n  "⛔ メモリ不足のため録音を一時停止しました。\n  (使用量: 3.95GB/4GB)"\n)
+
+Pipeline --> Monitor : Ok(recording paused)
+deactivate Pipeline
+
+deactivate Monitor
+
+note over Pipeline, UI
+  **Python Unit Test Coverage (Task 10.3)**
+  ✅ 58/60 tests passed (96.7%)
+  - CPU-based downgrade (85% @ 60s)
+  - Memory-based downgrade (3GB/4GB immediate)
+  - Upgrade proposal (5-minute wait)
+  - Recording pause (95% critical)
+  ⚠️ 2 tests failed (memory 3GB/4GB immediate downgrade timing)
+  → Scheduled for fix in Task 11.6
+end note
+
+@enduml

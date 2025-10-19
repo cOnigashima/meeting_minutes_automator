@@ -1,0 +1,165 @@
+@startuml CLS-001_Audio-Device-Adapter
+title Audio Device Adapter - Class Diagram
+' Related: STT-REQ-004 (Audio Device Management)
+' ADR-013: Ring Buffer Architecture
+
+!define ABSTRACT abstract class
+
+package "Audio Device Layer" {
+    interface AudioDeviceAdapter {
+        + list_devices() : Vec<AudioDeviceInfo>
+        + start_capture(device_id: String, callback: AudioChunkCallback) : Result<()>
+        + stop_capture() : Result<()>
+        + is_recording() : bool
+    }
+
+    class AudioDeviceInfo {
+        + id: String
+        + name: String
+        + sample_rate: u32
+        + channels: u16
+        + is_loopback: bool
+    }
+
+    enum AudioDeviceEvent {
+        StreamError(String)
+        Stalled { elapsed_ms: u64 }
+        Disconnected
+        Reconnected
+    }
+
+    note right of AudioDeviceEvent
+        STT-REQ-004.9/10/11
+        Device monitoring events
+        Sent via broadcast channel
+    end note
+
+    class CoreAudioAdapter {
+        - host: cpal::Host
+        - stream: Option<cpal::Stream>
+        - is_recording: Arc<AtomicBool>
+        - event_tx: AudioEventSender
+        - liveness_watchdog: Arc<AtomicU64>
+        --
+        + new() : Self
+        + list_devices() : Vec<AudioDeviceInfo>
+        + start_capture() : Result<()>
+        + stop_capture() : Result<()>
+        - monitor_liveness()
+        - monitor_device_changes()
+    }
+
+    class WasapiAdapter {
+        - host: cpal::Host
+        - stream: Option<cpal::Stream>
+        - is_recording: Arc<AtomicBool>
+        - event_tx: AudioEventSender
+        --
+        + new() : Self
+        + list_devices() : Vec<AudioDeviceInfo>
+        + start_capture() : Result<()>
+        + stop_capture() : Result<()>
+    }
+
+    class AlsaAdapter {
+        - host: cpal::Host
+        - stream: Option<cpal::Stream>
+        - is_recording: Arc<AtomicBool>
+        - event_tx: AudioEventSender
+        --
+        + new() : Self
+        + list_devices() : Vec<AudioDeviceInfo>
+        + start_capture() : Result<()>
+        + stop_capture() : Result<()>
+    }
+
+    class MockAudioAdapter {
+        - is_recording: Arc<AtomicBool>
+        - mock_data: Vec<i16>
+        --
+        + new() : Self
+        + with_test_data(data: Vec<i16>) : Self
+        + list_devices() : Vec<AudioDeviceInfo>
+        + start_capture() : Result<()>
+        + stop_capture() : Result<()>
+    }
+
+    note right of MockAudioAdapter
+        Task 10.1 E2E testing
+        Deterministic audio playback
+        3 test fixtures (short/long/silence)
+    end note
+}
+
+package "Ring Buffer (ADR-013)" {
+    class RingBuffer<T> {
+        - buffer: Vec<T>
+        - capacity: usize
+        - read_pos: AtomicUsize
+        - write_pos: AtomicUsize
+        --
+        + new(capacity: usize) : Self
+        + push(&self, item: T) : Result<()>
+        + pop(&self) : Option<T>
+        + is_full(&self) : bool
+        + available_space(&self) : usize
+    }
+
+    note right of RingBuffer
+        ADR-013 Lock-free ring buffer
+        Capacity: 160KB (5-second audio)
+        Atomic operations for concurrency
+        Prevents CPAL callback blocking
+    end note
+}
+
+package "Callback Types" {
+    type AudioChunkCallback {
+        Fn(&[i16]) -> ()
+    }
+
+    type AudioEventSender {
+        broadcast::Sender<AudioDeviceEvent>
+    }
+
+    type AudioEventReceiver {
+        broadcast::Receiver<AudioDeviceEvent>
+    }
+}
+
+' Relationships
+AudioDeviceAdapter <|.. CoreAudioAdapter : implements
+AudioDeviceAdapter <|.. WasapiAdapter : implements
+AudioDeviceAdapter <|.. AlsaAdapter : implements
+AudioDeviceAdapter <|.. MockAudioAdapter : implements
+
+CoreAudioAdapter --> AudioDeviceInfo : returns
+CoreAudioAdapter --> AudioChunkCallback : uses
+CoreAudioAdapter --> AudioEventSender : sends
+CoreAudioAdapter --> RingBuffer : writes to
+
+WasapiAdapter --> AudioDeviceInfo : returns
+WasapiAdapter --> AudioChunkCallback : uses
+WasapiAdapter --> AudioEventSender : sends
+WasapiAdapter --> RingBuffer : writes to
+
+AlsaAdapter --> AudioDeviceInfo : returns
+AlsaAdapter --> AudioChunkCallback : uses
+AlsaAdapter --> AudioEventSender : sends
+AlsaAdapter --> RingBuffer : writes to
+
+MockAudioAdapter --> AudioDeviceInfo : returns
+MockAudioAdapter --> AudioChunkCallback : uses
+MockAudioAdapter --> RingBuffer : writes to
+
+AudioEventSender ..> AudioDeviceEvent : broadcasts
+
+note bottom of RingBuffer
+    **Ring Buffer Operations**
+    push(): Lock-free atomic increment
+    pop(): Lock-free atomic decrement
+    Overflow detection: P0 bug fix (ADR-013)
+    Partial write prevention: 0% frame loss guarantee
+end note
+
+@enduml

@@ -73,11 +73,9 @@ Meeting Minutes Automator のコードベース全体で一貫した品質と保
 - 要件・設計ドキュメントの運用手順は `docs/dev/spec-authoring.md` を参照。実装時は必要に応じて要件IDやTraceability表を確認する。
 
 ## UML Assets
-- ディレクトリ: `docs/uml/<spec-slug>/<カテゴリ>/` を用い、カテゴリは `uc|cmp|seq|cls|stm|act|dep` のいずれかとする。
-- 命名: `ID_Title.puml` 形式で管理し、ID は `UC-001` などドキュメント内で一意にする。
-- ツール: PlantUML ソースを Git 管理し、生成画像は CI もしくはPRコメントでレビューする（バイナリはコミットしない）。
-- 運用: フェーズごとの必須図（requirements:UC / design:CMP+DEP+CLS骨子 / tasks:SEQ+必要時ACT / impl:STM+CLS詳細）を満たし、更新理由をPRに記載。
-- レビューチェック: 図に影響のある実装変更では対応する spec から `#[[file:...]]` 参照を追加・更新する。
+詳細な運用ガイドラインは `docs/uml/README.md` を参照。
+- ディレクトリ構成・命名規則・レビューチェックは README の「Directory Convention」「Naming Convention」「Review Checklist」に統一。
+- コード／仕様差分が図版に及ぶ場合は README のチェックリストを参照し、PR で根拠を共有する。
 
 ## Governance & Exceptions
 - スタイル変更、テストポリシーの更新は本ドキュメントを先に修正し、関連チームの承認を得る。

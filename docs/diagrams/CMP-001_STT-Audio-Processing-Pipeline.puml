@@ -1,0 +1,95 @@
+@startuml CMP-001_STT-Audio-Processing-Pipeline
+!define RECTANGLE class
+
+title STT Audio Processing Pipeline - Component Diagram
+' Related: STT-REQ-001, STT-REQ-002, STT-REQ-003, STT-REQ-006
+' MVP1 Core Implementation Milestone (2025-10-19)
+
+package "Tauri Desktop App" {
+    [UI (React)] as UI
+    [Tauri Commands] as Commands
+    [AppState] as State
+    [WebSocket Server] as WSServer
+}
+
+package "Audio Capture Layer" {
+    [AudioDeviceAdapter] as Adapter
+    [CPAL (CoreAudio/WASAPI/ALSA)] as CPAL
+    [Ring Buffer (160KB)] as RingBuffer
+}
+
+package "Python Sidecar Process" {
+    [AudioPipeline] as Pipeline
+    [VAD (webrtcvad)] as VAD
+    [WhisperSTTEngine] as Whisper
+    [ResourceMonitor] as ResMonitor
+}
+
+package "Storage Layer" {
+    [LocalStorageService] as Storage
+    [SessionHandle] as Session
+    database "recordings/\n[session_id]/" as DB {
+        file "audio.wav"
+        file "transcription.jsonl"
+        file "session.json"
+    }
+}
+
+package "Chrome Extension" {
+    [Content Script] as ContentScript
+    [WebSocket Client] as WSClient
+}
+
+' Data Flow - Audio Recording
+UI --> Commands : invoke("start_recording", {device_id})
+Commands --> Adapter : start_capture()
+Adapter --> CPAL : build_input_stream()
+CPAL --> RingBuffer : push() (lock-free)
+RingBuffer --> Pipeline : audio frames (IPC stdin)
+
+' Data Flow - STT Processing
+Pipeline --> VAD : process_frame()
+VAD --> Pipeline : speech_start/speech_end
+Pipeline --> Whisper : transcribe(audio_segment)
+Whisper --> Pipeline : partial_text/final_text
+Pipeline --> Commands : IPC events (stdout)
+
+' Data Flow - Resource Monitoring
+ResMonitor --> Pipeline : model_change event
+Pipeline --> Commands : IPC event
+Commands --> UI : emit("model_change")
+
+' Data Flow - Storage
+Pipeline --> Storage : begin_session()
+Storage --> Session : SessionHandle
+Session --> DB : audio.wav, transcription.jsonl
+
+' Data Flow - WebSocket Distribution
+Commands --> WSServer : broadcast(WebSocketMessage)
+WSServer --> WSClient : WebSocket connection
+WSClient --> ContentScript : transcription events
+
+' Component Relationships
+Commands ..> State : manage
+State ..> Adapter : Arc<Mutex<>>
+State ..> WSServer : Arc<Mutex<>>
+
+note right of RingBuffer
+  ADR-013: Lock-free ring buffer
+  5-second audio buffer (160KB)
+  Prevents CPAL stream blocking
+end note
+
+note right of Pipeline
+  ADR-013: Facade API pattern
+  AudioSink + EventStream
+  Stdin/Stdout Mutex separation
+end note
+
+note right of Whisper
+  ADR-016: Offline Model Fallback
+  Hub download timeout: 10s
+  Fallback to bundled base model
+end note
+
+@enduml
