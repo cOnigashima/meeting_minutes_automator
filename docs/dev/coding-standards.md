@@ -22,25 +22,25 @@ Meeting Minutes Automator のコードベース全体で一貫した品質と保
 - Lint: `cargo clippy --workspace --all-targets --all-features -D warnings` を CI で実行。
 - 命名: プロセス境界に合わせてモジュール (`audio::`, `ipc::`, `storage::` など) を分離し、IPC 型は `Serde` 派生構造体でスキーマを固定。
 - セキュリティ: `tauri` の `allowlist` は必要最小限の feature のみに限定し、`api-all` は禁止。
-- テスト: `cargo nextest` でユニット/統合テストを実行し、失敗するテストがない状態で PR を作成。80% のカバレッジラインは下回らないよう維持。
+- テスト: `cargo test --workspace --all-targets` を実行し、ユニット/統合/E2E をすべて通過させてから PR を作成する。`nextest` やカバレッジ計測は将来導入予定。
 
 ## React / TypeScript (Tauri UI)
-- フォーマット: `prettier --write` を commit 時に走らせる。
-- Lint: `eslint` (Flat Config, `@typescript-eslint`) を `pnpm lint` で実行。新しいルールは警告で導入し、徐々にエラーへ引き上げる。
+- フォーマット: 2025-10-19 時点では公式なフォーマッタは未導入。VS Code 既定フォーマッタ or `npm run format`（導入予定）で差分を最小化する。Prettier 導入時はコマンドを本ドキュメントに追記する。
+- Lint: ESLint 設定は未整備。ルールセットを導入する際は ADR で合意し、`npm run lint` を標準スクリプトとして追加する。
 - 命名/配置: コンポーネントは `PascalCase.tsx`、フックは `useCamelCase.ts`。画面は `src/screens/`、再利用 UI は `src/components/` に配置する。
 - 状態管理: 現行 UI は `useState` / `useReducer` を基本とし、グローバルストア採用が必要になった場合は ADR で目的・影響を合意する。親子間共有には `useReducer` + `React.Context` を優先し、props のネストを避ける。
-- 副作用: `useEffect` の依存配列を厳守し、非同期処理や `invoke` 呼び出しは `src/services/tauri.ts` のラッパへ移動させて再利用性とテスト容易性を高める。
-- UI ステート: 読み込み中・エラー・正常の 3 パターンを小さなコンポーネントで表現し、インラインスタイルではなくモジュール CSS または `App.css` のセクション分割で管理する。
-- エラーハンドリング: Tauri コマンド呼び出しの戻り値と例外を `Result` 風のタプル (`{ ok, data, error }`) に正規化し、ユーザー表示文言と開発者ログ (`console.error` に JSON) を分離する。
-- テスト: コアロジックは `vitest` でユニットテストし、表示確認は `@testing-library/react` で主要ボタン操作とメッセージ表示を検証する。追加の E2E は必要になってから Playwright で拡張する。
-- 型定義: `src/types/` に `RecordingStatus` や IPC メッセージの TypeScript 型を集約し、コンポーネント内での `as` キャストを避ける。
+- 副作用: `useEffect` の依存配列を厳守し、非同期処理や `invoke` 呼び出しは今後 `src/services/tauri.ts`（導入予定）のラッパに集約する。
+- UI ステート: 読み込み中・エラー・正常の 3 パターンを小さなコンポーネントで表現し、スタイルは `App.css` を中心に管理する。Tailwind 等を導入する場合は ADR で決定。
+- エラーハンドリング: Tauri コマンド呼び出しの戻り値は `try/catch` で補足し、ユーザー向けメッセージと `console.error` のログを分離する。
+- テスト: 現在は手動確認が中心。UI の自動テストを追加する際は `vitest` + `@testing-library/react` を第一候補とし、E2E は必要性が明確になってから Playwright を導入する。
+- 型定義: IPC やステータスの型は `src/types/` に切り出し、直接の `any` / 無根拠な `as` キャストを避ける。
 
 ## Chrome Extension
-- フォーマット/リンタ: React UI と同じ設定を `apps/extension/` に適用。
-- Manifest: v3 を前提とし、`minimum_chrome_version` を維持。Service Worker は `strict` モード、`tsconfig.json` の `moduleResolution` は `bundler` 固定。
-- DOM 操作: Content Script は `data-mm-*` 属性経由で要素特定し、`dangerouslySetInnerHTML` 禁止。
-- 通信: WebSocket メッセージ型を Rust 側と共有するため、`packages/protocol` に型定義を集約。
-- テスト: `playwright` で主要シナリオ（Docs 連携、有効/無効切替）を E2E 化し、CI で smoke テストを実行。
+- フォーマット/リンタ: 現状はプレーン TypeScript。拡張のビルド環境を React 化する際に Prettier / ESLint を導入する。
+- Manifest: v3 (`minimum_chrome_version: "116"`) を維持。Service Worker は最小限のメッセージリレーのみ実装する。
+- DOM 操作: Content Script で `data-mm-*` 属性を利用し、直接的な `innerHTML` 挿入は避ける。ログは `[Meeting Minutes]` プレフィックスで統一。
+- 通信: WebSocket メッセージスキーマは Rust の `WebSocketMessage` と整合させる（`isPartial` / `confidence` などの新フィールドを含める）。
+- テスト: 自動テストは未導入。Docs 同期機能を実装するタイミングで Playwright などを検討し、このドキュメントを更新する。
 
 ## Python Sidecar
 - フォーマット: `black` + `isort` (`profile=black`) の導入を計画し、現行コードも整形して差分を最小化する。
@@ -52,40 +52,14 @@ Meeting Minutes Automator のコードベース全体で一貫した品質と保
 - テスト: `pytest` を基本とし、既存の `tests/test_integration.py` に加えてユニットテストを追加する。将来 async API を導入する際は `pytest.mark.asyncio` を活用する。
 - IPC ベストプラクティス: `json.loads` 失敗時は `logger.exception` で記録し、`{"type": "error", "message": ...}` 形式の安全なレスポンスを返す。EOF 検知時はクリーンに終了する。
 
-## Subsystem Design & Implementation Guidelines (Draft)
-
-### Rust / Tauri Backend — Result エラー分類と再試行戦略 (Backend TL Proposal)
-- `Result<T, DomainError>` で戻り値を統一し、ドメイン例外は `Transient` / `Retryable` / `Fatal` の 3 種に分類して `thiserror` でエンコードする。`DomainError` には `category()` ヘルパーを実装し、呼び出し側でガードを簡潔化する。
-- 再試行ポリシーは `Transient` のみ対象。`backoff` クレートで指数バックオフ (初期 200ms、係数 2.0、最大 5 試行) を標準化し、`tracing` スパンに `retry.attempt` メタデータを残す。最終失敗時は `retry.exhausted=true` を付与。
-- IPC/FFI 例外は `Fatal` とみなし即座に UI へ通知、ユーザー可視メッセージと `Sentry` タグ (`component=tauri-backend`, `error.category=fatal`) を付与する。
-- エラー分類カタログを `docs/dev/rust-error-catalog.md` に保守し、追加時は PR で diff を確認。代表的な API 呼び出しの分類表は以下を初期案とする。
-
-| API/処理 | エラー例 | DomainError | ハンドリング | 計測 |
-| --- | --- | --- | --- | --- |
-| `audio::ingest()` | I/O 一時失敗 (`std::io::ErrorKind::WouldBlock`) | `Transient` | 指数バックオフ + 最大 3 回リトライ | `metrics::counter!("audio.retry", {"source" = "ingest"})` |
-| `ipc::send_transcript()` | JSON 変換失敗 | `Fatal` | 即失敗応答、UI へ `error-modal` 表示 | `tracing::error!` + Sentry capture |
-| `storage::session::load()` | SQLite ロック | `Retryable` | 100ms 間隔で最大 5 回リトライ、失敗時に復旧ガイド表示 | `metrics::histogram!("storage.retry_wait_ms")` |
-
-
-### React / TypeScript — 状態管理ポリシー (Frontend TL Proposal)
-- グローバル状態は `zustand` の `appStore` に限定し、UI 表現専用状態は React ローカルステートを使用。`useEffect` での副作用は `async` 関数を分離してテスト可能化する。副作用が 2 つ以上ある場合は `useAsyncTransition` カスタムフックを追加。
-- Server state は `@tanstack/react-query` を第一選択とし、`queryKey` は `[domain, entityId, scope]` パターンを必須化。手動キャッシュ操作は禁止し、`invalidateQueries` で整合性を保つ。`staleTime` は API ごとに `docs/dev/frontend-latency-matrix.md` で管理する。
-- 状態遷移図 (主要モーダルとレコーディングフロー) を `docs/uml/mm-recorder/STM_stateflow.puml` に同期させる。レイテンシ >300ms の API 呼び出しでは optimistic update を採用し、`OptimisticState` インターフェースに `apply() / rollback()` を実装、失敗時には UI トースト + React Query `onError` でロールバックする。
-- 型安全性を保つため、状態セレクタは `ReturnType<typeof useStore>` のみ公開し、任意の `getState()` 取得は禁止。外部アクセスが必要なケースはファサードフック (`useRecordingState`) を追加する。
-
-### Python Sidecar — async/await ハンドリング (ML TL Proposal)
-- 音声処理は `asyncio` イベントループ上で実行し、CPU バウンド処理は `anyio.to_thread.run_sync` でオフロード。`asyncio.run` はエントリポイント以外で呼び出さない。
-- タスクキャンセルは `contextlib.AsyncExitStack` で集中管理し、`CancelledError` を飲み込まずに呼び出し元へ再伝播。ログには `task.name` と `recording_id` を含める。
-- I/O 待ちのタイムアウトは `asyncio.wait_for(..., timeout=3.0)` を標準とし、タイムアウト例外は `Transient` として Rust 側へ再試行ヒントを返す。API 呼び出し前後で `asyncio.timeout` コンテキストを利用。
-- ストリーミング API のバックプレッシャは `asyncio.Queue(maxsize=4)` を標準とし、オーバーフロー時は `BackpressureWarning` を発火させ Rust 側にビジュアル通知 (UI バナー) を要求。メモリ使用量は `tracemalloc` で計測し、1 セッション上限 256 MB を監視する。
 
 
 ## Testing Baseline
-- 新規機能はスケルトン → ユニット → 統合 → E2E の順で実装し、失敗するテストを先に用意する (TDD 原則)。
-- カバレッジ測定は Rust: `cargo tarpaulin --engine llvm --out Xml`, TypeScript: `pnpm vitest --coverage`, Python: `pytest --cov` を実行し、CI で `artifacts/coverage/<lang>/` に保存する。週次の品質会議 (毎週月曜 10:00) でダッシュボードをレビュー。
-- すべての Tier 1 機能はオフライン環境での E2E テストケースを持つこと。
-- リソース閾値 (ディスク/メモリ/CPU) の縮退挙動は長時間テストで検証し、結果を QA ノートに記録。
-- CI は `lint`, `fmt`, `test` ステージを分離し、いずれかが失敗した PR はマージしない。
+- 新規機能は **スケルトン → ユニット → 統合 → E2E** の順に実装し、RED→GREEN サイクルを踏む。
+- Rust: `cargo test --workspace --all-targets`（E2E を含む）。長時間テストが必要な場合は `-- --nocapture` でログを確認。
+- Python: `.venv/bin/python -m pytest -v`。Whisper モデルが必要なテストは `tests/test_audio_integration.py` を単独で実行して検証。
+- Chrome 拡張: 現状は手動検証（content-script のログ確認）。自動 E2E 化は MVP2 で Playwright を導入予定。
+- カバレッジ計測は将来の課題。導入時にコマンドと合格基準をこの章に追記する。
 
 
 ## Documentation & Diagram Updates
@@ -109,11 +83,3 @@ Meeting Minutes Automator のコードベース全体で一貫した品質と保
 - スタイル変更、テストポリシーの更新は本ドキュメントを先に修正し、関連チームの承認を得る。
 - 原則違反が必要な場合は ADR を提出し、リスク評価と代替案を併記。
 - 定期的に (四半期ごと) 本ドキュメントをレビューし、最新の技術選択および設計原則と整合させる。
-
-## Draft Outline & Next Steps
-- `Subsystem Design & Implementation Guidelines`: エラー分類サンプル、状態遷移図リンク、バックプレッシャ制御の詳細を 2025-10-24 までに補完 (担当: 各 TL)。
-- `Code Review & PR Checklist`: PR テンプレ改訂とレビュアートレーニング資料作成を 2025-10-17 に完了 (担当: QA Lead)。
-- `Dependency Lifecycle Standards`: 監査レポート自動化とバージョンマトリクス更新を 2025-10-31 までに実装 (担当: DevOps Lead)。
-- `UI/UX Quality Standards`: アクセシビリティ手動検証手順とデザイン QA フローを 2025-10-24 までにドラフト化 (担当: Design Lead)。
-- `Testing Baseline`: カバレッジ可視化ダッシュボード (Looker Studio または Grafana) を 2025-11-07 までに PoC 提出 (担当: QA Lead + Data Engineer)。
-- `Incident Response & Postmortems`: オンコールローテーションとコミュニケーション手順を 2025-10-20 までにテンプレへ統合 (担当: SRE Lead)。

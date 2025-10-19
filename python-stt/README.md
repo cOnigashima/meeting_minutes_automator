@@ -27,40 +27,45 @@ source .venv/bin/activate
 
 ### 3. 依存関係のインストール
 
-**開発環境（テスト含む）:**
+**依存関係のインストール（順番通り実行）:**
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt      # faster-whisper / webrtcvad / numpy / psutil など本番依存
+pip install -r requirements-dev.txt  # pytest / pytest-asyncio など開発依存
 ```
-
-**本番環境のみ:**
-```bash
-pip install -r requirements.txt
-```
+> 初回は faster-whisper が Hugging Face からモデルをダウンロードします（既定: `small`）。事前に `~/.cache/huggingface` を用意すると高速になります。
 
 ## テストの実行
 
 ```bash
 # 仮想環境が有効化されていることを確認
-pytest tests/ -v
+.venv/bin/python -m pytest tests/ -v
 ```
 
-**非同期テストも実行:**
+**非同期テストや特定モジュールの検証:**
 ```bash
-pytest tests/ -v --asyncio-mode=auto
+.venv/bin/python -m pytest tests/test_audio_integration.py -v --asyncio-mode=auto
 ```
+> `test_audio_integration.py::test_audio_recording_to_transcription_full_flow` など一部テストは Whisper モデルを読み込みます。CPU/GPUリソース状況に応じて数分かかる場合があります。
 
 ## プロジェクト構造
 
 ```
 python-stt/
-├── main.py                     # エントリーポイント
-├── stt_engine/                 # STTエンジンモジュール
-│   ├── __init__.py
-│   ├── ipc_handler.py         # Rust IPC通信
-│   ├── fake_processor.py      # Fakeプロセッサ（MVP0）
-│   └── lifecycle_manager.py   # ライフサイクル管理
-├── tests/                      # テスト
-│   └── test_integration.py
+├── main.py                     # AudioProcessor（VAD→Whisper→IPCイベント）
+├── stt_engine/
+│   ├── audio_pipeline.py
+│   ├── ipc_handler.py          # stdin/stdout JSON IPC
+│   ├── lifecycle_manager.py
+│   ├── resource_monitor.py     # モデル自動ダウングレード/アップグレード
+│   ├── transcription/
+│   │   ├── voice_activity_detector.py
+│   │   └── whisper_client.py
+│   └── fake_processor.py       # MVP0互換用のレガシースタブ
+├── tests/
+│   ├── test_audio_integration.py
+│   ├── test_audio_pipeline.py
+│   ├── test_whisper_client.py
+│   └── ...（計11ファイル、RED→GREENを担保）
 ├── requirements.txt            # 本番依存関係
 ├── requirements-dev.txt        # 開発依存関係
 └── README.md                   # このファイル
@@ -68,10 +73,12 @@ python-stt/
 
 ## 開発ワークフロー
 
-### Walking Skeleton (MVP0) - 現在のフェーズ
-- ✅ スケルトン実装完了
-- ✅ TDD Red状態確立（全テストが NotImplementedError で失敗）
-- ⏭️ 次: Task 2 で FakeAudioDevice 実装
+### MVP1 Real STT - 現在のフェーズ
+- ✅ `AudioPipeline` + `VoiceActivityDetector` + `WhisperSTTEngine` によるリアルタイム推論（`main.py`, `stt_engine/audio_pipeline.py`）
+- ✅ `ResourceMonitor` によるモデル自動ダウングレード・アップグレード提案（`stt_engine/resource_monitor.py`）
+- ✅ IPCプロトコル v1.0（`process_audio_stream` / partial_text / final_text / speech_end / model_change）
+- ✅ pytestベースの統合テスト（`tests/test_audio_integration.py`, `tests/test_whisper_client.py` など）と Rust 側統合テストの連携
+- 🔄 Rust `AudioDeviceAdapter` との接続テストは進行中（現状はテストフィクスチャから音声フレームを供給）
 
 ### 環境依存バグ防止
 - **必ず仮想環境を使用すること**
@@ -101,6 +108,6 @@ pip install -r requirements-dev.txt
 
 ## 今後の拡張予定
 
-- **Task 2 (MVP1)**: faster-whisper統合
-- **Task 2 (MVP1)**: webrtcvad統合
-- **Task 3 (MVP2)**: リソースベースモデル選択
+- **AudioDeviceAdapter統合**: Rust側で実装済みのマルチプラットフォーム録音アダプターと接続し、FakeAudioDeviceを置き換える（MVP1完了条件）
+- **構造化ログ/メトリクス統合**: `structlog` ベースのJSONログとパフォーマンスメトリクスを Rust 側 `logger` と揃える（STT-NFR-LOG系要件）
+- **セッション永続化フロー**: transcriptionイベントをローカルストレージ書き出し／Docs同期（MVP2）へ連携するためのAPI整備

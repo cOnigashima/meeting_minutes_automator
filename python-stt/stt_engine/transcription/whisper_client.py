@@ -153,6 +153,47 @@ class WhisperSTTEngine:
             logger.warning(f"HuggingFace Hub download failed: {e}")
             return None
 
+    def _detect_bundled_model_path(self, requested_size: ModelSize) -> Optional[str]:
+        """
+        Detect bundled model path with fallback to 'base' (STT-REQ-002.4).
+
+        Args:
+            requested_size: Requested model size
+
+        Returns:
+            Path to bundled model, or None if not found
+
+        Note:
+            - Updates self.model_size to 'base' if fallback occurs
+            - Checks multiple installation directories
+        """
+        # Candidate directories for bundled models
+        bundled_base_dirs = [
+            Path(__file__).parent.parent.parent / "models" / "faster-whisper",
+            Path.home() / ".local" / "share" / "meeting-minutes-automator" / "models" / "faster-whisper",
+            Path("/opt/meeting-minutes-automator/models/faster-whisper"),
+        ]
+
+        # First, try the requested model size
+        for base_dir in bundled_base_dirs:
+            bundled_path = base_dir / requested_size
+            if bundled_path.exists() and (bundled_path / "model.bin").exists():
+                logger.info(f"Using bundled model: {bundled_path}")
+                return str(bundled_path)
+
+        # STT-REQ-002.4: If requested size not found, fallback to bundled 'base' model
+        if requested_size != 'base':
+            logger.warning(f"Requested model '{requested_size}' not found in bundle, falling back to 'base'")
+            for base_dir in bundled_base_dirs:
+                bundled_base_path = base_dir / "base"
+                if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
+                    logger.info(f"Using bundled fallback model: {bundled_base_path}")
+                    # Update model_size to reflect actual model being loaded
+                    self.model_size = "base"
+                    return str(bundled_base_path)
+
+        return None
+
     def _detect_system_resources(self) -> Dict[str, Union[int, float, bool]]:
         """
         Detect system resources (STT-REQ-006.1).
@@ -351,30 +392,9 @@ class WhisperSTTEngine:
             return model_id
 
         # Priority 4: Bundled model fallback (OFFLINE MODE ONLY - STT-REQ-002.4/002.6)
-        # Candidate directories for bundled models
-        bundled_base_dirs = [
-            Path(__file__).parent.parent.parent / "models" / "faster-whisper",
-            Path.home() / ".local" / "share" / "meeting-minutes-automator" / "models" / "faster-whisper",
-            Path("/opt/meeting-minutes-automator/models/faster-whisper"),
-        ]
-
-        # First, try the requested model size
-        for base_dir in bundled_base_dirs:
-            bundled_path = base_dir / self.model_size
-            if bundled_path.exists() and (bundled_path / "model.bin").exists():
-                logger.info(f"Using bundled model: {bundled_path}")
-                return str(bundled_path)
-
-        # STT-REQ-002.4/002.6: If requested size not found, fallback to bundled 'base' model
-        if self.model_size != 'base':
-            logger.warning(f"Requested model '{self.model_size}' not found in bundle, falling back to 'base'")
-            for base_dir in bundled_base_dirs:
-                bundled_base_path = base_dir / "base"
-                if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
-                    logger.info(f"Using bundled fallback model: {bundled_base_path}")
-                    # Update model_size to reflect actual model being loaded
-                    self.model_size = "base"
-                    return str(bundled_base_path)
+        bundled_path = self._detect_bundled_model_path(self.model_size)
+        if bundled_path:
+            return bundled_path
 
         # Priority 5: No model available after all fallbacks (offline mode only)
         # STT-REQ-002.4/002.6: Bundled model paths checked but not found
@@ -383,7 +403,7 @@ class WhisperSTTEngine:
             f"Checked locations:\n"
             f"  - User config: {user_config_path}\n"
             f"  - HuggingFace cache: {hf_cache_base / model_name_in_cache}\n"
-            f"  - Bundled base dirs: {', '.join(str(d) for d in bundled_base_dirs)}\n"
+            f"  - Bundled model directories (see _detect_bundled_model_path)\n"
             f"Please download the model manually or run in online mode."
         )
 
@@ -394,43 +414,59 @@ class WhisperSTTEngine:
         This method:
         1. Detects the model path using priority order
         2. Loads the faster-whisper model
-        3. Outputs "whisper_model_ready" message to stdout (STT-REQ-002.10)
-
-        If network errors occur during model detection, automatically falls back
-        to bundled base model (STT-REQ-002.4).
+        3. On network error, falls back to bundled base model (STT-REQ-002.4)
+        4. Outputs "whisper_model_ready" message to stdout (STT-REQ-002.10)
 
         Raises:
             Exception: If model loading fails even with bundled model
         """
         try:
-            # Detect model path with error handling
+            # Detect model path
             try:
                 self.model_path = self._detect_model_path()
             except FileNotFoundError as e:
                 # Offline mode with no cached model - cannot proceed
                 logger.error(f"Model detection failed: {e}")
                 raise  # Re-raise to abort initialization
-            except (TimeoutError, ConnectionError, OSError) as network_error:
-                # Network error during download attempt
-                # This should not happen if _detect_model_path() works correctly,
-                # but keep as safety fallback
-                logger.warning(f"Network error during model detection: {network_error}")
-                logger.info("Attempting fallback to HuggingFace Hub model ID: Systran/faster-whisper-base")
-                self.model_path = "Systran/faster-whisper-base"
 
             logger.info(f"Detected model path: {self.model_path}")
 
-            # Load faster-whisper model
+            # Try to load faster-whisper model
             logger.info(f"Loading faster-whisper model: {self.model_size}")
 
-            # Load faster-whisper model (Task 3.4 implementation)
-            self.model = WhisperModel(
-                self.model_path,
-                device="cpu",
-                compute_type="int8"
-            )
+            try:
+                self.model = WhisperModel(
+                    self.model_path,
+                    device="cpu",
+                    compute_type="int8"
+                )
+                logger.info("WhisperModel loaded successfully")
 
-            logger.info("WhisperModel loaded successfully")
+            except Exception as load_error:
+                # STT-REQ-002.4: Network error during download → bundled fallback
+                if not self.offline_mode:
+                    logger.warning(f"Failed to load model from {self.model_path}: {load_error}")
+                    logger.info("Attempting fallback to bundled base model (STT-REQ-002.4)")
+
+                    bundled_path = self._detect_bundled_model_path(self.model_size)
+                    if bundled_path:
+                        self.model_path = bundled_path
+                        logger.info(f"Retrying with bundled model: {self.model_path}")
+
+                        self.model = WhisperModel(
+                            self.model_path,
+                            device="cpu",
+                            compute_type="int8"
+                        )
+                        logger.info(f"Successfully loaded bundled fallback: {self.model_path}")
+                    else:
+                        logger.error("No bundled model available for fallback (STT-REQ-002.5)")
+                        raise FileNotFoundError(
+                            "faster-whisperモデルが見つかりません。インストールを確認してください"
+                        ) from load_error
+                else:
+                    # In offline mode, re-raise immediately
+                    raise
 
             # Output ready message to stdout (STT-REQ-002.10)
             ready_message = json.dumps({

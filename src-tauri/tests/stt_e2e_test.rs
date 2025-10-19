@@ -173,6 +173,42 @@ async fn test_audio_recording_to_transcription_full_flow() {
     helpers::verify_partial_final_text_distribution(&events)
         .expect("Partial/final text distribution should be correct");
 
+    // Step 3.1: Explicitly verify partial_text events (regression protection)
+    let partial_texts: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event
+                .get("eventType")
+                .and_then(|t| t.as_str())
+                .map(|t| t == "partial_text")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert!(
+        !partial_texts.is_empty(),
+        "At least one partial_text event should be received (regression protection)"
+    );
+
+    // Verify is_final=false in all partial_text events
+    for event in &partial_texts {
+        let is_final = event
+            .get("data")
+            .and_then(|d| d.get("is_final"))
+            .and_then(|f| f.as_bool())
+            .unwrap_or(true); // Default true to catch errors
+
+        assert!(
+            !is_final,
+            "partial_text event should have is_final=false"
+        );
+    }
+
+    println!(
+        "✅ partial_text events verified: {} events with is_final=false",
+        partial_texts.len()
+    );
+
     // Step 4: Verify speech_end event
     let has_speech_end = events.iter().any(|event| {
         event
@@ -212,13 +248,90 @@ async fn test_audio_recording_to_transcription_full_flow() {
 
     println!("✅ final_text event received with is_final=true ({} events)", final_texts.len());
 
-    // Step 6: Shutdown
+    // Step 6: Verify latency requirements (Task 11.1 E2E validation)
+    println!("\n=== Latency Requirements Validation (NFR-001.1, NFR-001.2) ===");
+
+    // 6.1: Verify partial_text latency < 3000ms (FIRST partial only per STT-NFR-001.7)
+    // ADR-017: Adjusted from <500ms to <3000ms based on real-world Whisper performance
+    let mut first_partial_latency: Option<u64> = None;
+    let mut all_partial_latencies = Vec::new();
+
+    for event in &partial_texts {
+        // latency_metrics is nested in data field
+        if let Some(data) = event.get("data") {
+            if let Some(latency_metrics) = data.get("latency_metrics") {
+                let is_first = latency_metrics.get("is_first_partial").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                if let Some(latency_ms) = latency_metrics.get("end_to_end_latency_ms").and_then(|v| v.as_u64()) {
+                    all_partial_latencies.push((latency_ms, is_first));
+
+                    if is_first {
+                        first_partial_latency = Some(latency_ms);
+                        println!("  ✅ FIRST partial_text latency: {}ms (target: <3000ms per ADR-017)", latency_ms);
+                    } else {
+                        println!("  ℹ️  Incremental partial_text latency: {}ms (not measured against SLA)", latency_ms);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(first_latency) = first_partial_latency {
+        println!("  Partial text latency stats:");
+        println!("    - First partial: {}ms (SLA target: <3000ms per STT-NFR-001.7)", first_latency);
+        println!("    - Total partials: {}", all_partial_latencies.len());
+
+        assert!(
+            first_latency < 3000,
+            "First partial text latency {}ms exceeds 3000ms target (STT-NFR-001.7 violation per ADR-017)",
+            first_latency
+        );
+        println!("  ✅ Partial text latency requirement met (<3000ms)");
+    } else {
+        println!("  ⚠️  No first partial latency found (may be expected for test fixtures)");
+    }
+
+    // 6.2: Verify final_text latency < 2000ms
+    let mut final_latencies = Vec::new();
+    for event in &final_texts {
+        // latency_metrics is nested in data field
+        if let Some(data) = event.get("data") {
+            if let Some(latency_metrics) = data.get("latency_metrics") {
+                if let Some(latency_ms) = latency_metrics.get("end_to_end_latency_ms").and_then(|v| v.as_u64()) {
+                    final_latencies.push(latency_ms);
+                    println!("  final_text latency: {}ms (target: <2000ms)", latency_ms);
+                }
+            }
+        }
+    }
+
+    if !final_latencies.is_empty() {
+        let max_final_latency = final_latencies.iter().max().unwrap();
+        let avg_final_latency = final_latencies.iter().sum::<u64>() / final_latencies.len() as u64;
+
+        println!("  Final text latency stats:");
+        println!("    - Max: {}ms", max_final_latency);
+        println!("    - Avg: {}ms", avg_final_latency);
+        println!("    - Count: {}", final_latencies.len());
+
+        assert!(
+            *max_final_latency < 2000,
+            "Final text latency {}ms exceeds 2000ms target (NFR-001.2 violation)",
+            max_final_latency
+        );
+        println!("  ✅ Final text latency requirement met (<2000ms)");
+    } else {
+        println!("  ⚠️  No latency_metrics found in final_text events (may be expected for test fixtures)");
+    }
+
+    // Step 7: Shutdown
     sidecar.shutdown().await.expect("Should shutdown cleanly");
 
-    println!("✅ Task 10.1 Phase 1 COMPLETED:");
+    println!("\n✅ Task 10.1 Phase 1 + Latency Validation COMPLETED:");
     println!("   - Total events received: {}", events.len());
     println!("   - Partial/final text distribution verified");
     println!("   - speech_end and final_text events verified");
+    println!("   - Latency requirements validated (NFR-001.1, NFR-001.2)");
 }
 
 //

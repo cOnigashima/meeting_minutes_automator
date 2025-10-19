@@ -108,6 +108,10 @@ class AudioPipeline:
         self._last_partial_time = None
         self._frame_count_since_partial = 0  # P1 fix: Frame-based partial timing
 
+        # Task 11.1: Latency measurement for NFR-001.1 validation
+        self._speech_start_timestamp_ms = None  # VAD speech_start detection time
+        self._speech_end_timestamp_ms = None    # VAD speech_end detection time
+
         # Configuration
         self.partial_interval_ms = 1000  # 1 second between partial results
         self.partial_interval_frames = 100  # P1 fix: 100 frames = 1 second (10ms/frame)
@@ -156,11 +160,13 @@ class AudioPipeline:
 
         if event_type == 'speech_start':
             pre_roll_data = vad_result.get('pre_roll')
-            return await self._handle_speech_start(pre_roll_data)
+            timestamp_ms = vad_result.get('timestamp_ms')  # Task 11.1
+            return await self._handle_speech_start(pre_roll_data, timestamp_ms)
 
         elif event_type == 'speech_end':
             segment_data = vad_result.get('segment', {})
-            return await self._handle_speech_end(segment_data)
+            timestamp_ms = vad_result.get('timestamp_ms')  # Task 11.1
+            return await self._handle_speech_end(segment_data, timestamp_ms)
 
         return None
 
@@ -205,11 +211,13 @@ class AudioPipeline:
 
             if event_type == 'speech_start':
                 pre_roll_data = vad_result.get('pre_roll')
-                return await self._handle_speech_start(pre_roll_data)
+                timestamp_ms = vad_result.get('timestamp_ms')  # Task 11.1
+                return await self._handle_speech_start(pre_roll_data, timestamp_ms)
 
             elif event_type == 'speech_end':
                 segment_data = vad_result.get('segment', {})
-                return await self._handle_speech_end(segment_data)
+                timestamp_ms = vad_result.get('timestamp_ms')  # Task 11.1
+                return await self._handle_speech_end(segment_data, timestamp_ms)
 
         return None
 
@@ -221,29 +229,47 @@ class AudioPipeline:
         This avoids the need for asyncio.sleep() in the caller,
         preventing performance regression (2 min recording = 2 min processing).
 
+        Task 11.2: Early trigger for first partial to meet NFR-001.1 (<500ms).
+        - First partial: 10 frames (100ms) for fast initial response
+        - Subsequent partials: 100 frames (1 second) for normal cadence
+
         Returns:
             True if partial should be generated
         """
         if not self._speech_start_time:
             return False
 
-        # P1 FIX: Check frame count instead of wall-clock time
-        # 100 frames = 1 second (at 10ms/frame)
-        if self._frame_count_since_partial >= self.partial_interval_frames:
-            self._frame_count_since_partial = 0  # Reset counter
-            return True
+        # Task 11.2: Early trigger for first partial (NFR-001.1 compliance)
+        # First partial needs fast response (<500ms end-to-end)
+        # - 10 frames (100ms) audio accumulation
+        # - ~1.5s Whisper processing
+        # - Total: ~1.6s (still exceeds 500ms, but 4x improvement from 6.5s)
+        is_first_partial = self._last_partial_time is None
+        
+        if is_first_partial:
+            # First partial: trigger after 10 frames (100ms)
+            if self._frame_count_since_partial >= 10:
+                self._frame_count_since_partial = 0
+                return True
+        else:
+            # Subsequent partials: trigger after 100 frames (1 second)
+            if self._frame_count_since_partial >= self.partial_interval_frames:
+                self._frame_count_since_partial = 0
+                return True
 
         return False
 
     async def _handle_speech_start(
         self,
-        pre_roll: Optional[bytes] = None
+        pre_roll: Optional[bytes] = None,
+        timestamp_ms: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Handle speech start event.
 
         Args:
             pre_roll: Optional pre-roll audio data from VAD (P0.5 FIX)
+            timestamp_ms: VAD detection timestamp for latency measurement (Task 11.1)
 
         Returns:
             Speech start event dict
@@ -260,23 +286,34 @@ class AudioPipeline:
         self._last_partial_time = None
         self._frame_count_since_partial = 0  # P1 fix: Reset frame counter
 
-        logger.info("Speech started in pipeline")
+        # Task 11.1: Record VAD detection timestamp for latency measurement
+        self._speech_start_timestamp_ms = timestamp_ms if timestamp_ms else self._speech_start_time
+
+        logger.info(f"Speech started in pipeline at VAD timestamp {self._speech_start_timestamp_ms}")
 
         return {
             'event': 'speech_start',
             'timestamp': self._speech_start_time
         }
 
-    async def _handle_speech_end(self, segment_data: Dict) -> Optional[Dict[str, Any]]:
+    async def _handle_speech_end(
+        self,
+        segment_data: Dict,
+        timestamp_ms: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Handle speech end event and generate final transcription.
 
         Args:
             segment_data: Segment data from VAD
+            timestamp_ms: VAD detection timestamp for latency measurement (Task 11.1)
 
         Returns:
             Final transcription result or None
         """
+        # Task 11.1: Record VAD speech_end detection timestamp
+        self._speech_end_timestamp_ms = timestamp_ms if timestamp_ms else int(time.time() * 1000)
+
         if not self.stt_engine:
             logger.warning("STT engine not configured, cannot transcribe")
             return {
@@ -307,6 +344,11 @@ class AudioPipeline:
             if isinstance(transcription, dict):
                 transcription['processing_time_ms'] = processing_time_ms
 
+            # Task 11.1: Calculate end-to-end latency (VAD speech_end → final_text delivery)
+            # Target: < 2000ms (STT-NFR-001 implied requirement)
+            current_time_ms = int(time.time() * 1000)
+            end_to_end_latency_ms = current_time_ms - self._speech_end_timestamp_ms
+
             # Update statistics
             self.stats["transcriptions_generated"] += 1
 
@@ -315,16 +357,25 @@ class AudioPipeline:
             self._speech_start_time = None
             self._last_partial_time = None
 
+            # Task 11.1: Log latency metrics (structured logging for analysis)
             logger.info(
                 f"Final transcription generated: "
                 f"text='{transcription.get('text', '')[:50]}...', "
-                f"time={processing_time_ms}ms"
+                f"whisper_time={processing_time_ms}ms, "
+                f"end_to_end_latency={end_to_end_latency_ms}ms "
+                f"(target: <2000ms, {'✅ PASS' if end_to_end_latency_ms < 2000 else '❌ FAIL'})"
             )
 
             return {
                 'event': 'final_text',
                 'transcription': transcription,
-                'segment': segment_data
+                'segment': segment_data,
+                'latency_metrics': {
+                    'whisper_processing_ms': processing_time_ms,
+                    'end_to_end_latency_ms': end_to_end_latency_ms,
+                    'vad_speech_end_timestamp_ms': self._speech_end_timestamp_ms,
+                    'delivery_timestamp_ms': current_time_ms
+                }
             }
 
         except Exception as e:
@@ -365,21 +416,48 @@ class AudioPipeline:
             if isinstance(transcription, dict):
                 transcription['processing_time_ms'] = processing_time_ms
 
+            # Task 11.1: Calculate end-to-end latency (VAD speech_start → **first** partial_text delivery)
+            # Target: < 500ms (STT-NFR-001 implied requirement)
+            # Note: Only measure latency for the FIRST partial in an utterance.
+            # Subsequent partials measure incremental response (last_partial → current_partial).
+            current_time_ms = int(time.time() * 1000)
+            
+            is_first_partial = self._last_partial_time is None
+            
+            if is_first_partial:
+                # First partial: measure from speech_start
+                end_to_end_latency_ms = current_time_ms - self._speech_start_timestamp_ms if self._speech_start_timestamp_ms else 0
+                latency_type = "first_partial"
+            else:
+                # Subsequent partials: measure from last partial (incremental latency)
+                end_to_end_latency_ms = current_time_ms - self._last_partial_time
+                latency_type = "incremental"
+
             # Update last partial time
-            self._last_partial_time = int(time.time() * 1000)
+            self._last_partial_time = current_time_ms
 
             # Update statistics
             self.stats["transcriptions_generated"] += 1
 
-            logger.debug(
-                f"Partial transcription generated: "
+            # Task 11.1: Log latency metrics (structured logging for analysis)
+            logger.info(
+                f"Partial transcription generated ({latency_type}): "
                 f"text='{transcription.get('text', '')[:50]}...', "
-                f"time={processing_time_ms}ms"
+                f"whisper_time={processing_time_ms}ms, "
+                f"end_to_end_latency={end_to_end_latency_ms}ms "
+                f"(target: <500ms, {'✅ PASS' if end_to_end_latency_ms < 500 else '❌ FAIL'})"
             )
 
             return {
                 'event': 'partial_text',
-                'transcription': transcription
+                'transcription': transcription,
+                'latency_metrics': {
+                    'whisper_processing_ms': processing_time_ms,
+                    'end_to_end_latency_ms': end_to_end_latency_ms,
+                    'vad_speech_start_timestamp_ms': self._speech_start_timestamp_ms,
+                    'delivery_timestamp_ms': current_time_ms,
+                    'is_first_partial': is_first_partial  # Flag for analysis
+                }
             }
 
         except Exception as e:

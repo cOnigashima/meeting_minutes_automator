@@ -68,42 +68,73 @@ class TestBundledModelFallback:
     @pytest.mark.asyncio
     async def test_fallback_to_bundled_model_on_network_error(self):
         """WHEN HuggingFace Hub download fails
-        THEN should fallback to bundled base model (STT-REQ-002.4)."""
+        THEN should fallback to bundled base model (STT-REQ-002.4).
+
+        Real control flow:
+        1. _detect_model_path() returns Hub model ID
+        2. WhisperModel() raises ConnectionError (network failure)
+        3. initialize() catches exception and calls _detect_bundled_model_path()
+        4. WhisperModel() succeeds with bundled path
+        """
         engine = WhisperSTTEngine(model_size="small", offline_mode=False)
 
         with patch.object(engine, '_detect_model_path') as mock_detect:
-            with patch('stt_engine.transcription.whisper_client.WhisperModel') as mock_whisper:
-                # Simulate HF Hub failure, then bundled model success
-                def detect_side_effect():
-                    # First try HF Hub, then fallback to bundled
-                    if mock_detect.call_count == 1:
-                        raise TimeoutError("HuggingFace Hub timeout")
-                    return "[app_resources]/models/faster-whisper/base"
+            with patch.object(engine, '_detect_bundled_model_path') as mock_bundled:
+                with patch('stt_engine.transcription.whisper_client.WhisperModel') as mock_whisper:
+                    # _detect_model_path returns Hub model ID (will trigger download)
+                    mock_detect.return_value = "Systran/faster-whisper-small"
 
-                mock_detect.side_effect = detect_side_effect
-                mock_whisper.return_value = MagicMock()
+                    # WhisperModel raises on first call (network error), succeeds on second
+                    mock_whisper.side_effect = [
+                        ConnectionError("Failed to download from HuggingFace Hub"),
+                        MagicMock()  # Success on bundled fallback
+                    ]
 
-                with patch('logging.Logger.info') as mock_log:
+                    # Bundled fallback path
+                    mock_bundled.return_value = "/opt/meeting-minutes-automator/models/faster-whisper/base"
+
                     await engine.initialize()
 
-                    # Should log fallback message
-                    log_messages = [str(call) for call in mock_log.call_args_list]
-                    fallback_logged = any('bundled' in msg.lower() or 'fallback' in msg.lower() for msg in log_messages)
+                    # Verify bundled fallback was attempted
+                    mock_bundled.assert_called_once_with("small")
+
+                    # Verify model_path was updated to bundled path
+                    assert engine.model_path == "/opt/meeting-minutes-automator/models/faster-whisper/base"
+
+                    # Verify WhisperModel was called twice (first fail, second success)
+                    assert mock_whisper.call_count == 2
 
     @pytest.mark.asyncio
     async def test_error_when_bundled_model_not_found(self):
         """WHEN both HuggingFace Hub and bundled model fail
-        THEN should raise error (STT-REQ-002.5)."""
+        THEN should raise error (STT-REQ-002.5).
+
+        Real control flow:
+        1. _detect_model_path() returns Hub model ID
+        2. WhisperModel() raises ConnectionError (network failure)
+        3. _detect_bundled_model_path() returns None (no bundled model)
+        4. initialize() raises FileNotFoundError
+        """
         engine = WhisperSTTEngine(model_size="small", offline_mode=False)
 
         with patch.object(engine, '_detect_model_path') as mock_detect:
-            # Both HF Hub and bundled model fail
-            mock_detect.side_effect = FileNotFoundError("No model found")
+            with patch.object(engine, '_detect_bundled_model_path') as mock_bundled:
+                with patch('stt_engine.transcription.whisper_client.WhisperModel') as mock_whisper:
+                    # _detect_model_path returns Hub model ID
+                    mock_detect.return_value = "Systran/faster-whisper-small"
 
-            with pytest.raises(Exception) as exc_info:
-                await engine.initialize()
+                    # WhisperModel raises network error
+                    mock_whisper.side_effect = ConnectionError("Network error")
 
-            assert "model" in str(exc_info.value).lower()
+                    # Bundled fallback also fails
+                    mock_bundled.return_value = None
+
+                    with pytest.raises(FileNotFoundError) as exc_info:
+                        await engine.initialize()
+
+                    # Verify error message (STT-REQ-002.5)
+                    assert "faster-whisper" in str(exc_info.value).lower()
+                    assert "インストール" in str(exc_info.value)
 
     @pytest.mark.asyncio
     @patch('logging.Logger.info')

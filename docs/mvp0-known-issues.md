@@ -26,9 +26,13 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 - 手動E2Eテストに依存（再現性・自動化の観点で脆弱）
 
 **対応予定**:
-- [ ] Puppeteer/Playwright を使用したChrome拡張の自動E2Eテスト追加
+- [ ] Playwright を使用したChrome拡張の自動E2Eテスト追加
 - [ ] WebSocket → Chrome拡張の疎通を含む完全なE2Eシナリオ実装
 - [ ] CI/CD環境でのヘッドレステスト対応
+
+**進捗 (2025-10-19)**:
+- ✅ `docs/platform-verification.md` に Chrome 拡張向け手動スモーク手順を追加（MVP1開発者フローを標準化）
+- ⏳ 自動化シナリオは `meeting-minutes-ci` / Task 3.x に移管予定（Playwright 採用を検討中）
 
 **関連ファイル**:
 - `src-tauri/tests/e2e_test.rs:8-154`
@@ -51,6 +55,10 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 - [ ] Fake Sidecar実装（テスト用モックプロセス）
 - [ ] 環境変数 `USE_FAKE_SIDECAR=true` での切り替え機構
 - [ ] CI環境でのPythonバージョン固定（pyenv/asdf等）
+
+**進捗 (2025-10-19)**:
+- ⏳ `meeting-minutes-ci/requirements.md` に環境固定の要件を追加予定（設計ドラフト中）
+- ⏳ Fake Sidecar は優先度低（代替案: GitHub Actions の Python マトリクスで吸収）
 
 **関連ファイル**:
 - `src-tauri/tests/e2e_test.rs:101-154`
@@ -77,6 +85,10 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 - [ ] `logger.rs` 経由で `ipc_latency_ms` メトリクス出力
 - [ ] `scripts/performance_report.py` での集計確認
 
+**進捗 (2025-10-19)**:
+- ⏳ `meeting-minutes-stt/tasks.md` の Task 11.x (Diagnostics) でトラック中
+- ⏳ `scripts/performance_report.py` は雛形のみ。MVP1 後半で実装予定
+
 **関連ファイル**:
 - `src-tauri/src/python_sidecar.rs` (IPC通信ロジック)
 - `src-tauri/src/logger.rs` (メトリクス出力)
@@ -100,6 +112,10 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 - [ ] 全 `println!`/`eprintln!` を `log_info!`/`log_error!` 等に置き換え
 - [ ] 主要イベント（start/stop recording, IPC送受信, WebSocket broadcast）のログ記録
 - [ ] エラーハンドリング時の詳細ログ出力
+
+**進捗 (2025-10-19)**:
+- ⏳ `src-tauri/src/logger.rs` は構造化ログの骨格あり。呼び出しは今後 Task 8.x で置き換え予定
+- ⏳ ログレベルポリシーは `.kiro/specs/meeting-minutes-stt/design.md` NFR セクションで定義済み
 
 **関連ファイル**:
 - `src-tauri/src/logger.rs` (構造化ログモジュール)
@@ -125,6 +141,10 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 - [ ] スキーマバリデーション（serde_jsonでの型チェック強化）
 - [ ] `scripts/security_test.py` での実テスト追加
 
+**進捗 (2025-10-19)**:
+- ⏳ `ipc_protocol.rs` に `check_version_compatibility` を実装済み（フォーマット検証は開始）
+- ⏳ サイズ上限/フィールド検証は Task 7.2 follow-up（`meeting-minutes-stt/tasks.md` 参照）
+
 **関連ファイル**:
 - `src-tauri/src/python_sidecar.rs:receive_message()` (バリデーション追加箇所)
 - `scripts/security_test.py` (セキュリティテストスクリプト)
@@ -148,6 +168,10 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 - [ ] `docs/platform-verification.md` への実証跡追記
 - [ ] CI/CDマトリクステストでの自動化（`.kiro/specs/meeting-minutes-ci/` で対応）
 
+**進捗 (2025-10-19)**:
+- ✅ macOS の手動検証ログを更新 (`docs/platform-verification.md` 参照)
+- ⏳ Windows/Linux は開発マシン未手配。CI マトリクス設計で代替可否を検討中（meeting-minutes-ci）
+
 **関連ファイル**:
 - `docs/platform-verification.md` (検証ドキュメント)
 - `.kiro/specs/meeting-minutes-ci/` (CI/CD仕様、マトリクステスト計画)
@@ -158,12 +182,12 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 
 | 優先度 | 項目 | 理由 |
 |-------|------|------|
-| **High** | 9-1: IPCレイテンシメトリクス | パフォーマンス測定の基礎データ、MVP1で必須 |
-| **High** | 9-2: 構造化ログ使用 | デバッグ・運用効率に直結、即座に対応可能 |
-| **Medium** | 9-3: IPC JSONバリデーション | セキュリティ要件、MVP1でのリアルSTT前に必須 |
-| **Medium** | 8-1: Chrome拡張E2Eテスト | 自動化の完全性、CI/CD構築時に対応 |
-| **Low** | 8-2: Python依存の脆弱性 | 代替手段（Fake Sidecar）の実装コスト高、CI環境固定で対応可 |
-| **Low** | 9-4: クロスプラットフォーム検証 | CI/CDマトリクステストで自動化予定 |
+| **High** | 9-1: IPCレイテンシメトリクス | パフォーマンス測定の基礎データ、MVP1 後半で要実装 |
+| **High** | 9-2: 構造化ログ使用 | デバッグ・運用効率に直結、MVP1 の安定化に必須 |
+| **Medium** | 9-3: IPC JSONバリデーション | セキュリティ要件、Task 7.x の追跡事項 |
+| **Medium** | 8-1: Chrome拡張E2Eテスト | 自動化はCI整備と同時に実施。現在は手動スモークで代替 |
+| **Low** | 8-2: Python依存の脆弱性 | CI側でPythonバージョン固定するまで保留。Fake SidecarはP2 |
+| **Low** | 9-4: クロスプラットフォーム検証 | 環境確保後に優先度再評価（CIマトリクス実装と連携） |
 
 ---
 
@@ -181,6 +205,7 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 **ステータス**:
 - [x] `meeting-minutes-stt/requirements.md` に要件追加（STT-REQ-E2E-001）
 - [ ] `meeting-minutes-ci/design.md` に CI統合設計追加
+- [ ] Playwright テストスイート実装（Task 10.x で追跡）
 
 ---
 
@@ -195,6 +220,7 @@ MVP0 Walking Skeleton完成後の専門家レビュー（Ask 8-9）で指摘さ�
 
 **ステータス**:
 - [ ] `meeting-minutes-ci/requirements.md` に要件追加
+- ⏳ GitHub Actions マトリクス設計 (Python 3.9-3.12) をドラフト中
 
 ---
 

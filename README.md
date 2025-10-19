@@ -4,11 +4,14 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 
 ## 🎯 Project Status
 
-**Current Phase**: Walking Skeleton (MVP0) ✅ **完成**
+**Current Phase**: MVP1 Real STT Integration 🔄（2025-10-19時点）
 
-全コンポーネント間のE2E疎通確認が完了し、後続MVP（STT、Docs同期、LLM要約）の実装基盤が確立されました。
+- Pythonサイドカーは `VoiceActivityDetector` + `AudioPipeline` + `WhisperSTTEngine` によるリアルタイム文字起こしを実装済み（`python-stt/main.py`）。  
+- Rust側はイベントストリーム対応のIPC/ WebSocket配送を実装し、部分結果と確定結果に `isPartial` / `confidence` / `language` / `processingTimeMs` を含めて配信します（`src-tauri/src/commands.rs`, `src-tauri/src/websocket.rs`）。  
+- クロスプラットフォームの `AudioDeviceAdapter`（CoreAudio / WASAPI / ALSA）実装とイベント監視は完了済みですが、UI統合中のため既定では `FakeAudioDevice` を使用しています（`src-tauri/src/state.rs`）。  
+- Chrome拡張はストレージ同期と再接続ロジックを保持し、拡張されたメッセージ形式を受信できます。
 
-### 完成した機能（MVP0）
+### 完了した機能（MVP0）
 - ✅ Tauri + Python + Chrome拡張の3プロセスアーキテクチャ
 - ✅ Fake音声録音（100ms間隔でダミーデータ生成）
 - ✅ Pythonサイドカープロセス管理（起動/終了/ヘルスチェック）
@@ -17,8 +20,13 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 - ✅ Chrome拡張スケルトン（Google Meetページで動作）
 - ✅ E2E疎通確認（録音→処理→配信→表示）
 
+### 現在進行中の成果（MVP1 スナップショット）
+- ✅ WhisperベースのリアルSTTパイプラインとリソース監視（モデル自動ダウングレード/アップグレード提案）
+- ✅ IPCイベントストリーム（speech_start / partial_text / final_text / speech_end / no_speech / model_change）
+- ✅ Rust統合テスト（`stt_e2e_test.rs`, `audio_ipc_integration.rs`）でサイドカーとの往復を検証
+- ⏳ 実マイク入力のUI統合（`AudioDeviceAdapter`と録音デバイス選択UIの結合を実装中）
+
 ### 次のフェーズ
-- 📋 MVP1: Real STT（faster-whisper統合、音声デバイス管理）
 - 📋 MVP2: Google Docs同期（OAuth 2.0、Named Range管理）
 - 📋 MVP3: LLM要約 + UI（プロダクション準備）
 
@@ -48,9 +56,9 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 
 ### コンポーネント
 
-- **Tauri App** (Rust + React): メインアプリケーション、プロセス管理、WebSocketサーバー
-- **Python Sidecar**: 音声処理（MVP0ではFake実装）
-- **Chrome Extension**: Google Meetページでの音声取得、文字起こし結果表示
+- **Tauri App** (Rust + React): メインアプリケーション、Pythonサイドカー/音声デバイス管理、WebSocketサーバー
+- **Python Sidecar**: webrtcvad + faster-whisper によるリアルタイム文字起こしとモデル監視
+- **Chrome Extension**: Google Meetページでの音声取得、部分/確定文字起こしの表示と状態保持
 
 ## 🚀 Quick Start
 
@@ -94,11 +102,13 @@ ls python-stt/main.py
 cd python-stt
 python3 -m venv .venv
 source .venv/bin/activate  # Windowsは .venv\Scripts\activate
-pip install -r requirements-dev.txt
+pip install -r requirements.txt      # faster-whisper / webrtcvad / numpy など本番依存
+pip install -r requirements-dev.txt  # pytest など開発用依存
 cd ..
 ```
 > Rust側の `.cargo/config.toml` は `python-stt/.venv/bin/python` を指しています。  
 > フォルダ名を `venv` などに変えるとテストが失敗するので、必ず `.venv` を使ってください。
+> 初回の `WhisperSTTEngine` 利用時に Hugging Face からモデル（既定: `small`）のダウンロードが発生します。オフライン環境では事前にキャッシュを用意してください。
 
 ### 開発モードでの起動
 
@@ -118,7 +128,7 @@ Tauri UIウィンドウが自動で開きます（http://localhost:1420/）
 
 ## 🧪 E2Eテスト手順
 
-Walking Skeletonの全フローを手動で検証します。
+MVP0で確立した疎通に加え、MVP1のリアルSTTストリームを検証するための手順です。
 
 ### 1. Chrome拡張の読み込み
 
@@ -144,31 +154,42 @@ Walking Skeletonの全フローを手動で検証します。
 ### 3. 録音開始テスト
 
 1. **Tauri UIウィンドウ**で「Start Recording」ボタンをクリック
-2. **Chrome DevTools Console**（Google Meetのタブ）で、100ms間隔で以下が表示されることを確認：
-```
-[Meeting Minutes] Received message: {type: 'transcription', ...}
-[Meeting Minutes] 📝 Transcription: This is a fake transcription result
-```
+2. **Tauriコンソール**で以下のイベントログを確認（無音の場合は `🤫 No speech detected` が出力されます）
+3. **Chrome DevTools Console**で WebSocket メッセージを確認  
+   ```
+   [Meeting Minutes] Received message: {type: 'transcription', text: '', isPartial: false, ...}
+   ```
+   `FakeAudioDevice` は無音データを生成するため、テキストは空文字列になります。これはハンドシェイク確認用の期待挙動です。
 
 ### 4. 録音停止テスト
 
 1. **Tauri UIウィンドウ**で「Stop Recording」ボタンをクリック
 2. **Chrome DevTools Console**でログ出力が停止することを確認
 
+### 5. 実音声ストリームの検証（任意）
+
+リアルSTTパイプラインと部分結果配信を確認するには以下のいずれかを実行してください。
+
+- **Rust統合テスト**: `cd src-tauri && cargo test --test stt_e2e_test -- --nocapture`  
+  Whisperモデルがダウンロードされ、`test_audio_short.wav` を用いた `partial_text` / `final_text` イベントを確認できます。
+- **Python統合テスト**: `cd python-stt && .venv/bin/python -m pytest tests/test_audio_integration.py -k process_audio_stream -vv`  
+  `process_audio_stream` ハンドラが `speech_start → partial_text → final_text → speech_end` を送出することを検証します。
+- **手動検証**: `src-tauri/tests/fixtures/test_audio_short.wav` を再生しながら実マイクを `AudioDeviceAdapter` に接続する（UI統合が完了したブランチで有効）。
+
 ### 期待される動作
 
 ```
-Tauri UI「Start Recording」クリック
+Tauri UI「Start Recording」
     ↓
-FakeAudioDevice: 100ms間隔で16バイトダミーデータ生成
+FakeAudioDevice（既定）または AudioDeviceAdapter（実装中）が音声フレームを生成
     ↓
-Rust → Python IPC: process_audioメッセージ送信
+Rust → Python IPC: process_audio_stream リクエスト送信
     ↓
-Python: "This is a fake transcription result" 返信
+Python AudioPipeline: VAD → Whisper 推論 → 部分/確定テキスト生成
     ↓
-Rust → Chrome WebSocket: transcriptionメッセージ配信
+Rust WebSocket: transcription イベント（isPartial / confidence / language / processingTimeMs 付き）を配信
     ↓
-Chrome Extension: コンソールに表示
+Chrome Extension: コンソールと `chrome.storage.local` にストリームを反映
 ```
 
 ## 🔧 トラブルシューティング
@@ -235,15 +256,23 @@ meeting-minutes-automator/
 │   └── main.tsx
 ├── src-tauri/               # Rust backend
 │   ├── src/
-│   │   ├── audio.rs         # FakeAudioDevice
-│   │   ├── python_sidecar.rs # Pythonプロセス管理
-│   │   ├── websocket.rs     # WebSocketサーバー
-│   │   ├── commands.rs      # Tauriコマンド
-│   │   ├── state.rs         # アプリケーション状態
-│   │   └── lib.rs           # メインエントリーポイント
+│   │   ├── audio.rs                 # FakeAudioDevice（デフォルト開発用）
+│   │   ├── audio_device_adapter.rs  # CoreAudio / WASAPI / ALSA 実装
+│   │   ├── commands.rs              # IPCイベントストリーム → WebSocket配信
+│   │   ├── ipc_protocol.rs          # プロトコル定義
+│   │   ├── python_sidecar.rs        # サイドカープロセス管理
+│   │   ├── websocket.rs             # WebSocketサーバー
+│   │   └── state.rs                 # アプリケーション状態
+│   ├── tests/                      # stt_e2e_test / audio_ipc_integration など
 │   └── Cargo.toml
-├── python-stt/              # Python音声処理
-│   └── main.py              # IPC handler + Fake processor
+├── python-stt/                      # Python音声処理
+│   ├── main.py                      # AudioProcessor（VAD→Whisper→IPC）
+│   ├── stt_engine/
+│   │   ├── audio_pipeline.py
+│   │   ├── transcription/           # whisper_client / voice_activity_detector
+│   │   ├── resource_monitor.py
+│   │   └── ipc_handler.py
+│   └── tests/                       # pytestベースの統合・単体テスト
 ├── chrome-extension/        # Chrome拡張
 │   ├── manifest.json        # Manifest V3
 │   ├── content-script.js    # WebSocketクライアント

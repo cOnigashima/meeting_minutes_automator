@@ -51,11 +51,11 @@
 }
 ```
 
-**状態管理**: Zustand
-- **理由**: 軽量性とTauriアプリの要件に最適
+**状態管理**: 現行MVPでは `useState` ベースのシンプル構成  
+- **方針**: グローバル状態が必要になったタイミングで Zustand などを導入し、導入時は ADR で目的と影響をレビューする。
 
-**UI Library**: shadcn/ui + Tailwind CSS
-- **理由**: 一貫したデザインシステムとカスタマイズ性
+**UI Library**: プレーンCSS + `App.css`  
+- **理由**: MVP1 では録音ボタン中心の最小UIを提供。Tailwind / shadcn は今後のUI拡張時に検討する。
 
 ### Chrome拡張
 
@@ -67,10 +67,10 @@
 }
 ```
 
-**Frontend Framework**: React + TypeScript
-- **Popup**: 拡張のメインUI
-- **Content Script**: Google Docsページ操作 + **WebSocket管理**（ADR-004採用）
-- **Service Worker**: バックグラウンド処理とコマンド中継
+**Frontend Framework**: 現状はプレーン TypeScript + DOM API  
+- **Popup**: まだ未実装（MVP2 でReactベースのUIを導入予定）  
+- **Content Script**: Google Meetページ上で WebSocket 管理・表示ログ出力（ADR-004）  
+- **Service Worker**: Manifest V3 制約下での最小メッセージリレーのみ実装
 
 **アーキテクチャ決定**:
 - **[ADR-004: Chrome Extension WebSocket Management](../.kiro/specs/meeting-minutes-core/adrs/ADR-004-chrome-extension-websocket-management.md)**
@@ -117,231 +117,60 @@ serde = { version = "1.0", features = ["derive"] }
 tokio-tungstenite = "0.20"
 ```
 
-**Database**: SQLite with rusqlite
-```toml
-rusqlite = { version = "0.29", features = ["bundled"] }
-```
+**永続化**: ファイルベースのローカルセッションディレクトリ  
+- `AppData/recordings/<session_id>/` 配下に `audio.wav` / `transcription.jsonl` / `session.json` を保存（Task 6.x）。  
+- 将来的にSQLite等へ移行する場合は ADR で判断する。
 
 **音声処理インターフェース**: Rust subprocess → Python (stdin/stdout JSON IPC)
 
 ### Python Sidecar Lifecycle Management
 
-**プロセス起動とライフサイクル**:
+- **起動**: `PythonSidecarManager::start()` が Python 実行ファイルを検出し、`python-stt/main.py` を `-u`（行バッファ）付きで起動。  
+- **レディシグナル**: Whisper モデル初期化後、Python 側は `{"type":"ready","message":"Python sidecar ready (MVP1 Real STT)"}` を標準出力に送信し、Rust 側 `wait_for_ready()` がハンドシェイクを完了する。  
+- **終了処理**: `PythonSidecarManager::shutdown()` が `{"type":"shutdown"}` を送信し、3秒待機後にプロセスを回収。`Drop` 実装で異常終了時もクリーンアップ。  
 
-Pythonサイドカープロセスは、Tauriアプリケーションの起動時に自動的に開始され、アプリ終了時に適切にクリーンアップされます。
+#### IPCメッセージ（行区切り JSON）
 
-#### 起動シーケンス
-
-```rust
-// Rust側（Tauri）
-pub struct PythonSidecarManager {
-    process: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-}
-
-impl PythonSidecarManager {
-    pub async fn start() -> Result<Self> {
-        // 1. Pythonインタープリタのパス検出
-        let python_path = detect_python_executable()?;
-
-        // 2. サイドカースクリプトのパス解決（統一されたエントリーポイント）
-        let script_path = resolve_sidecar_path("python-stt/main.py")?;
-
-        // 3. プロセス起動
-        let mut process = Command::new(python_path)
-            .arg(script_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        let stdin = process.stdin.take().unwrap();
-        let stdout = BufReader::new(process.stdout.take().unwrap());
-
-        // 4. 初期化完了待機（タイムアウト10秒）
-        let manager = Self { process, stdin, stdout };
-        manager.wait_for_ready(Duration::from_secs(10)).await?;
-
-        Ok(manager)
-    }
-
-    async fn wait_for_ready(&self, timeout: Duration) -> Result<()> {
-        // "ready"メッセージの受信待機
-    }
-}
-```
-
-#### IPC通信プロトコル (stdin/stdout JSON)
-
-**メッセージフォーマット**:
+- **音声ストリーム要求**（Rust → Python）
 ```json
 {
-  "id": "unique-message-id",
-  "type": "request|response|event|error",
-  "method": "transcribe|configure|health_check",
-  "params": { ... },
-  "timestamp": 1234567890
+  "id": "chunk-1739954160123",
+  "type": "request",
+  "version": "1.0",
+  "method": "process_audio_stream",
+  "params": {
+    "audio_data": [0, 0, 12, 255, ...]
+  }
+}
+```
+  - `audio_data` は 16kHz 10ms フレーム（320byte）をそのまま `Vec<u8>` として送信（Base64 ではない）。
+
+- **イベント通知**（Python → Rust）
+```json
+{"type":"event","version":"1.0","eventType":"speech_start","data":{"requestId":"chunk-1739954160123","timestamp":1739954160456}}
+{"type":"event","version":"1.0","eventType":"partial_text","data":{"requestId":"chunk-1739954160123","text":"hello","is_final":false,"confidence":0.62,"language":"en","processing_time_ms":312,"model_size":"small"}}
+{"type":"event","version":"1.0","eventType":"final_text","data":{"requestId":"chunk-1739954160123","text":"hello world","is_final":true,"confidence":0.79,"language":"en","processing_time_ms":812,"model_size":"small"}}
+{"type":"event","version":"1.0","eventType":"speech_end","data":{"requestId":"chunk-1739954160123","timestamp":1739954161820}}
+{"type":"event","version":"1.0","eventType":"model_change","data":{"old_model":"small","new_model":"tiny","reason":"cpu_high"}}
+```
+
+- **エラー通知**（Python → Rust）
+```json
+{
+  "type": "error",
+  "id": "chunk-1739954160123",
+  "version": "1.0",
+  "errorCode": "AUDIO_PIPELINE_ERROR",
+  "errorMessage": "webrtcvad returned invalid frame length",
+  "recoverable": true
 }
 ```
 
-**通信フロー**:
-1. **Rust → Python (Request)**: 音声データとメタデータをJSON + Base64でstdinに送信
-2. **Python → Rust (Response)**: 文字起こし結果をJSON形式でstdoutに出力
-3. **Python → Rust (Event)**: 部分結果や進捗通知を非同期イベントとして送信
+- **レスポンス互換性**: 旧来の `{"type":"process_audio","audio_data":...}` / `{"type":"transcription_result"}` も受信可能（LegacyIpcMessage → IpcMessage 変換）。新旧クライアント混在を想定し、Rust 側はレガシー形式をログ警告付きで処理する。
 
-**実装例**:
-```rust
-// Rust側: 音声データ送信
-pub async fn send_audio_chunk(&mut self, chunk: &AudioChunk) -> Result<()> {
-    let message = json!({
-        "id": Uuid::new_v4().to_string(),
-        "type": "request",
-        "method": "transcribe",
-        "params": {
-            "audio_data": base64::encode(&chunk.data),
-            "sample_rate": chunk.sample_rate,
-            "is_final": chunk.is_final,
-        },
-        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-    });
-
-    writeln!(self.stdin, "{}", message.to_string())?;
-    self.stdin.flush()?;
-    Ok(())
-}
-
-// Rust側: 応答受信
-pub async fn receive_response(&mut self) -> Result<TranscriptionResponse> {
-    let mut line = String::new();
-    self.stdout.read_line(&mut line)?;
-    let response: TranscriptionResponse = serde_json::from_str(&line)?;
-    Ok(response)
-}
-```
-
-```python
-# Python側: メインループ
-async def main():
-    await send_ready_signal()
-
-    while True:
-        try:
-            # stdinから1行読み込み
-            line = await asyncio.get_event_loop().run_in_executor(
-                None, sys.stdin.readline
-            )
-
-            if not line:
-                break
-
-            message = json.loads(line)
-
-            # メソッドディスパッチ
-            if message["method"] == "transcribe":
-                result = await handle_transcribe(message["params"])
-            elif message["method"] == "health_check":
-                result = {"status": "healthy"}
-
-            # 応答送信
-            response = {
-                "id": message["id"],
-                "type": "response",
-                "result": result,
-                "timestamp": time.time(),
-            }
-            print(json.dumps(response), flush=True)
-
-        except Exception as e:
-            error_response = {
-                "id": message.get("id", "unknown"),
-                "type": "error",
-                "error": str(e),
-            }
-            print(json.dumps(error_response), flush=True)
-```
-
-#### ヘルスチェック機構
-
-**定期的なヘルスチェック**:
-- Rust側から5秒ごとに`health_check`リクエストを送信
-- Python側が3秒以内に応答しない場合、プロセス異常と判断
-- 3回連続失敗でプロセス再起動を試行
-
-```rust
-pub async fn health_check_loop(&mut self) {
-    let mut interval = tokio::time::interval(Duration::from_secs(5));
-    let mut failure_count = 0;
-
-    loop {
-        interval.tick().await;
-
-        match self.send_health_check().await {
-            Ok(_) => failure_count = 0,
-            Err(_) => {
-                failure_count += 1;
-                if failure_count >= 3 {
-                    log::error!("Python sidecar health check failed 3 times, restarting...");
-                    self.restart().await?;
-                    failure_count = 0;
-                }
-            }
-        }
-    }
-}
-```
-
-#### クラッシュ時の自動再起動
-
-**再起動ポリシー**:
-- 初回失敗: 即座に再起動
-- 2回目失敗: 5秒待機後に再起動
-- 3回目失敗: 30秒待機後に再起動
-- 4回目以降: ユーザー通知と手動再起動を促す
-
-```rust
-pub async fn restart(&mut self) -> Result<()> {
-    // 1. 既存プロセスの終了
-    self.shutdown().await?;
-
-    // 2. 再起動試行
-    *self = Self::start().await?;
-
-    Ok(())
-}
-
-pub async fn shutdown(&mut self) -> Result<()> {
-    // Graceful shutdown
-    let _ = self.send_shutdown_signal().await;
-
-    // 3秒待機
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    // まだ生きている場合は強制終了
-    if let Ok(None) = self.process.try_wait() {
-        self.process.kill()?;
-    }
-
-    Ok(())
-}
-```
-
-#### ゾンビプロセス防止
-
-**プロセス監視とクリーンアップ**:
-- Tauriアプリ終了時の`Drop` traitでの確実なクリーンアップ
-- シグナルハンドラ（SIGTERM, SIGINT）での適切な終了処理
-- プロセスIDの記録とOS再起動後の孤児プロセス検出
-
-```rust
-impl Drop for PythonSidecarManager {
-    fn drop(&mut self) {
-        // 同期的なクリーンアップ
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-    }
-}
-```
+#### Backpressure & Monitoring（ADR-013）
+- 音声送信用の `tokio::sync::mpsc` と 5 秒リングバッファを採用し、Python 側の処理遅延時に `no_speech` / タイムアウトを Rust 側へ通知。
+- ResourceMonitor は CPU/メモリ監視を 30 秒周期で実行し、ダウングレード提案・強制停止・アップグレード提案を IPC イベントで送信する。
 
 ### Audio Processing Backend (Python)
 

@@ -322,37 +322,49 @@ class AudioProcessor:
 
                 elif event_type == 'partial_text':
                     transcription = result['transcription']
+                    # Task 11.1: Include latency_metrics for E2E validation
+                    data = {
+                        'requestId': msg_id,
+                        'text': transcription['text'],
+                        'is_final': False,  # STT-REQ-003.8
+                        'confidence': transcription.get('confidence'),
+                        'language': transcription.get('language'),
+                        'processing_time_ms': transcription.get('processing_time_ms'),
+                        'model_size': self.stt_engine.model_size
+                    }
+                    # Include latency_metrics if available (Task 11.1)
+                    if 'latency_metrics' in result:
+                        data['latency_metrics'] = result['latency_metrics']
+
                     await self.ipc.send_message({
                         'type': 'event',
                         'version': '1.0',
                         'eventType': 'partial_text',
-                        'data': {
-                            'requestId': msg_id,
-                            'text': transcription['text'],
-                            'is_final': False,  # STT-REQ-003.8
-                            'confidence': transcription.get('confidence'),
-                            'language': transcription.get('language'),
-                            'processing_time_ms': transcription.get('processing_time_ms'),
-                            'model_size': self.stt_engine.model_size
-                        }
+                        'data': data
                     })
 
                 elif event_type == 'final_text':
                     transcription = result['transcription']
                     # Send final_text event
+                    # Task 11.1: Include latency_metrics for E2E validation
+                    data = {
+                        'requestId': msg_id,
+                        'text': transcription['text'],
+                        'is_final': True,  # STT-REQ-003.9
+                        'confidence': transcription.get('confidence'),
+                        'language': transcription.get('language'),
+                        'processing_time_ms': transcription.get('processing_time_ms'),
+                        'model_size': self.stt_engine.model_size
+                    }
+                    # Include latency_metrics if available (Task 11.1)
+                    if 'latency_metrics' in result:
+                        data['latency_metrics'] = result['latency_metrics']
+
                     await self.ipc.send_message({
                         'type': 'event',
                         'version': '1.0',
                         'eventType': 'final_text',
-                        'data': {
-                            'requestId': msg_id,
-                            'text': transcription['text'],
-                            'is_final': True,  # STT-REQ-003.9
-                            'confidence': transcription.get('confidence'),
-                            'language': transcription.get('language'),
-                            'processing_time_ms': transcription.get('processing_time_ms'),
-                            'model_size': self.stt_engine.model_size
-                        }
+                        'data': data
                     })
 
                     # FIXED: Immediately send speech_end after final_text

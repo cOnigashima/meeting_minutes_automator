@@ -48,6 +48,7 @@ WebSocketサーバーがポート9001-9100の範囲で起動します。
 - WebSocketクライアントを実装
 - ポートスキャン（9001-9100）とリトライロジックを実装
 - 接続が切れた場合、指数バックオフでリトライ（1s→2s→4s→8s→16s）
+- 受信した `transcription` メッセージをコンソール表示し、`chrome.storage.local` に `isPartial` / `confidence` / `language` / `processingTimeMs` 付きで保存
 
 ### Service Worker（service-worker.js）
 
@@ -76,9 +77,14 @@ WebSocketサーバーがポート9001-9100の範囲で起動します。
   "message_id": "ws-2",
   "session_id": "uuid-v4",
   "text": "文字起こし結果",
-  "timestamp": 1234567890
+  "timestamp": 1234567890,
+  "isPartial": true,
+  "confidence": 0.74,
+  "language": "ja",
+  "processingTimeMs": 412
 }
 ```
+最終結果では `isPartial` が `false` になり、`confidence` / `language` / `processingTimeMs` は Whisper 推論の戻り値に応じて付与されます。
 
 #### Error
 ```json

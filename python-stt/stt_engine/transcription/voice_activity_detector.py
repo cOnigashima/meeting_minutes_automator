@@ -131,14 +131,17 @@ class VoiceActivityDetector:
 
         Returns:
             Dictionary with event information, or None if no event occurred:
-            - {'event': 'speech_start'} when speech onset is detected
-            - {'event': 'speech_end', 'segment': {...}} when speech offset is detected
+            - {'event': 'speech_start', 'timestamp_ms': int} when speech onset is detected
+            - {'event': 'speech_end', 'segment': {...}, 'timestamp_ms': int} when speech offset is detected
 
         Requirements:
             STT-REQ-003.3: Frame-by-frame speech detection
             STT-REQ-003.4: Speech onset detection (0.3s continuous speech)
             STT-REQ-003.5: Speech offset detection (0.5s continuous silence)
+            STT-NFR-001.1: Latency measurement for performance validation
         """
+        import time
+        
         # Determine if frame contains speech (STT-REQ-003.3)
         is_speech_frame = self.is_speech(frame)
 
@@ -172,10 +175,14 @@ class VoiceActivityDetector:
                     # Clear pre-roll buffer for next segment
                     self.pre_roll_buffer.clear()
 
-                    logger.info(f"Speech onset detected with {len(self.current_segment)} pre-roll frames")
+                    # Task 11.1: Add timestamp for latency measurement
+                    timestamp_ms = int(time.time() * 1000)
+
+                    logger.info(f"Speech onset detected with {len(self.current_segment)} pre-roll frames at {timestamp_ms}")
                     return {
                         'event': 'speech_start',
-                        'pre_roll': pre_roll_audio
+                        'pre_roll': pre_roll_audio,
+                        'timestamp_ms': timestamp_ms
                     }
             else:
                 # Reset speech counter on silence
@@ -194,7 +201,10 @@ class VoiceActivityDetector:
                     segment_audio = b''.join(self.current_segment)
                     duration_ms = len(self.current_segment) * self.frame_duration_ms
 
-                    logger.info(f"Speech offset detected: segment duration={duration_ms}ms")
+                    # Task 11.1: Add timestamp for latency measurement
+                    timestamp_ms = int(time.time() * 1000)
+
+                    logger.info(f"Speech offset detected: segment duration={duration_ms}ms at {timestamp_ms}")
 
                     # Reset state
                     self.is_in_speech = False
@@ -207,7 +217,8 @@ class VoiceActivityDetector:
                         'segment': {
                             'audio_data': segment_audio,
                             'duration_ms': duration_ms
-                        }
+                        },
+                        'timestamp_ms': timestamp_ms
                     }
             else:
                 # Reset silence counter on new speech

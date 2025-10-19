@@ -54,7 +54,9 @@
       "Bash(timeout 120 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture --ignored)",
       "Read(//Users/tonishi/.cache/huggingface/hub/models--Systran--faster-whisper-small/**)",
       "mcp__serena__find_referencing_symbols",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(gtimeout 120 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture --ignored)",
+      "Bash(gtimeout 120 cargo test --test stt_e2e_test test_audio_recording_to_transcription_full_flow -- --nocapture)"
     ],
     "deny": [],
     "ask": []

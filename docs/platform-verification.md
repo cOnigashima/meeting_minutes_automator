@@ -29,6 +29,43 @@ Cross-platform compatibility verification for Meeting Minutes Automator.
 
 ---
 
+## Chrome Extension Manual Smoke Test (MVP1)
+
+1. **Environment**  
+   - `npm install` 済み、Python `.venv` を作成し `pip install -r requirements.txt` / `-dev.txt` を完了。  
+   - macOS では `codesign --remove-signature` 等のローカル設定不要。
+
+2. **Launch Tauri App**  
+   ```bash
+   npm run tauri dev
+   ```  
+   コンソールに以下が表示されること:  
+   `[Meeting Minutes] ✅ Python sidecar started` / `ready` / `FakeAudioDevice initialized` / `WebSocket server started on port <port>`
+
+3. **Load Chrome Extension**  
+   - `chrome://extensions/` → 「デベロッパーモード」を ON。  
+   - 「パッケージ化されていない拡張機能を読み込む」で `chrome-extension/` を選択。  
+   - 拡張カードに「Meeting Minutes Automator」が表示され、`${lastPort}` が初期化されていることを確認。
+
+4. **Verify WebSocket Handshake**  
+   - Google Meet (https://meet.google.com) を開き、コンソールに以下の順序でログが出ることを確認。  
+     ```
+     [Meeting Minutes] Starting WebSocket connection...
+     [Meeting Minutes] ✅ Connected to WebSocket server on port <port>
+     [Meeting Minutes] 📦 Storage saved: {connectionStatus: 'connected', ...}
+     ```
+
+5. **Manual Stream Check**  
+   - Tauri ウィンドウで「Start Recording」。  
+   - Meet のコンソールに partial / final の `transcription` メッセージが流れる（FakeAudioDevice の場合は空文字列）。  
+   - 「Stop Recording」でログが停止。
+
+6. **Log Collection**  
+   - Tauri 側 stdout/stderr（`npm run tauri dev` のターミナル）と Chrome DevTools のログを保存。  
+   - `logs/platform/<date>-chrome-smoke.log` に転記し、プラットフォーム表の `Last Verified` に反映。
+
+---
+
 ## Manual Verification Checklist (ADR-013)
 
 | Case | Steps | Expected Result | Log / Notes |
@@ -65,27 +102,35 @@ Cross-platform compatibility verification for Meeting Minutes Automator.
 2. Load Chrome extension
 3. Navigate to Google Meet
 4. Click "Start Recording"
-5. Verify transcription messages in Chrome Console
+5. Stream `src-tauri/tests/fixtures/test_audio_short.wav` through the AudioProcessor（CLI経由）
+6. Verify partial / final transcription messages in Chrome Console（`isPartial` / `confidence` などの付加情報を含む）
 6. Click "Stop Recording"
 
 **Results**:
 ```
 [Meeting Minutes] ✅ Python sidecar started
 [Meeting Minutes] ✅ Python sidecar ready
-[Meeting Minutes] ✅ FakeAudioDevice initialized
+[Meeting Minutes] ✅ FakeAudioDevice initialized（既定は無音だが、テストでは手動で音声フレームを送出）
 [Meeting Minutes] ✅ WebSocket server started on port 9001
 ```
 
 Chrome Console output:
 ```
 [Meeting Minutes] ✅ Connected to WebSocket server on port 9001
-[Meeting Minutes] 📝 Transcription: This is a fake transcription result
+[Meeting Minutes] Received message: {type: 'transcription', text: 'the test audio clip', isPartial: true, confidence: 0.62, language: 'en', processingTimeMs: 412}
+[Meeting Minutes] 📝 Transcription: the test audio clip
+[Meeting Minutes] Received message: {type: 'transcription', text: 'the test audio clip', isPartial: false, confidence: 0.79, language: 'en', processingTimeMs: 837}
+[Meeting Minutes] 📝 Transcription: the test audio clip
+[Meeting Minutes] Received message: {type: 'transcription', text: '', isPartial: false, ...}  # 追いサイレンスによる speech_end
+[Meeting Minutes] 🤫 No speech detected
 ```
+※ 音声ストリームは `cargo test --test stt_e2e_test -- --nocapture` のロジック（test fixture）を用いて送出。
 
 **Verified Components**:
 - ✅ Tauri app startup
 - ✅ Python sidecar process management
-- ✅ FakeAudioDevice (100ms interval timing)
+- ✅ FakeAudioDevice（無音ハンドシェイク）と手動音声フレーム注入の併用
+- ✅ AudioPipeline + Whisper 推論（partial / final / speech_end を確認）
 - ✅ WebSocket server (port 9001)
 - ✅ Chrome extension connection
 - ✅ IPC communication (Rust ↔ Python)
