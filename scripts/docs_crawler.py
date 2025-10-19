@@ -15,14 +15,14 @@ APIや外部サービスは呼びません（= 課金ゼロ）。
   - snapshots/snapshot_*.json
 
 使い方:
-  python tools/docs_crawler.py --repo .
-  python tools/docs_crawler.py --repo . --out ./.shiori --langs py,ts,go --ignore node_modules,.git,dist
+  python scripts/docs_crawler.py --repo .
+  python scripts/docs_crawler.py --repo . --out ./.shiori --langs py,ts,go --ignore node_modules,.git,dist
 
 # 1) ファイル配置
-#   リポジトリ直下に tools/docs_crawler.py として保存
+#   リポジトリ直下に scripts/docs_crawler.py として保存
 
 # 2) 実行（既定の出力先は ./.shiori）
-python tools/docs_crawler.py --repo .
+python scripts/docs_crawler.py --repo .
 
 # 3) 結果（フォルダ ./.shiori/）
 #   - drift_report.md
@@ -32,10 +32,10 @@ python tools/docs_crawler.py --repo .
 #   - snapshot.json / snapshots/*
 
 # TS/Go だけ対象にして、重いディレクトリを除外
-python tools/docs_crawler.py --repo . --langs ts,go --ignore node_modules,dist,.git
+python scripts/docs_crawler.py --repo . --langs ts,go --ignore node_modules,dist,.git
 
 # 前回比較なし（現状の未言及だけ知りたい）
-python tools/docs_crawler.py --repo . --since-snapshot none
+python scripts/docs_crawler.py --repo . --since-snapshot none
 
 サポート言語（軽量ヒューリスティック）:
   Python / TypeScript / JavaScript / Go / Rust / Java / Kotlin
@@ -57,7 +57,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-DEFAULT_OUT = ".shiori"  # ← 'doc-sync' ではなく、この名前を既定出力先にしています。
+DEFAULT_OUT = ".shiori"  # ← 既定の作業ディレクトリ。再読み込み対象から除外します。
 
 DOC_EXTS = {".md", ".mdx", ".rst", ".adoc", ".txt"}
 # 拡張子→言語
@@ -76,7 +76,7 @@ SUPPORTED_LANGS = {"python","ts","js","go","rust","java","kotlin"}
 
 DEFAULT_IGNORE_DIRS = {
     ".git","node_modules","dist","build",".venv","venv","target","out",
-    "coverage","__pycache__", ".idea", ".vscode"
+    "coverage","__pycache__", ".idea", ".vscode", DEFAULT_OUT
 }
 
 # --------------------- 基本ユーティリティ ---------------------
@@ -97,16 +97,15 @@ def is_binary(path: Path, blocksize: int = 512) -> bool:
     except Exception:
         return True
 
-def within_ignored_dir(p: Path, ignore_dirs: Set[str]) -> bool:
-    return any(part in ignore_dirs for part in p.parts)
-
 def walk_files(root: Path, ignore_dirs: Set[str]) -> Iterable[Path]:
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        if within_ignored_dir(p, ignore_dirs):
-            continue
-        yield p
+    ignore = set(ignore_dirs)
+    for current_root, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in ignore]
+        cur_path = Path(current_root)
+        for name in files:
+            if name in ignore:
+                continue
+            yield cur_path / name
 
 def read_text(path: Path) -> str:
     try:
@@ -135,20 +134,33 @@ def extract_links_md_like(text: str) -> List[str]:
     # 簡易: 重複除去 & 並べ替え
     return sorted(set(links))
 
+def sanitize_docs_for_output(docs: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    sanitized: List[Dict[str, object]] = []
+    for doc in docs:
+        entry = {
+            k: (list(v) if isinstance(v, list) else v)
+            for k, v in doc.items() if k != "text"
+        }
+        sanitized.append(entry)
+    return sanitized
+
 def discover_docs(repo: Path, ignore_dirs: Set[str]) -> List[Dict[str, object]]:
     docs: List[Dict[str, object]] = []
     for p in walk_files(repo, ignore_dirs):
         if p.suffix.lower() in DOC_EXTS and not is_binary(p):
             txt = read_text(p)
+            headings = extract_headings_md_like(txt)
+            links = extract_links_md_like(txt)
             docs.append({
                 "path": relpath(repo, p),
                 "sha1": sha1_of(p),
                 "size": p.stat().st_size,
                 "mtime": int(p.stat().st_mtime),
-                "headings": extract_headings_md_like(txt),
-                "num_headings": len(extract_headings_md_like(txt)),
-                "links": extract_links_md_like(txt),
-                "num_links": len(extract_links_md_like(txt)),
+                "headings": headings,
+                "num_headings": len(headings),
+                "links": links,
+                "num_links": len(links),
+                "text": txt,
             })
     return docs
 
@@ -251,18 +263,20 @@ def build_symbol_index(symbols: List[Dict[str, str]]) -> Dict[str, Dict[str, obj
         v["paths"] = sorted(v["paths"])
     return idx
 
-def compute_doc_mentions(docs: List[Dict[str, object]], sym_idx: Dict[str, Dict[str, object]], repo: Path) -> Dict[str, Set[str]]:
+def compute_doc_mentions(docs: List[Dict[str, object]], sym_idx: Dict[str, Dict[str, object]]) -> Dict[str, Set[str]]:
     mentions: Dict[str, Set[str]] = {k: set() for k in sym_idx.keys()}
     for d in docs:
-        path = repo / str(d["path"])
-        txt = read_text(path)
+        path_str = str(d["path"])
+        txt = d.get("text") if isinstance(d, dict) else ""
+        if not isinstance(txt, str):
+            txt = ""
         for key, info in sym_idx.items():
             name = info["name"]
             if not name:
                 continue
             # 単語境界・軽量
             if re.search(rf"\b{re.escape(name)}\b", txt):
-                mentions[key].add(str(d["path"]))
+                mentions[key].add(path_str)
     return mentions
 
 # --------------------- ドリフト（スナップショット比較） ---------------------
@@ -280,7 +294,7 @@ def save_snapshot(outdir: Path, snapshot: Dict[str, object]) -> Path:
     (outdir / "snapshot.json").write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
-def compute_drift(prev: Optional[Dict[str, object]], sym_idx: Dict[str, Dict[str, object]], docs: List[Dict[str, object]], repo: Path) -> Dict[str, object]:
+def compute_drift(prev: Optional[Dict[str, object]], sym_idx: Dict[str, Dict[str, object]], docs: List[Dict[str, object]]) -> Dict[str, object]:
     cur_keys = set(sym_idx.keys())
     if prev and "symbols" in prev:
         prev_keys = set(prev["symbols"].keys())  # type: ignore[assignment]
@@ -291,14 +305,17 @@ def compute_drift(prev: Optional[Dict[str, object]], sym_idx: Dict[str, Dict[str
     removed = sorted(prev_keys - cur_keys)
 
     # 未ドキュメント
-    mentions = compute_doc_mentions(docs, sym_idx, repo)
+    mentions = compute_doc_mentions(docs, sym_idx)
     undocumented = sorted([k for k, v in mentions.items() if len(v) == 0])
 
     orphan_docs: List[Dict[str, str]] = []
+    doc_text_lookup = {str(d["path"]): d.get("text") if isinstance(d, dict) else "" for d in docs}
     if prev and "symbols" in prev:
         removed_names = {prev["symbols"][k]["name"] for k in removed}  # type: ignore[index]
         for d in docs:
-            txt = read_text(repo / str(d["path"]))
+            txt = doc_text_lookup.get(str(d["path"]), "")
+            if not isinstance(txt, str):
+                txt = ""
             for name in removed_names:
                 if re.search(rf"\b{re.escape(str(name))}\b", txt):
                     orphan_docs.append({"doc": str(d["path"]), "name": str(name)})
@@ -397,6 +414,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     outdir.mkdir(parents=True, exist_ok=True)
 
     ignore_dirs = set([x.strip() for x in args.ignore.split(",") if x.strip()])
+    ignore_dirs.add(DEFAULT_OUT)
+    out_path = Path(args.out)
+    if out_path.name:
+        ignore_dirs.add(out_path.name)
     # 言語
     if args.langs.lower() == "all":
         target_langs = set(SUPPORTED_LANGS)
@@ -419,10 +440,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
 
     # 在庫化
-    docs = discover_docs(repo, ignore_dirs)
+    docs_raw = discover_docs(repo, ignore_dirs)
     # API抽出
     symbols = extract_api_surface(repo, target_langs, ignore_dirs)
     sym_idx = build_symbol_index(symbols)
+    docs_sanitized = sanitize_docs_for_output(docs_raw)
 
     # 旧スナップショット読み込み
     prev = None
@@ -436,17 +458,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             prev = json.loads(p.read_text(encoding="utf-8"))
 
     # ドリフト
-    drift = compute_drift(prev, sym_idx, docs, repo)
+    drift = compute_drift(prev, sym_idx, docs_raw)
 
     # 出力
-    write_reports(outdir, repo, docs, symbols, sym_idx, drift)
+    write_reports(outdir, repo, docs_sanitized, symbols, sym_idx, drift)
 
     # スナップショット保存
     snapshot = {
         "generated_at": now_iso(),
         "symbols": sym_idx,
-        "docs_count": len(docs),
-        "docs": docs,
+        "docs_count": len(docs_raw),
+        "docs": docs_sanitized,
         "repo": str(repo),
         "target_langs": sorted(target_langs),
         "ignore_dirs": sorted(ignore_dirs),
@@ -456,7 +478,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # 端末表示
     print("✅ 完了")
     print(f"  Repo: {repo}")
-    print(f"  Docs: {len(docs)} files")
+    print(f"  Docs: {len(docs_raw)} files")
     print(f"  Symbols: {len(sym_idx)} unique")
     print(f"  Out: {outdir}")
     print(f"  Report: {(outdir/'drift_report.md')}")

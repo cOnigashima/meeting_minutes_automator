@@ -416,22 +416,28 @@ class AudioPipeline:
             if isinstance(transcription, dict):
                 transcription['processing_time_ms'] = processing_time_ms
 
-            # Task 11.1: Calculate end-to-end latency (VAD speech_start → **first** partial_text delivery)
-            # Target: < 500ms (STT-NFR-001 implied requirement)
+            # Task 11.1/11.2: Calculate end-to-end latency (VAD speech_start → **first** partial_text delivery)
+            # Target: < 3000ms (STT-NFR-001.7 per ADR-017)
             # Note: Only measure latency for the FIRST partial in an utterance.
             # Subsequent partials measure incremental response (last_partial → current_partial).
             current_time_ms = int(time.time() * 1000)
-            
+
             is_first_partial = self._last_partial_time is None
-            
+
             if is_first_partial:
                 # First partial: measure from speech_start
                 end_to_end_latency_ms = current_time_ms - self._speech_start_timestamp_ms if self._speech_start_timestamp_ms else 0
                 latency_type = "first_partial"
+                # ADR-017: First partial target is <3000ms
+                target_ms = 3000
+                sla_status = f"{'✅ PASS' if end_to_end_latency_ms < target_ms else '❌ FAIL'}"
             else:
                 # Subsequent partials: measure from last partial (incremental latency)
                 end_to_end_latency_ms = current_time_ms - self._last_partial_time
                 latency_type = "incremental"
+                # Incremental partials are informational only (not SLA)
+                target_ms = None
+                sla_status = "ℹ️ INFO"
 
             # Update last partial time
             self._last_partial_time = current_time_ms
@@ -439,14 +445,22 @@ class AudioPipeline:
             # Update statistics
             self.stats["transcriptions_generated"] += 1
 
-            # Task 11.1: Log latency metrics (structured logging for analysis)
-            logger.info(
-                f"Partial transcription generated ({latency_type}): "
-                f"text='{transcription.get('text', '')[:50]}...', "
-                f"whisper_time={processing_time_ms}ms, "
-                f"end_to_end_latency={end_to_end_latency_ms}ms "
-                f"(target: <500ms, {'✅ PASS' if end_to_end_latency_ms < 500 else '❌ FAIL'})"
-            )
+            # Task 11.1/11.2: Log latency metrics (structured logging for analysis)
+            if is_first_partial:
+                logger.info(
+                    f"Partial transcription generated ({latency_type}): "
+                    f"text='{transcription.get('text', '')[:50]}...', "
+                    f"whisper_time={processing_time_ms}ms, "
+                    f"end_to_end_latency={end_to_end_latency_ms}ms "
+                    f"(SLA target: <{target_ms}ms per ADR-017, {sla_status})"
+                )
+            else:
+                logger.info(
+                    f"Partial transcription generated ({latency_type}): "
+                    f"text='{transcription.get('text', '')[:50]}...', "
+                    f"whisper_time={processing_time_ms}ms, "
+                    f"incremental_latency={end_to_end_latency_ms}ms ({sla_status})"
+                )
 
             return {
                 'event': 'partial_text',

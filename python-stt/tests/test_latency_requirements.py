@@ -64,10 +64,10 @@ class TestPartialTextLatency:
         mock_vad.is_in_speech = True
 
         # Step 2: Accumulate audio frames to trigger partial transcription
-        # Need 100 frames (1 second) to trigger partial
+        # Task 11.2: First partial triggers after 10 frames (100ms) per ADR-017
         test_frame = b'\x00' * 320  # 10ms frame
 
-        for i in range(100):
+        for i in range(10):  # ADR-017: Early trigger for first partial
             pipeline._current_speech_buffer.extend(test_frame)
             pipeline._frame_count_since_partial += 1
 
