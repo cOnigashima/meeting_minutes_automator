@@ -116,7 +116,11 @@ fn test_legacy_to_new_format_conversion() {
 
     // Assert: Proper conversion
     match new_format {
-        IpcMessage::Response { id, version, result } => {
+        IpcMessage::Response {
+            id,
+            version,
+            result,
+        } => {
             assert_eq!(id, "legacy");
             assert_eq!(version, "1.0");
 
@@ -266,7 +270,11 @@ fn test_python_response_format_compatibility() {
 
     // Assert: Correctly parsed
     match msg {
-        IpcMessage::Response { id, version, result } => {
+        IpcMessage::Response {
+            id,
+            version,
+            result,
+        } => {
             assert_eq!(id, "audio-123");
             assert_eq!(version, "1.0");
 
@@ -364,7 +372,11 @@ fn test_approve_upgrade_response_format() {
 
     // Assert: Correctly parsed
     match msg {
-        IpcMessage::Response { id, version, result } => {
+        IpcMessage::Response {
+            id,
+            version,
+            result,
+        } => {
             assert_eq!(id, "upgrade-123");
             assert_eq!(version, "1.0");
 
@@ -526,10 +538,7 @@ fn test_event_notification_format() {
         } => {
             assert_eq!(event_type, "recording_paused");
             assert_eq!(data["reason"], "insufficient_resources");
-            assert!(data["message"]
-                .as_str()
-                .unwrap()
-                .contains("critically low"));
+            assert!(data["message"].as_str().unwrap().contains("critically low"));
         }
         _ => panic!("Expected Event variant"),
     }
@@ -560,7 +569,9 @@ fn test_event_notification_version_default() {
 fn test_legacy_start_processing_conversion() {
     // Arrange: Legacy StartProcessing message with audio data
     let audio_data = vec![0u8, 1, 2, 3, 4, 5];
-    let legacy = LegacyIpcMessage::StartProcessing { audio_data: audio_data.clone() };
+    let legacy = LegacyIpcMessage::StartProcessing {
+        audio_data: audio_data.clone(),
+    };
 
     // Act: Convert to new protocol
     let new_format = legacy.to_protocol_message();
@@ -570,7 +581,12 @@ fn test_legacy_start_processing_conversion() {
     let parsed: IpcMessage = serde_json::from_str(&json).unwrap();
 
     match parsed {
-        IpcMessage::Request { id, version, method, ref params } => {
+        IpcMessage::Request {
+            id,
+            version,
+            method,
+            ref params,
+        } => {
             assert_eq!(id, "legacy-request");
             assert_eq!(version, "1.0");
             assert_eq!(method, "process_audio"); // CRITICAL: Must be process_audio, not start_processing
@@ -607,7 +623,12 @@ fn test_legacy_stop_processing_conversion() {
     let parsed: IpcMessage = serde_json::from_str(&json).unwrap();
 
     match parsed {
-        IpcMessage::Request { id, version, method, ref params } => {
+        IpcMessage::Request {
+            id,
+            version,
+            method,
+            ref params,
+        } => {
             assert_eq!(id, "legacy-request");
             assert_eq!(version, "1.0");
             assert_eq!(method, "stop_processing");

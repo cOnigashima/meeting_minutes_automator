@@ -42,6 +42,9 @@ pub struct AppState {
     /// Solves deadlock: single global reader task distributes events to all listeners
     /// Related: STT-REQ-007 (Event Stream Protocol)
     pub ipc_event_tx: Mutex<Option<broadcast::Sender<serde_json::Value>>>,
+
+    /// Current recording session identifier (UUID v4)
+    pub session_id: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -55,6 +58,7 @@ impl AppState {
             audio_event_tx: Mutex::new(None),
             audio_event_rx: Mutex::new(None),
             ipc_event_tx: Mutex::new(None),
+            session_id: Mutex::new(None),
         }
     }
 
@@ -118,5 +122,23 @@ impl AppState {
     pub fn get_selected_device_id(&self) -> Option<String> {
         let selected = self.selected_device_id.lock().unwrap();
         selected.clone()
+    }
+
+    /// Set active recording session identifier
+    pub fn set_session_id(&self, session: String) {
+        let mut guard = self.session_id.lock().unwrap();
+        *guard = Some(session);
+    }
+
+    /// Get current session identifier
+    pub fn get_session_id(&self) -> Option<String> {
+        let guard = self.session_id.lock().unwrap();
+        guard.clone()
+    }
+
+    /// Clear current session identifier
+    pub fn clear_session_id(&self) {
+        let mut guard = self.session_id.lock().unwrap();
+        *guard = None;
     }
 }

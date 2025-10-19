@@ -29,7 +29,31 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 - ✅ Rust: 71テスト合格（E2Eテスト含む）
 - ✅ Python: 143テスト合格（単体・統合テスト）
 - ✅ E2Eテスト: Task 10.1緑化（VAD→STT完全フロー、23.49秒実行）
+- ✅ 性能テスト: Task 10.6完了（IPC/Audio callback latency測定、全項目合格）
+- ✅ 後方互換性テスト: Task 10.7完了（IPC 26テスト、WebSocket 6テスト、全合格）
 - ✅ セキュリティテスト: Task 11.5完了（検証完了、修正はMVP2 Phase 0）
+
+**性能指標** (2025-10-19測定、ADR-017基準):
+
+| 項目 | 目標 | 実測値 | 合否 |
+|------|------|--------|------|
+| 部分テキストレイテンシ (初回) | <3000ms | 1830ms | ✅ PASS |
+| 確定テキストレイテンシ | <2000ms | 1623ms | ✅ PASS |
+| IPC latency (平均) | <5ms | 0.409ms | ✅ PASS |
+| IPC latency (最大) | <5ms | 1.904ms | ✅ PASS |
+| Audio callback (P99) | <10μs | 2.125μs | ✅ PASS |
+| Audio callback (平均) | <10μs | 0.356μs | ✅ PASS |
+
+詳細: [Task 10.6](.kiro/specs/meeting-minutes-stt/tasks/phase-13-verification.md#task-10-6)
+
+**後方互換性テスト** (2025-10-19測定):
+
+| カテゴリ | テスト数 | 合格 | カバレッジ要件 |
+|----------|----------|------|----------------|
+| IPC Protocol | 26 | 26 | STT-REQ-007.1-007.6, ADR-003 |
+| WebSocket Extension | 6 | 6 | STT-REQ-008.1-008.3 |
+
+詳細: [Task 10.7](.kiro/specs/meeting-minutes-stt/tasks/phase-13-verification.md#task-10-7)
 
 **ドキュメント**:
 - ✅ UML図5種類（コンポーネント、シーケンス×3、クラス）

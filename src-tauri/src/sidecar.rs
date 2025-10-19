@@ -39,21 +39,30 @@ pub enum Event {
     #[serde(rename = "ready")]
     Ready,
 
-    /// Partial transcription result
-    #[serde(rename = "partial_text")]
-    PartialText { text: String },
-
-    /// Final transcription result
-    #[serde(rename = "final_text")]
-    FinalText { text: String },
-
-    /// No speech detected
-    #[serde(rename = "no_speech")]
-    NoSpeech,
+    /// Stream event wrapper (partial_text/final_text etc.)
+    #[serde(rename = "event")]
+    Stream {
+        #[serde(rename = "eventType")]
+        event_type: String,
+        #[serde(default)]
+        data: serde_json::Value,
+    },
 
     /// Error from Python side
     #[serde(rename = "error")]
     Error { message: String },
+
+    /// Legacy direct partial_text event (older protocol)
+    #[serde(rename = "partial_text")]
+    LegacyPartial { text: String },
+
+    /// Legacy direct final_text event
+    #[serde(rename = "final_text")]
+    LegacyFinal { text: String },
+
+    /// Legacy no_speech event
+    #[serde(rename = "no_speech")]
+    LegacyNoSpeech,
 
     /// Unknown event (for forward compatibility)
     #[serde(other)]
@@ -113,14 +122,12 @@ impl AudioSink {
     /// Try to send an audio frame without blocking
     /// Returns Err if channel is full (backpressure)
     pub fn try_send_frame(&self, frame: Bytes) -> Result<(), SidecarError> {
-        self.tx
-            .try_send(frame)
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => {
-                    SidecarError::SendFailed("Channel full (backpressure)".to_string())
-                }
-                mpsc::error::TrySendError::Closed(_) => SidecarError::ChannelClosed,
-            })
+        self.tx.try_send(frame).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => {
+                SidecarError::SendFailed("Channel full (backpressure)".to_string())
+            }
+            mpsc::error::TrySendError::Closed(_) => SidecarError::ChannelClosed,
+        })
     }
 }
 
@@ -153,12 +160,15 @@ impl EventStream {
     pub fn try_recv(&mut self) -> Result<Event, SidecarError> {
         match self.rx.try_recv() {
             Ok(evt) => Ok(evt),
-            Err(broadcast::error::TryRecvError::Empty) => {
-                Err(SidecarError::ReceiveFailed("No events available".to_string()))
-            }
+            Err(broadcast::error::TryRecvError::Empty) => Err(SidecarError::ReceiveFailed(
+                "No events available".to_string(),
+            )),
             Err(broadcast::error::TryRecvError::Lagged(n)) => {
                 tracing::warn!("EventStream lagged by {n} events in try_recv");
-                Err(SidecarError::ReceiveFailed(format!("Lagged by {} events", n)))
+                Err(SidecarError::ReceiveFailed(format!(
+                    "Lagged by {} events",
+                    n
+                )))
             }
             Err(broadcast::error::TryRecvError::Closed) => Err(SidecarError::ChannelClosed),
         }
@@ -248,11 +258,7 @@ impl Sidecar {
 
         let ctrl = Control::new(child_pid, child, writer_join, reader_join);
 
-        Ok(Self {
-            sink,
-            events,
-            ctrl,
-        })
+        Ok(Self { sink, events, ctrl })
     }
 
     /// Get process ID (for testing/debugging)
@@ -301,16 +307,6 @@ impl Sidecar {
     }
 }
 
-/// Audio frame message (Rust → Python)
-#[derive(Debug, Serialize)]
-struct AudioFrameMessage {
-    #[serde(rename = "type")]
-    msg_type: String,
-    data: String, // base64-encoded PCM data
-    sample_rate: u32,
-    channels: u8,
-}
-
 /// Spawn stdio writer task (owns ChildStdin exclusively)
 ///
 /// This task:
@@ -323,24 +319,35 @@ fn spawn_stdio_writer(mut stdin: ChildStdin) -> (AudioSink, JoinHandle<Result<()
     let (tx, mut rx) = mpsc::channel::<Bytes>(CHANNEL_CAPACITY);
 
     let join_handle = tokio::spawn(async move {
+        let mut frame_counter: u64 = 0;
+
         while let Some(frame) = rx.recv().await {
-            // Encode frame as Line-Delimited JSON (ADR-013 Phase 1.4)
-            let msg = AudioFrameMessage {
-                msg_type: "audio_frame".to_string(),
-                data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &frame),
-                sample_rate: 16000,
-                channels: 1,
-            };
+            let audio_vec: Vec<u8> = frame.to_vec();
 
-            let json_line = serde_json::to_string(&msg)
-                .context("Failed to serialize audio frame")?;
+            let msg = serde_json::json!({
+                "type": "request",
+                "id": format!("burnin-{}", frame_counter),
+                "method": "process_audio_stream",
+                "params": {
+                    "audio_data": audio_vec,
+                    "sample_rate": 16000,
+                    "channels": 1
+                }
+            });
 
-            // Write line + newline
+            frame_counter = frame_counter.wrapping_add(1);
+
+            let json_line =
+                serde_json::to_string(&msg).context("Failed to serialize audio frame request")?;
+
             stdin
                 .write_all(json_line.as_bytes())
                 .await
                 .context("Failed to write to stdin")?;
-            stdin.write_all(b"\n").await.context("Failed to write newline")?;
+            stdin
+                .write_all(b"\n")
+                .await
+                .context("Failed to write newline")?;
             stdin.flush().await.context("Failed to flush stdin")?;
         }
         Ok(())

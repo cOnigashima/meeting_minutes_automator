@@ -5,6 +5,7 @@ use meeting_minutes_automator_lib::ring_buffer::{
     AudioRingBuffer, BufferLevel, BUFFER_CAPACITY, BYTES_PER_SAMPLE, SAMPLE_RATE,
 };
 use meeting_minutes_automator_lib::sidecar::{Event, Sidecar, SidecarCmd, SidecarError};
+use ringbuf::traits::Observer;
 use std::env;
 use std::f32::consts::TAU;
 use std::fs::File;
@@ -12,7 +13,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use ringbuf::traits::Observer;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use tokio::time::{sleep, timeout};
 
@@ -25,8 +25,9 @@ impl LogSink {
     fn new(path: Option<PathBuf>) -> Result<Self> {
         let file = if let Some(path) = path {
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create log directory {}", parent.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create log directory {}", parent.display())
+                })?;
             }
             Some(
                 File::create(&path)
@@ -195,14 +196,18 @@ fn python_main_path() -> PathBuf {
 
 fn generate_frame(frame_index: u64, samples_per_frame: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(samples_per_frame * BYTES_PER_SAMPLE);
-    let amplitude = 0.2_f32;
     let sample_rate = SAMPLE_RATE as f32;
+    let frames_per_second = (SAMPLE_RATE as u64) / (samples_per_frame as u64);
+    let frames_per_cycle = frames_per_second * 2; // 1s speech + 1s silence
+    let in_speech = (frame_index % frames_per_cycle) < frames_per_second;
     for i in 0..samples_per_frame {
-        let absolute_sample =
-            frame_index as f32 * samples_per_frame as f32 + i as f32;
-        let t = absolute_sample / sample_rate;
-        let sample =
-            (amplitude * (TAU * 440.0 * t).sin() * i16::MAX as f32) as i16;
+        let sample = if in_speech {
+            let absolute_sample = frame_index as f32 * samples_per_frame as f32 + i as f32;
+            let t = absolute_sample / sample_rate;
+            (0.9_f32 * (TAU * 440.0 * t).sin() * i16::MAX as f32) as i16
+        } else {
+            0
+        };
         buf.extend_from_slice(&sample.to_le_bytes());
     }
     buf
@@ -248,17 +253,47 @@ async fn monitor_events(
             }
             event = events.recv() => {
                 match event {
-                    Ok(Event::PartialText { text }) => {
+                    Ok(Event::Stream { event_type, data }) => {
+                        match event_type.as_str() {
+                            "partial_text" => {
+                                if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                                    logger.log(&format!("[event] partial_text: {}", text));
+                                } else {
+                                    logger.log("[event] partial_text (no text)");
+                                }
+                                let mut guard = stats.lock().await;
+                                guard.partial_text += 1;
+                            }
+                            "final_text" => {
+                                if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                                    logger.log(&format!("[event] final_text: {}", text));
+                                } else {
+                                    logger.log("[event] final_text (no text)");
+                                }
+                                let mut guard = stats.lock().await;
+                                guard.final_text += 1;
+                            }
+                            "no_speech" => {
+                                logger.log("[event] no_speech");
+                                let mut guard = stats.lock().await;
+                                guard.no_speech += 1;
+                            }
+                            other => {
+                                logger.log(&format!("[event] {} (raw): {}", other, data));
+                            }
+                        }
+                    }
+                    Ok(Event::LegacyPartial { text }) => {
                         logger.log(&format!("[event] partial_text: {}", text));
                         let mut guard = stats.lock().await;
                         guard.partial_text += 1;
                     }
-                    Ok(Event::FinalText { text }) => {
+                    Ok(Event::LegacyFinal { text }) => {
                         logger.log(&format!("[event] final_text: {}", text));
                         let mut guard = stats.lock().await;
                         guard.final_text += 1;
                     }
-                    Ok(Event::NoSpeech) => {
+                    Ok(Event::LegacyNoSpeech) => {
                         logger.log("[event] no_speech");
                         let mut guard = stats.lock().await;
                         guard.no_speech += 1;
@@ -316,7 +351,10 @@ async fn main() -> Result<()> {
             .await
             .context("Python detection failed")?
     };
-    logger.log(&format!("Using Python executable: {}", python_path.display()));
+    logger.log(&format!(
+        "Using Python executable: {}",
+        python_path.display()
+    ));
 
     let python_script = python_main_path();
     if !python_script.exists() {
@@ -364,8 +402,7 @@ async fn main() -> Result<()> {
 
     let frames_per_second = (1000 / config.frame_interval_ms) as usize;
     let samples_per_frame = SAMPLE_RATE / frames_per_second;
-    let total_frames =
-        (config.duration_secs * 1000) / config.frame_interval_ms;
+    let total_frames = (config.duration_secs * 1000) / config.frame_interval_ms;
     let mut frame_stats = FrameStats::default();
     let mut last_log = Instant::now();
     let (mut producer, mut consumer) = AudioRingBuffer::new().split();
@@ -389,10 +426,8 @@ async fn main() -> Result<()> {
         }
 
         frame_stats.frames_generated += 1;
-        let occupancy =
-            producer.occupied_len() as f32 / BUFFER_CAPACITY as f32;
-        frame_stats.max_occupancy =
-            frame_stats.max_occupancy.max(occupancy);
+        let occupancy = producer.occupied_len() as f32 / BUFFER_CAPACITY as f32;
+        frame_stats.max_occupancy = frame_stats.max_occupancy.max(occupancy);
 
         let mut transfer = vec![0u8; pushed];
         let read = AudioRingBuffer::pop_for_writer(&mut consumer, &mut transfer);
@@ -478,10 +513,7 @@ async fn main() -> Result<()> {
         event_report.no_speech,
         event_report.error_events
     ));
-    logger.log(&format!(
-        "Log saved to {}",
-        log_path.display()
-    ));
+    logger.log(&format!("Log saved to {}", log_path.display()));
 
     if stop_due_to_overflow || frame_stats.try_send_full > 0 || event_report.error_events > 0 {
         logger.log("Result: ⚠️  Issues detected during burn-in");

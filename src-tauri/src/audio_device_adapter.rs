@@ -435,7 +435,11 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
             }
             Err(e) => {
                 // Device enumeration failed - likely permission denied
-                eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
+                log_error!(
+                    "audio_device_adapter",
+                    "microphone_permission_denied",
+                    format!("{:?}", e)
+                );
                 Err(anyhow!(
                     "マイクアクセスが拒否されました。システム設定から許可してください"
                 ))
@@ -696,7 +700,11 @@ impl AudioDeviceAdapter for WasapiAdapter {
                 }
             }
             Err(e) => {
-                eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
+                log_error!(
+                    "audio_device_adapter",
+                    "microphone_permission_denied",
+                    format!("{:?}", e)
+                );
                 Err(anyhow!(
                     "マイクアクセスが拒否されました。システム設定から許可してください"
                 ))
@@ -957,7 +965,11 @@ impl AudioDeviceAdapter for AlsaAdapter {
                 }
             }
             Err(e) => {
-                eprintln!("[Meeting Minutes] Microphone permission denied: {:?}", e);
+                log_error!(
+                    "audio_device_adapter",
+                    "microphone_permission_denied",
+                    format!("{:?}", e)
+                );
                 Err(anyhow!(
                     "マイクアクセスが拒否されました。システム設定から許可してください"
                 ))

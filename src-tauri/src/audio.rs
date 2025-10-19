@@ -1,10 +1,10 @@
 // Audio Device Abstraction
 // Walking Skeleton (MVP0) - Fake Implementation with Timer Loop
 
+use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceInfo};
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceInfo};
 
 /// Audio chunk callback type
 pub type AudioChunkCallback = Box<dyn Fn(Vec<u8>) + Send + Sync>;

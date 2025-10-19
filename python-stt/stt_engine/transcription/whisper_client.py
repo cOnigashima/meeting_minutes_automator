@@ -206,11 +206,23 @@ class WhisperSTTEngine:
                 - gpu_memory_gb: GPU memory in GB (0 if no GPU)
         """
         # Detect CPU cores
-        cpu_cores = psutil.cpu_count(logical=True) or 1
+        try:
+            cpu_cores = psutil.cpu_count(logical=True) or 1
+        except Exception as exc:
+            logger.warning(
+                f"resource_monitor.cpu_count_fallback: {exc} — defaulting to 1 core"
+            )
+            cpu_cores = 1
 
         # Detect total memory in GB
-        memory_info = psutil.virtual_memory()
-        memory_gb = memory_info.total / (1024 ** 3)  # Convert bytes to GB
+        try:
+            memory_info = psutil.virtual_memory()
+            memory_gb = memory_info.total / (1024 ** 3)  # Convert bytes to GB
+        except Exception as exc:
+            logger.warning(
+                f"resource_monitor.memory_fallback: {exc} — defaulting to 1GB"
+            )
+            memory_gb = 1.0
 
         # Detect GPU availability
         has_gpu = False
@@ -226,7 +238,7 @@ class WhisperSTTEngine:
             # torch not available, assume no GPU
             pass
         except Exception as e:
-            logger.debug(f"GPU detection failed: {e}")
+            logger.debug(f"resource_monitor.gpu_detection_failed: {e}")
 
         resources = {
             'cpu_cores': cpu_cores,

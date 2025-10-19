@@ -80,7 +80,11 @@ mod tests {
         let samples = extract_pcm_samples(test_audio::SHORT);
 
         // 3 seconds * 16000Hz = 48000 samples
-        assert_eq!(samples.len(), 48000, "Short audio should have 48000 samples");
+        assert_eq!(
+            samples.len(),
+            48000,
+            "Short audio should have 48000 samples"
+        );
 
         // Check that samples are not all zeros (actual audio data)
         let non_zero_count = samples.iter().filter(|&&s| s != 0).count();
@@ -95,7 +99,11 @@ mod tests {
         let samples = extract_pcm_samples(test_audio::LONG);
 
         // 10 seconds * 16000Hz = 160000 samples
-        assert_eq!(samples.len(), 160000, "Long audio should have 160000 samples");
+        assert_eq!(
+            samples.len(),
+            160000,
+            "Long audio should have 160000 samples"
+        );
     }
 
     #[test]
@@ -111,10 +119,7 @@ mod tests {
 
         // Check that most samples are zero (silence)
         let zero_count = samples.iter().filter(|&&s| s == 0).count();
-        assert!(
-            zero_count > 30000,
-            "Silence audio should be mostly zeros"
-        );
+        assert!(zero_count > 30000, "Silence audio should be mostly zeros");
     }
 
     #[test]

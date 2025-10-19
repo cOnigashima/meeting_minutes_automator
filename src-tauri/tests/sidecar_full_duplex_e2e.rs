@@ -65,7 +65,10 @@ time.sleep(10)
         if pushed < frame_size {
             // Buffer full - verify timing
             let elapsed = start.elapsed();
-            println!("Buffer full after {:?}, pushed {} frames", elapsed, frames_pushed);
+            println!(
+                "Buffer full after {:?}, pushed {} frames",
+                elapsed, frames_pushed
+            );
 
             // Should reach capacity around 5 seconds (±1s tolerance for CI/test overhead)
             assert!(
@@ -102,7 +105,10 @@ time.sleep(10)
         }
     }
 
-    println!("✅ Test 1 passed: Buffer filled in ~5s, {} frames pushed", frames_pushed);
+    println!(
+        "✅ Test 1 passed: Buffer filled in ~5s, {} frames pushed",
+        frames_pushed
+    );
 }
 
 /// Test 2: 60s continuous speech → 0% frame loss
@@ -220,7 +226,11 @@ sys.stderr.write(f"Python received {frames_received} frames\n")
 
     // Verify frame loss rate = 0%
     // We should send all 6000 frames
-    assert_eq!(sent, total_frames, "Should send all {} frames", total_frames);
+    assert_eq!(
+        sent, total_frames,
+        "Should send all {} frames",
+        total_frames
+    );
 
     // We should receive ~60 events (1 per second)
     // Allow some tolerance (±10 events) due to timing

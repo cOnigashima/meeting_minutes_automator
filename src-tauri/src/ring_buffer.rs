@@ -243,8 +243,11 @@ mod tests {
         let (pushed, level) = AudioRingBuffer::push_from_callback(&mut producer, &extra);
 
         assert_eq!(pushed, 0); // No space
-        // Level is Critical (100%) not Overflow (>100%) since we can't exceed capacity
-        assert!(matches!(level, BufferLevel::Critical | BufferLevel::Overflow));
+                               // Level is Critical (100%) not Overflow (>100%) since we can't exceed capacity
+        assert!(matches!(
+            level,
+            BufferLevel::Critical | BufferLevel::Overflow
+        ));
     }
 
     #[test]
@@ -338,6 +341,10 @@ mod tests {
 
         // Should detect overflow (pushed < 320)
         assert!(pushed < 320, "Should only push partial data");
-        assert_eq!(level, BufferLevel::Overflow, "Should return Overflow on partial write");
+        assert_eq!(
+            level,
+            BufferLevel::Overflow,
+            "Should return Overflow on partial write"
+        );
     }
 }

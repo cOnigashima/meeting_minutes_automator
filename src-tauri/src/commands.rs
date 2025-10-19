@@ -4,19 +4,45 @@
 // Task 7.1.5: IPC Protocol Migration Support
 
 use crate::audio::AudioDevice;
-use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceEvent};
+use crate::audio_device_adapter::AudioDeviceEvent;
 use crate::ipc_protocol::{IpcMessage as ProtocolMessage, VersionCompatibility, PROTOCOL_VERSION};
 use crate::state::AppState;
 use crate::websocket::WebSocketMessage;
+use once_cell::sync::Lazy;
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast;
+use uuid::Uuid;
+
+static LOG_MASK_SALT: Lazy<String> =
+    Lazy::new(|| std::env::var("LOG_MASK_SALT").unwrap_or_else(|_| Uuid::new_v4().to_string()));
+
+fn mask_text(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(LOG_MASK_SALT.as_bytes());
+    hasher.update(text.as_bytes());
+    let digest = hasher.finalize();
+    let hash_prefix = hex::encode(&digest[..8]);
+    let char_len = text.chars().count();
+    format!("len={} hash={}", char_len, hash_prefix)
+}
+
+fn request_id_from(data: &serde_json::Value) -> Option<&str> {
+    data.get("requestId").and_then(|v| v.as_str())
+}
 
 /// Helper: Extract extended fields from IPC event data (STT-REQ-008.1)
 /// Used by both partial_text and final_text branches to avoid code duplication
-fn extract_extended_fields(data: &serde_json::Map<String, serde_json::Value>) -> (Option<f64>, Option<String>, Option<u64>) {
+fn extract_extended_fields(
+    data: &serde_json::Map<String, serde_json::Value>,
+) -> (Option<f64>, Option<String>, Option<u64>) {
     let confidence = data.get("confidence").and_then(|v| v.as_f64());
-    let language = data.get("language").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let language = data
+        .get("language")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let processing_time_ms = data.get("processing_time_ms").and_then(|v| v.as_u64());
     (confidence, language, processing_time_ms)
 }
@@ -40,11 +66,11 @@ async fn start_ipc_reader_task(
                 Ok(event) => {
                     // Broadcast to all subscribers (non-blocking)
                     if let Err(e) = event_tx.send(event.clone()) {
-                        eprintln!("[Meeting Minutes] Failed to broadcast IPC event: {:?}", e);
+                        log_warn!("ipc::reader", "broadcast_failed", format!("{:?}", e));
                     }
                 }
                 Err(e) => {
-                    eprintln!("[Meeting Minutes] IPC reader error: {:?}", e);
+                    log_warn!("ipc::reader", "receive_error", format!("{:?}", e));
                     // Don't break - Python may recover
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
@@ -62,7 +88,7 @@ async fn monitor_audio_events(app: AppHandle) {
     let rx = match state.take_audio_event_rx() {
         Some(rx) => rx,
         None => {
-            eprintln!("[Meeting Minutes] ⚠️ Audio event receiver not available");
+            log_warn!("commands::audio_events", "receiver_unavailable", "");
             return;
         }
     };
@@ -71,50 +97,67 @@ async fn monitor_audio_events(app: AppHandle) {
     while let Ok(event) = rx.recv() {
         match event {
             AudioDeviceEvent::StreamError(err) => {
-                eprintln!("[Meeting Minutes] ❌ Stream error: {}", err);
+                log_error!("commands::audio_events", "stream_error", err.to_string());
 
                 // Emit to frontend
                 if let Err(e) = app.emit(
                     "audio-device-error",
-                    serde_json::json!({
+                    json!({
                         "type": "stream_error",
                         "message": format!("音声ストリームエラー: {}", err),
                     }),
                 ) {
-                    eprintln!("[Meeting Minutes] Failed to emit stream error: {:?}", e);
+                    log_error!(
+                        "commands::audio_events",
+                        "emit_stream_error_failed",
+                        format!("{:?}", e)
+                    );
                 }
             }
             AudioDeviceEvent::Stalled { elapsed_ms } => {
-                eprintln!(
-                    "[Meeting Minutes] ⚠️ Audio device stalled: {} ms",
-                    elapsed_ms
+                log_warn!(
+                    "commands::audio_events",
+                    "device_stalled",
+                    format!("elapsed_ms={}", elapsed_ms)
                 );
 
                 // Emit to frontend
                 if let Err(e) = app.emit(
                     "audio-device-error",
-                    serde_json::json!({
+                    json!({
                         "type": "stalled",
                         "message": "音声デバイスが応答しません",
                         "elapsed_ms": elapsed_ms,
                     }),
                 ) {
-                    eprintln!("[Meeting Minutes] Failed to emit stalled event: {:?}", e);
+                    log_error!(
+                        "commands::audio_events",
+                        "emit_stalled_failed",
+                        format!("{:?}", e)
+                    );
                 }
             }
             AudioDeviceEvent::DeviceGone { device_id } => {
-                eprintln!("[Meeting Minutes] ❌ Device disconnected: {}", device_id);
+                log_error!(
+                    "commands::audio_events",
+                    "device_disconnected",
+                    device_id.clone()
+                );
 
                 // Emit to frontend - STT-REQ-004.10
                 if let Err(e) = app.emit(
                     "audio-device-error",
-                    serde_json::json!({
+                    json!({
                         "type": "device_gone",
                         "message": "音声デバイスが切断されました",
                         "device_id": device_id,
                     }),
                 ) {
-                    eprintln!("[Meeting Minutes] Failed to emit device gone: {:?}", e);
+                    log_error!(
+                        "commands::audio_events",
+                        "emit_device_gone_failed",
+                        format!("{:?}", e)
+                    );
                 }
 
                 // Stop recording automatically
@@ -124,9 +167,7 @@ async fn monitor_audio_events(app: AppHandle) {
                     let is_recording = state.is_recording.lock().unwrap();
                     if *is_recording {
                         drop(is_recording);
-                        eprintln!(
-                            "[Meeting Minutes] 🛑 Stopping recording due to device disconnection"
-                        );
+                        log_warn!("commands::audio_events", "auto_stop_on_disconnect", "");
                         // Note: Actual stop will be triggered by frontend or timeout
                     }
                 }
@@ -145,13 +186,26 @@ pub async fn start_recording(
     device_id: String,
 ) -> Result<String, String> {
     // Task 9.1: Validate and log selected device (STT-REQ-001.2)
-    println!("[Meeting Minutes] Starting recording with device: {}", device_id);
+    log_info!(
+        "commands::recording",
+        "start_requested",
+        format!("device_id={}", device_id)
+    );
 
     // MVP0: Validate device exists in enumeration
     let available_devices = crate::audio::FakeAudioDevice::enumerate_devices_static()
         .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
 
     if !available_devices.iter().any(|d| d.id == device_id) {
+        log_error!(
+            "commands::recording",
+            "invalid_device",
+            format!(
+                "requested={}, available={:?}",
+                device_id,
+                available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
+            )
+        );
         return Err(format!(
             "Invalid device ID: {}. Available: {:?}",
             device_id,
@@ -159,11 +213,15 @@ pub async fn start_recording(
         ));
     }
 
-    println!("[Meeting Minutes] Device validated: {}", device_id);
+    log_info!("commands::recording", "device_validated", device_id.clone());
 
     // Task 9.1: Save selected device to AppState (STT-REQ-001.2)
     state.set_selected_device_id(device_id.clone());
-    println!("[Meeting Minutes] Device selection saved to state");
+    log_info!(
+        "commands::recording",
+        "device_selection_saved",
+        device_id.clone()
+    );
 
     // MVP1 TODO: Pass device_id to AudioDeviceAdapter::start_recording(device_id)
 
@@ -171,6 +229,7 @@ pub async fn start_recording(
     {
         let is_recording = state.is_recording.lock().unwrap();
         if *is_recording {
+            log_warn!("commands::recording", "start_rejected_already_running", "");
             return Err("Already recording".to_string());
         }
     }
@@ -197,6 +256,14 @@ pub async fn start_recording(
             .ok_or_else(|| "WebSocket server not initialized".to_string())?
     };
 
+    let session_id = Uuid::new_v4().to_string();
+    state.set_session_id(session_id.clone());
+    log_info!(
+        "commands::recording",
+        "session_initialized",
+        format!("session_id={}", session_id)
+    );
+
     // Set recording state
     {
         let mut is_recording = state.is_recording.lock().unwrap();
@@ -206,6 +273,7 @@ pub async fn start_recording(
     // Clone for callback closure
     let python_sidecar_clone = Arc::clone(&python_sidecar);
     let websocket_server_clone = Arc::clone(&websocket_server);
+    let session_id_arc = Arc::new(session_id);
 
     // Start audio device with callback
     let mut device = audio_device.lock().await;
@@ -213,6 +281,7 @@ pub async fn start_recording(
         .start_with_callback(move |audio_data| {
             let python_sidecar = Arc::clone(&python_sidecar_clone);
             let websocket_server = Arc::clone(&websocket_server_clone);
+            let session_id_handle = Arc::clone(&session_id_arc);
 
             // Spawn async task to handle IPC communication
             tokio::spawn(async move {
@@ -241,9 +310,10 @@ pub async fn start_recording(
                 let message_json = match serde_json::to_value(&message) {
                     Ok(json) => json,
                     Err(e) => {
-                        eprintln!(
-                            "[Meeting Minutes] Failed to serialize IPC message: {:?}",
-                            e
+                        log_error!(
+                            "commands::recording",
+                            "serialize_ipc_failed",
+                            format!("{:?}", e)
                         );
                         return;
                     }
@@ -253,9 +323,10 @@ pub async fn start_recording(
                 {
                     let mut sidecar = python_sidecar.lock().await;
                     if let Err(e) = sidecar.send_message(message_json).await {
-                        eprintln!(
-                            "[Meeting Minutes] Failed to send audio data to Python: {:?}",
-                            e
+                        log_error!(
+                            "commands::recording",
+                            "send_to_sidecar_failed",
+                            format!("{:?}", e)
                         );
                         return;
                     }
@@ -277,11 +348,17 @@ pub async fn start_recording(
                         // Add timeout to prevent permanent deadlock
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(5),
-                            sidecar.receive_message()
-                        ).await {
+                            sidecar.receive_message(),
+                        )
+                        .await
+                        {
                             Ok(result) => result,
                             Err(_) => {
-                                eprintln!("[Meeting Minutes] ⏱️ Receive timeout after 5s, assuming stream ended");
+                                log_warn!(
+                                    "commands::recording",
+                                    "sidecar_receive_timeout",
+                                    "duration_ms=5000"
+                                );
                                 break;
                             }
                         }
@@ -291,20 +368,26 @@ pub async fn start_recording(
                     match response {
                         Ok(response) => {
                             // Parse IPC message
-                            let msg = match serde_json::from_value::<ProtocolMessage>(response.clone()) {
-                                Ok(m) => m,
-                                Err(e) => {
-                                    eprintln!("[Meeting Minutes] Failed to parse IPC message: {:?}", e);
-                                    break;
-                                }
-                            };
+                            let msg =
+                                match serde_json::from_value::<ProtocolMessage>(response.clone()) {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        log_error!(
+                                            "commands::recording",
+                                            "parse_ipc_failed",
+                                            format!("{:?}", e)
+                                        );
+                                        break;
+                                    }
+                                };
 
                             // Task 7.2: Check version compatibility (STT-REQ-007.6)
                             match msg.check_version_compatibility() {
                                 VersionCompatibility::MajorMismatch { received, expected } => {
-                                    eprintln!(
-                                        "[Meeting Minutes] ❌ Major version mismatch: received={}, expected={}. Communication rejected.",
-                                        received, expected
+                                    log_error!(
+                                        "commands::recording",
+                                        "ipc_version_major_mismatch",
+                                        format!("received={}, expected={}", received, expected)
                                     );
 
                                     // P0 FIX: Send error response to Python before breaking
@@ -323,7 +406,11 @@ pub async fn start_recording(
                                     if let Ok(json) = serde_json::to_value(&error_response) {
                                         let mut sidecar = python_sidecar.lock().await;
                                         if let Err(e) = sidecar.send_message(json).await {
-                                            eprintln!("[Meeting Minutes] Failed to send version error: {:?}", e);
+                                            log_error!(
+                                                "commands::recording",
+                                                "send_version_error_failed",
+                                                format!("{:?}", e)
+                                            );
                                         }
                                     }
 
@@ -331,16 +418,18 @@ pub async fn start_recording(
                                     break;
                                 }
                                 VersionCompatibility::MinorMismatch { received, expected } => {
-                                    eprintln!(
-                                        "[Meeting Minutes] ⚠️ Minor version mismatch: received={}, expected={}. Continuing with backward compatibility.",
-                                        received, expected
+                                    log_warn!(
+                                        "commands::recording",
+                                        "ipc_version_minor_mismatch",
+                                        format!("received={}, expected={}", received, expected)
                                     );
                                     // Continue processing with backward compatibility
                                 }
                                 VersionCompatibility::Malformed { received } => {
-                                    eprintln!(
-                                        "[Meeting Minutes] ❌ Malformed version string: {}. Communication rejected.",
-                                        received
+                                    log_error!(
+                                        "commands::recording",
+                                        "ipc_version_malformed",
+                                        received.clone()
                                     );
 
                                     // P0 FIX: Send error response to Python before breaking
@@ -349,14 +438,21 @@ pub async fn start_recording(
                                         id: msg.id().to_string(),
                                         version: PROTOCOL_VERSION.to_string(),
                                         error_code: "VERSION_MALFORMED".to_string(),
-                                        error_message: format!("Malformed version string: {}", received),
+                                        error_message: format!(
+                                            "Malformed version string: {}",
+                                            received
+                                        ),
                                         recoverable: false,
                                     };
 
                                     if let Ok(json) = serde_json::to_value(&error_response) {
                                         let mut sidecar = python_sidecar.lock().await;
                                         if let Err(e) = sidecar.send_message(json).await {
-                                            eprintln!("[Meeting Minutes] Failed to send malformed version error: {:?}", e);
+                                            log_error!(
+                                                "commands::recording",
+                                                "send_malformed_version_error_failed",
+                                                format!("{:?}", e)
+                                            );
                                         }
                                     }
 
@@ -368,25 +464,48 @@ pub async fn start_recording(
                                 }
                             }
 
+                            let session_id_ref = session_id_handle.as_ref();
                             match msg {
-                                ProtocolMessage::Event { event_type, data, .. } => {
+                                ProtocolMessage::Event {
+                                    event_type, data, ..
+                                } => {
                                     match event_type.as_str() {
                                         "speech_start" => {
-                                            println!("[Meeting Minutes] 🎤 Speech detected");
+                                            let request_id =
+                                                request_id_from(&data).unwrap_or("unknown");
+                                            log_info!(
+                                                "commands::ipc_events",
+                                                "speech_start",
+                                                format!(
+                                                    "session={} request={}",
+                                                    session_id_ref, request_id
+                                                )
+                                            );
                                             // TODO: Emit to frontend if needed
                                         }
                                         "partial_text" => {
-                                            if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
-                                                println!("[Meeting Minutes] 📝 Partial: {}", text);
+                                            let request_id =
+                                                request_id_from(&data).unwrap_or("unknown");
+                                            if let Some(text) =
+                                                data.get("text").and_then(|v| v.as_str())
+                                            {
+                                                let masked = mask_text(text);
+                                                log_info!(
+                                                    "commands::ipc_events",
+                                                    "partial_text",
+                                                    format!(
+                                                        "session={} request={} {}",
+                                                        session_id_ref, request_id, masked
+                                                    )
+                                                );
 
-                                                // Extract optional extended fields (STT-REQ-008.1)
-                                                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object() {
-                                                    extract_extended_fields(obj)
-                                                } else {
-                                                    (None, None, None)
-                                                };
+                                                let (confidence, language, processing_time_ms) =
+                                                    if let Some(obj) = data.as_object() {
+                                                        extract_extended_fields(obj)
+                                                    } else {
+                                                        (None, None, None)
+                                                    };
 
-                                                // Broadcast partial transcription to WebSocket clients
                                                 let ws_message = WebSocketMessage::Transcription {
                                                     message_id: format!(
                                                         "ws-{}",
@@ -400,34 +519,49 @@ pub async fn start_recording(
                                                     timestamp: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
                                                         .unwrap()
-                                                        .as_millis() as u64,
-                                                    is_partial: Some(true), // partial_text is always partial
+                                                        .as_millis()
+                                                        as u64,
+                                                    is_partial: Some(true),
                                                     confidence,
                                                     language,
                                                     processing_time_ms,
                                                 };
 
                                                 let ws_server = websocket_server.lock().await;
-                                                if let Err(e) = ws_server.broadcast(ws_message).await {
-                                                    eprintln!(
-                                                        "[Meeting Minutes] Failed to broadcast partial transcription: {:?}",
-                                                        e
+                                                if let Err(e) =
+                                                    ws_server.broadcast(ws_message).await
+                                                {
+                                                    log_error!(
+                                                        "commands::ipc_events",
+                                                        "broadcast_partial_failed",
+                                                        format!("{:?}", e)
                                                     );
                                                 }
                                             }
                                         }
                                         "final_text" => {
-                                            if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
-                                                println!("[Meeting Minutes] ✅ Final: {}", text);
+                                            let request_id =
+                                                request_id_from(&data).unwrap_or("unknown");
+                                            if let Some(text) =
+                                                data.get("text").and_then(|v| v.as_str())
+                                            {
+                                                let masked = mask_text(text);
+                                                log_info!(
+                                                    "commands::ipc_events",
+                                                    "final_text",
+                                                    format!(
+                                                        "session={} request={} {}",
+                                                        session_id_ref, request_id, masked
+                                                    )
+                                                );
 
-                                                // Extract optional extended fields (STT-REQ-008.1)
-                                                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object() {
-                                                    extract_extended_fields(obj)
-                                                } else {
-                                                    (None, None, None)
-                                                };
+                                                let (confidence, language, processing_time_ms) =
+                                                    if let Some(obj) = data.as_object() {
+                                                        extract_extended_fields(obj)
+                                                    } else {
+                                                        (None, None, None)
+                                                    };
 
-                                                // Broadcast final transcription to WebSocket clients
                                                 let ws_message = WebSocketMessage::Transcription {
                                                     message_id: format!(
                                                         "ws-{}",
@@ -441,54 +575,87 @@ pub async fn start_recording(
                                                     timestamp: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
                                                         .unwrap()
-                                                        .as_millis() as u64,
-                                                    is_partial: Some(false), // final_text is always final
+                                                        .as_millis()
+                                                        as u64,
+                                                    is_partial: Some(false),
                                                     confidence,
                                                     language,
                                                     processing_time_ms,
                                                 };
 
                                                 let ws_server = websocket_server.lock().await;
-                                                if let Err(e) = ws_server.broadcast(ws_message).await {
-                                                    eprintln!(
-                                                        "[Meeting Minutes] Failed to broadcast final transcription: {:?}",
-                                                        e
+                                                if let Err(e) =
+                                                    ws_server.broadcast(ws_message).await
+                                                {
+                                                    log_error!(
+                                                        "commands::ipc_events",
+                                                        "broadcast_final_failed",
+                                                        format!("{:?}", e)
                                                     );
                                                 }
                                             }
                                         }
                                         "speech_end" => {
-                                            println!("[Meeting Minutes] 🔇 Speech ended");
-                                            break; // Exit loop after speech_end
+                                            let request_id =
+                                                request_id_from(&data).unwrap_or("unknown");
+                                            log_info!(
+                                                "commands::ipc_events",
+                                                "speech_end",
+                                                format!(
+                                                    "session={} request={}",
+                                                    session_id_ref, request_id
+                                                )
+                                            );
+                                            break;
                                         }
                                         "no_speech" => {
-                                            // CRITICAL FIX: Handle no_speech to prevent deadlock on silence
-                                            // Python sends this when all frames were silence (no speech detected).
-                                            // Without this handler, Rust would block forever waiting for speech_end.
-                                            // This is the ONLY termination signal for silent chunks.
-                                            // Requirement: STT-REQ-007.7 (stream termination for silent chunks)
-                                            println!("[Meeting Minutes] 🤫 No speech detected");
+                                            let request_id =
+                                                request_id_from(&data).unwrap_or("unknown");
+                                            log_info!(
+                                                "commands::ipc_events",
+                                                "no_speech",
+                                                format!(
+                                                    "session={} request={}",
+                                                    session_id_ref, request_id
+                                                )
+                                            );
                                             break;
                                         }
                                         _ => {
-                                            eprintln!("[Meeting Minutes] ⚠️ Unknown event type: {}", event_type);
+                                            log_warn!(
+                                                "commands::ipc_events",
+                                                "unknown_event_type",
+                                                event_type
+                                            );
                                         }
                                     }
                                 }
                                 ProtocolMessage::Error { error_message, .. } => {
-                                    eprintln!("[Meeting Minutes] Python sidecar error: {}", error_message);
+                                    log_error!(
+                                        "commands::ipc_events",
+                                        "python_sidecar_error",
+                                        format!(
+                                            "session={} message={}",
+                                            session_id_ref, error_message
+                                        )
+                                    );
                                     break;
                                 }
                                 _ => {
-                                    eprintln!("[Meeting Minutes] ⚠️ Unexpected message type: {:?}", msg);
+                                    log_warn!(
+                                        "commands::ipc_events",
+                                        "unexpected_message_type",
+                                        format!("session={} message={:?}", session_id_ref, msg)
+                                    );
                                     break;
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[Meeting Minutes] Failed to receive Python event: {:?}",
-                                e
+                            log_error!(
+                                "commands::ipc_events",
+                                "receive_event_failed",
+                                format!("session={} message={:?}", session_id_handle.as_ref(), e)
                             );
                             break;
                         }
@@ -506,7 +673,7 @@ pub async fn start_recording(
         monitor_audio_events(app_clone).await;
     });
 
-    println!("[Meeting Minutes] ✅ Recording started");
+    log_info!("commands::recording", "started", "");
     Ok("Recording started".to_string())
 }
 
@@ -540,7 +707,9 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
         *is_recording = false;
     }
 
-    println!("[Meeting Minutes] ✅ Recording stopped");
+    state.clear_session_id();
+
+    log_info!("commands::recording", "stopped", "");
     Ok("Recording stopped".to_string())
 }
 
@@ -549,7 +718,7 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
 /// Requirement: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.4
 #[tauri::command]
 pub async fn get_whisper_models() -> Result<serde_json::Value, String> {
-    println!("[Meeting Minutes] Getting Whisper models and system resources...");
+    log_info!("commands::models", "request_models", "");
 
     // Task 9.2: Available models (STT-REQ-006.2)
     let models = vec!["tiny", "base", "small", "medium", "large-v3"];
@@ -599,25 +768,39 @@ fn calculate_recommended_model(resources: &serde_json::Value) -> String {
 /// IMPORTANT: Decoupled from recorder instance to allow enumeration before recording starts.
 /// This matches the real device adapter pattern (CoreAudio/WASAPI/ALSA perform static host queries).
 #[tauri::command]
-pub async fn list_audio_devices(_state: State<'_, AppState>) -> Result<Vec<crate::audio_device_adapter::AudioDeviceInfo>, String> {
-    println!("[Meeting Minutes] Listing audio devices...");
+pub async fn list_audio_devices(
+    _state: State<'_, AppState>,
+) -> Result<Vec<crate::audio_device_adapter::AudioDeviceInfo>, String> {
+    log_info!("commands::audio_devices", "enumerate_requested", "");
 
     // Task 9.1: Use static enumeration (no dependency on initialized recorder)
     // For MVP0: FakeAudioDevice::enumerate_devices_static()
     // For MVP1: CpalAudioDeviceAdapter::enumerate_devices_static()
     match crate::audio::FakeAudioDevice::enumerate_devices_static() {
         Ok(devices) => {
-            println!("[Meeting Minutes] Found {} audio devices", devices.len());
+            log_info!(
+                "commands::audio_devices",
+                "enumerate_success",
+                format!("count={}", devices.len())
+            );
             for device in &devices {
-                println!(
-                    "  - {} (ID: {}, {}Hz, {} ch, loopback: {})",
-                    device.name, device.id, device.sample_rate, device.channels, device.is_loopback
+                log_debug!(
+                    "commands::audio_devices",
+                    "device_entry",
+                    format!(
+                        "id={}, name={}, sample_rate={}, channels={}, loopback={}",
+                        device.id,
+                        device.name,
+                        device.sample_rate,
+                        device.channels,
+                        device.is_loopback
+                    )
                 );
             }
             Ok(devices)
         }
         Err(e) => {
-            eprintln!("[Meeting Minutes] Failed to enumerate audio devices: {}", e);
+            log_error!("commands::audio_devices", "enumerate_failed", e.to_string());
             Err(format!("Failed to list audio devices: {}", e))
         }
     }

@@ -2,11 +2,12 @@
 // Walking Skeleton (MVP0) - WebSocket Server Integration
 // MVP1 - Real STT Implementation
 
+#[macro_use]
+pub mod logger;
 pub mod audio;
 pub mod audio_device_adapter;
 pub mod commands;
 pub mod ipc_protocol;
-pub mod logger;
 pub mod python_sidecar;
 pub mod ring_buffer; // ADR-013: Phase 2 - Ring Buffer
 pub mod sidecar; // ADR-013: Phase 1 - Facade API
@@ -40,34 +41,36 @@ pub fn run() {
                 let mut sidecar = PythonSidecarManager::new();
                 match sidecar.start().await {
                     Ok(_) => {
-                        println!("[Meeting Minutes] ✅ Python sidecar started");
+                        log_info!("bootstrap::python", "sidecar_started", "");
 
                         // Wait for ready signal
                         match sidecar.wait_for_ready().await {
                             Ok(_) => {
-                                println!("[Meeting Minutes] ✅ Python sidecar ready");
+                                log_info!("bootstrap::python", "sidecar_ready", "");
                                 let sidecar_arc = Arc::new(tokio::sync::Mutex::new(sidecar));
                                 app_state.set_python_sidecar(sidecar_arc);
                             }
                             Err(e) => {
-                                eprintln!(
-                                    "[Meeting Minutes] ❌ Python sidecar ready timeout: {:?}",
-                                    e
+                                log_error!(
+                                    "bootstrap::python",
+                                    "sidecar_ready_timeout",
+                                    format!("{:?}", e)
                                 );
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!(
-                            "[Meeting Minutes] ❌ Failed to start Python sidecar: {:?}",
-                            e
+                        log_error!(
+                            "bootstrap::python",
+                            "sidecar_start_failed",
+                            format!("{:?}", e)
                         );
                     }
                 }
 
                 // 2. Initialize FakeAudioDevice
                 let audio_device = FakeAudioDevice::new();
-                println!("[Meeting Minutes] ✅ FakeAudioDevice initialized");
+                log_info!("bootstrap::audio", "fake_device_initialized", "");
                 let device_arc = Arc::new(tokio::sync::Mutex::new(audio_device));
                 app_state.set_audio_device(device_arc);
 
@@ -75,17 +78,19 @@ pub fn run() {
                 let mut ws_server = WebSocketServer::new();
                 match ws_server.start().await {
                     Ok(port) => {
-                        println!(
-                            "[Meeting Minutes] ✅ WebSocket server started on port {}",
-                            port
+                        log_info!(
+                            "bootstrap::websocket",
+                            "server_started",
+                            format!("port={}", port)
                         );
                         let server_arc = Arc::new(tokio::sync::Mutex::new(ws_server));
                         app_state.set_websocket_server(server_arc);
                     }
                     Err(e) => {
-                        eprintln!(
-                            "[Meeting Minutes] ❌ Failed to start WebSocket server: {:?}",
-                            e
+                        log_error!(
+                            "bootstrap::websocket",
+                            "server_start_failed",
+                            format!("{:?}", e)
                         );
                     }
                 }

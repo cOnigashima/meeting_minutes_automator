@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 // Task 7.1.5: Import new IPC protocol module
-use crate::ipc_protocol::{
-    IpcMessage as ProtocolMessage, TranscriptionResult, PROTOCOL_VERSION,
-};
+use crate::ipc_protocol::{IpcMessage as ProtocolMessage, TranscriptionResult, PROTOCOL_VERSION};
 
 /// Python interpreter detection errors (design.md compliant)
 #[derive(Error, Debug)]
@@ -384,7 +382,7 @@ impl PythonSidecarManager {
         // Start Python process with unbuffered mode (-u flag)
         // BLOCK-005 Fix: Force line-buffered stdout to ensure ready signal is flushed
         let mut child = Command::new(&python_path)
-            .arg("-u")  // Unbuffered stdout/stderr (critical for IPC handshake)
+            .arg("-u") // Unbuffered stdout/stderr (critical for IPC handshake)
             .arg(&script_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

@@ -18,7 +18,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src 'self' ws://localhost:* http://localhost:*",
+      "dangerousDisableAssetCspModification": false
     }
   },
   "bundle": {

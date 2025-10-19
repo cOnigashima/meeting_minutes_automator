@@ -100,7 +100,7 @@ fn test_transcription_partial_fields() {
         timestamp: 1696234567890,
         is_partial: Some(true),
         confidence: Some(0.85),
-        language: None, // 省略
+        language: None,           // 省略
         processing_time_ms: None, // 省略
     };
 

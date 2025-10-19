@@ -235,9 +235,7 @@ impl IpcMessage {
     /// Try to parse result as TranscriptionResult
     pub fn as_transcription_result(&self) -> Option<TranscriptionResult> {
         match self {
-            IpcMessage::Response { result, .. } => {
-                serde_json::from_value(result.clone()).ok()
-            }
+            IpcMessage::Response { result, .. } => serde_json::from_value(result.clone()).ok(),
             _ => None,
         }
     }
@@ -430,10 +428,14 @@ mod tests {
                 assert_eq!(r1["processing_time_ms"], r2["processing_time_ms"]);
                 assert_eq!(r1["model_size"], r2["model_size"]);
                 // Confidence may have f32 precision differences, check approximate equality
-                if let (Some(c1), Some(c2)) =
-                    (r1["confidence"].as_f64(), r2["confidence"].as_f64())
+                if let (Some(c1), Some(c2)) = (r1["confidence"].as_f64(), r2["confidence"].as_f64())
                 {
-                    assert!((c1 - c2).abs() < 0.0001, "Confidence mismatch: {} vs {}", c1, c2);
+                    assert!(
+                        (c1 - c2).abs() < 0.0001,
+                        "Confidence mismatch: {} vs {}",
+                        c1,
+                        c2
+                    );
                 }
             }
             _ => panic!("Expected Response variants"),
@@ -497,7 +499,8 @@ mod tests {
     fn test_version_field_omitted_defaults_to_1_0() {
         // Arrange: Old format JSON without version field (backward compatibility with MVP0)
         // Related requirement: ADR-003 (IPC Version Strategy)
-        let response_json = r#"{"type":"response","id":"test-old","result":{"text":"test","is_final":true}}"#;
+        let response_json =
+            r#"{"type":"response","id":"test-old","result":{"text":"test","is_final":true}}"#;
         let error_json = r#"{"type":"error","id":"error-old","errorCode":"TEST_ERROR","errorMessage":"test error","recoverable":true}"#;
 
         // Act: Deserialize messages without version field

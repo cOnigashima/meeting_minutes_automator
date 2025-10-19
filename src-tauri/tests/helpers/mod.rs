@@ -410,7 +410,11 @@ fn get_memory_usage_windows(pid: u32) -> Result<f64, String> {
     }
 
     // Memory is in "1,234 K" format, need to clean it
-    let mem_str = fields[4].trim().trim_matches('"').replace(" K", "").replace(",", "");
+    let mem_str = fields[4]
+        .trim()
+        .trim_matches('"')
+        .replace(" K", "")
+        .replace(",", "");
     let mem_kb: f64 = mem_str
         .parse()
         .map_err(|e| format!("Failed to parse memory value '{}': {}", mem_str, e))?;

@@ -51,7 +51,10 @@ impl SessionHandle {
     /// Related requirement: STT-REQ-005.7
     pub fn disk_warning_message(&self) -> Option<String> {
         if self.disk_status == DiskSpaceStatus::Warning {
-            Some("ディスク容量が1GB未満です。録音を続けると保存できなくなる可能性があります。".to_string())
+            Some(
+                "ディスク容量が1GB未満です。録音を続けると保存できなくなる可能性があります。"
+                    .to_string(),
+            )
         } else {
             None
         }
@@ -182,7 +185,7 @@ impl LocalStorageService {
         let metadata_path = session_dir.join("session.json");
 
         let json = serde_json::to_string_pretty(metadata)?;
-        std::fs::write(&metadata_path, json)?;
+        write_file_owner_only(&metadata_path, json.as_bytes())?;
 
         Ok(())
     }
@@ -311,10 +314,74 @@ pub struct AudioWriter {
     samples_written: u32,
 }
 
+/// Create a file with owner-only permissions (Unix: 0o600, Windows: default ACLs)
+///
+/// SEC-003: File permissions enforcement
+/// - Unix/Linux/macOS: Uses mode(0o600) for owner-only read/write
+/// - Windows: Uses default ACLs (TODO: implement SetNamedSecurityInfoW)
+#[cfg(unix)]
+fn create_file_owner_only(path: &std::path::Path) -> Result<std::fs::File> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    Ok(OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600) // Owner read/write only
+        .open(path)?)
+}
+
+#[cfg(not(unix))]
+fn create_file_owner_only(path: &std::path::Path) -> Result<std::fs::File> {
+    // TODO(SEC-003): Windows file permissions
+    // Current implementation uses default Windows ACLs (typically 644-equivalent).
+    // For production, implement using winapi::um::aclapi::SetNamedSecurityInfoW
+    // to restrict access to owner only.
+    // Tracked in: Phase 13.1.4 (Cross-platform compatibility)
+    Ok(std::fs::File::create(path)?)
+}
+
+/// Open/create a file in append mode with owner-only permissions
+#[cfg(unix)]
+fn open_file_append_owner_only(path: &std::path::Path) -> Result<std::fs::File> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    Ok(OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?)
+}
+
+#[cfg(not(unix))]
+fn open_file_append_owner_only(path: &std::path::Path) -> Result<std::fs::File> {
+    use std::fs::OpenOptions;
+    // TODO(SEC-003): Windows file permissions - see create_file_owner_only()
+    Ok(OpenOptions::new().create(true).append(true).open(path)?)
+}
+
+/// Write data to a file with owner-only permissions
+#[cfg(unix)]
+fn write_file_owner_only(path: &std::path::Path, contents: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let mut file = create_file_owner_only(path)?;
+    file.write_all(contents)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_file_owner_only(path: &std::path::Path, contents: &[u8]) -> Result<()> {
+    // TODO(SEC-003): Windows file permissions - see create_file_owner_only()
+    std::fs::write(path, contents)?;
+    Ok(())
+}
+
 impl AudioWriter {
     /// 新規WAVファイルライター作成
     fn new(wav_path: PathBuf) -> Result<Self> {
-        let file = std::fs::File::create(&wav_path)?;
+        let file = create_file_owner_only(&wav_path)?;
         let mut writer = Self {
             file,
             samples_written: 0,
@@ -336,11 +403,11 @@ impl AudioWriter {
         // fmtチャンク
         self.file.write_all(b"fmt ")?;
         self.file.write_all(&16u32.to_le_bytes())?; // fmtチャンクサイズ
-        self.file.write_all(&1u16.to_le_bytes())?;  // PCM形式
-        self.file.write_all(&1u16.to_le_bytes())?;  // モノラル
+        self.file.write_all(&1u16.to_le_bytes())?; // PCM形式
+        self.file.write_all(&1u16.to_le_bytes())?; // モノラル
         self.file.write_all(&16000u32.to_le_bytes())?; // サンプルレート 16kHz
         self.file.write_all(&32000u32.to_le_bytes())?; // バイトレート (16000 * 1 * 2)
-        self.file.write_all(&2u16.to_le_bytes())?;  // ブロックアライン (1 * 2)
+        self.file.write_all(&2u16.to_le_bytes())?; // ブロックアライン (1 * 2)
         self.file.write_all(&16u16.to_le_bytes())?; // ビット深度 16bit
 
         // dataチャンク
@@ -474,13 +541,7 @@ pub struct TranscriptWriter {
 impl TranscriptWriter {
     /// 新規TranscriptWriter作成（追記モード）
     fn new(transcript_path: PathBuf) -> Result<Self> {
-        use std::fs::OpenOptions;
-
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&transcript_path)?;
-
+        let file = open_file_append_owner_only(&transcript_path)?;
         Ok(Self { file })
     }
 
@@ -800,7 +861,8 @@ mod tests {
         let num_channels = u16::from_le_bytes([wav_data[22], wav_data[23]]);
         assert_eq!(num_channels, 1, "Should be mono (1 channel)");
 
-        let sample_rate = u32::from_le_bytes([wav_data[24], wav_data[25], wav_data[26], wav_data[27]]);
+        let sample_rate =
+            u32::from_le_bytes([wav_data[24], wav_data[25], wav_data[26], wav_data[27]]);
         assert_eq!(sample_rate, 16000, "Sample rate should be 16kHz");
 
         let bits_per_sample = u16::from_le_bytes([wav_data[34], wav_data[35]]);
@@ -938,11 +1000,7 @@ mod tests {
         let content = std::fs::read_to_string(&transcript_path).expect("read should succeed");
 
         let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(
-            lines.len(),
-            2,
-            "Should have 2 JSON lines (append mode)"
-        );
+        assert_eq!(lines.len(), 2, "Should have 2 JSON lines (append mode)");
     }
 
     #[test]
@@ -956,7 +1014,9 @@ mod tests {
         let session_id = storage.generate_session_id();
         storage.create_session(&session_id).unwrap();
 
-        let transcript_path = storage.get_session_dir(&session_id).join("transcription.jsonl");
+        let transcript_path = storage
+            .get_session_dir(&session_id)
+            .join("transcription.jsonl");
 
         // close()を呼ばずにスコープを抜ける（Drop実行）
         {
@@ -1049,8 +1109,7 @@ mod tests {
 
         // Assert: ファイル内容確認
         let content = std::fs::read_to_string(&metadata_path).expect("read should succeed");
-        let parsed: SessionMetadata =
-            serde_json::from_str(&content).expect("JSON should be valid");
+        let parsed: SessionMetadata = serde_json::from_str(&content).expect("JSON should be valid");
 
         assert_eq!(parsed, metadata, "Parsed metadata should match original");
     }
@@ -1140,13 +1199,9 @@ mod tests {
         // Assert: 最新のメタデータが保存されている
         let metadata_path = service.get_session_dir(session_id).join("session.json");
         let content = std::fs::read_to_string(&metadata_path).expect("read should succeed");
-        let parsed: SessionMetadata =
-            serde_json::from_str(&content).expect("JSON should be valid");
+        let parsed: SessionMetadata = serde_json::from_str(&content).expect("JSON should be valid");
 
-        assert_eq!(
-            parsed, metadata2,
-            "Should have latest metadata (overwrite)"
-        );
+        assert_eq!(parsed, metadata2, "Should have latest metadata (overwrite)");
     }
 
     #[test]
@@ -1413,7 +1468,10 @@ mod tests {
 
         // needs_disk_warning() のテスト
         let needs_warning = handle.needs_disk_warning();
-        assert_eq!(needs_warning, handle.disk_status == DiskSpaceStatus::Warning);
+        assert_eq!(
+            needs_warning,
+            handle.disk_status == DiskSpaceStatus::Warning
+        );
 
         // disk_warning_message() のテスト
         if handle.disk_status == DiskSpaceStatus::Warning {
