@@ -63,7 +63,10 @@
       "Bash(.venv/bin/pip-audit:*)",
       "Bash(awk:*)",
       "Bash(./scripts/security_audit.sh:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Read(//opt/homebrew/Cellar/python@3.12/3.12.9/Frameworks/Python.framework/Versions/3.12/bin/**)",
+      "Bash(curl:*)",
+      "Bash(../python-stt/.venv/bin/python3:*)"
     ],
     "deny": [],
     "ask": []

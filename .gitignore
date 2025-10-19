@@ -6,6 +6,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+test_result/
 
 node_modules
 dist
@@ -39,6 +40,7 @@ target/
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+src-tauri/test_results/
 
 # Editor directories and files
 .vscode/*

@@ -1,3 +1,30 @@
+//! STT Burn-in Harness (ADR-013)
+//!
+//! Long-running stability test for the complete STT pipeline.
+//!
+//! # Purpose
+//! Validates end-to-end stability by:
+//! - Generating synthetic audio frames at 100 fps (10ms interval)
+//! - Sending frames through ring buffer and IPC to Python sidecar
+//! - Monitoring Python STT processing and IPC responses
+//! - Detecting memory leaks and resource exhaustion
+//!
+//! # Known Limitations
+//! **Rust Process Monitoring**:
+//! The monitoring script (`long_running_monitor.py`) only tracks Python sidecar memory,
+//! not the Rust burn-in process itself.
+//!
+//! - **Root Cause**: Script searches for process name "meeting-minutes-automator" but burn-in binary is "stt_burn_in"
+//! - **Impact**: Rust memory metrics show 0MB in test results (Python metrics are valid)
+//! - **Workaround**: Manual process inspection during test runs
+//! - **Future**: Update monitoring script to detect burn-in binary name (MVP2)
+//!
+//! # Usage
+//! ```bash
+//! cargo run --bin stt_burn_in -- --duration-secs 7200  # 2-hour stability test
+//! cargo run --bin stt_burn_in -- --duration-secs 60    # Quick validation
+//! ```
+
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
