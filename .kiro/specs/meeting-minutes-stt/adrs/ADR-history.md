@@ -1,5 +1,8 @@
 # Meeting Minutes STT ADR Evolution (2025-10)
 
+> **このドキュメントは ADR進化履歴のみを記載します。**
+> **実装検証の詳細は** [adr-implementation-review.md](../adr-implementation-review.md) **参照。**
+
 ## Timeline
 - **2025-10-13 – ADR-008 (Dedicated Session Task)**  
   Proposed a single recording-session task to resolve IPC deadlocks. Rejected after external review uncovered three blockers: structural deadlock, false `no_speech`, and frame drops.

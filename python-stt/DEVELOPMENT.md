@@ -61,6 +61,9 @@ source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements-dev.txt
+
+# Register editable package (enables `import stt_engine`)
+pip install --no-build-isolation -e .
 ```
 
 ### Daily Workflow
@@ -95,6 +98,16 @@ deactivate
 **Symptom**: Documentation mismatch
 **Cause**: Project structure changed
 **Solution**: Always use `.venv/` (actual implementation)
+
+### Issue 4: "No module named stt_engine"
+
+**Symptom**: `ModuleNotFoundError: No module named 'stt_engine'`
+**Cause**: Editable install not performed in the active virtualenv
+**Solution**:
+```bash
+source python-stt/.venv/bin/activate
+pip install --no-build-isolation -e python-stt
+```
 
 ## AI Agent Recovery Strategy
 

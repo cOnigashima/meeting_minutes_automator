@@ -828,7 +828,7 @@ pub enum DiskSpaceStatus {
 4. **Python偽no_speech検出（P1）**: イベント発行の有無だけで判定するため、発話継続中でもイベント間にno_speechを誤送信（ADR-008/009共通）
 
 **ADR-013の最終設計**: Stdin/Stdout分離 + try_send() Backpressure + Sidecar Facade  
-（詳細は `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md`、P0フォローアップは `ADR-013-P0-bug-fixes.md` を参照）
+（詳細は `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-full-duplex-final-design.md`、P0フォローアップは `ADR-013-P0-bug-fixes.md` を参照）
 - **ADR-011**: stdin/stdoutを独立したMutexに分離 → 真の全二重通信実現（ADR-013に統合）
 - **ADR-012**: blocking_send() → try_send() + UI Notification → CPAL保護（ADR-013に統合）
 - **ADR-013**: Facade API化、LDJSONフレーミング、バッファポリシー明確化

@@ -112,7 +112,7 @@
 3. meeting-minutes-core (Fake実装) との後方互換性テスト
  4. Sidecar Facade (ADR-013) とリングバッファP0修正の適用確認 (`ADR-013-P0-bug-fixes.md`)
 
-> 参照: `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md`（ADR-011/012を統合した最終設計）  
+> 参照: `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-full-duplex-final-design.md`（ADR-011/012を統合した最終設計）  
 > フォローアップ: `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-P0-bug-fixes.md`
 
 ---
@@ -140,7 +140,7 @@
      - 13.1.4: クロスプラットフォームE2E（Task 10.5）
      - 13.1.5: 非機能要件E2E（Task 10.7）
      - 13.1.6: IPC/WebSocket後方互換性E2E（Task 10.6）
-   - **詳細**: `tasks/phase-13-verification.md` 参照
+   - **詳細**: `tasks.md` Phase 13セクション参照
 
 **受け入れ基準**:
 - ✅ Task 10.1完了（VAD→STT完全フロー、23.49秒緑化）

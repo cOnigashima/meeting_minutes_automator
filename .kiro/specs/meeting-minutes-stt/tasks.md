@@ -227,7 +227,7 @@ MVP1実装完了後の技術的負債とコードクリーンアップタスク�
 ## 次のステップ
 
 ### Phase 13開始前
-1. ✅ Phase 13タスク定義完了（tasks/phase-13-verification.md）
+1. ✅ Phase 13タスク定義完了（本ドキュメント Phase 13セクション参照）
 2. ⏸️ spec.json更新（phase: "verification"）
 3. ⏸️ MVP2-HANDOFF.md用語統一（"MVP2 Phase 0" → "Phase 13"）
 
@@ -240,7 +240,7 @@ MVP1実装完了後の技術的負債とコードクリーンアップタスク�
 
 ## 参考資料
 
-- **詳細タスク**: [tasks/phase-13-verification.md](./tasks/phase-13-verification.md)
+- **詳細タスク**: 本ドキュメント「Phase 13: 検証負債解消 (2025-10-19開始)」セクション参照
 - **元のタスク一覧**: [tasks-old.md](./tasks-old.md)（Phase 1-12詳細、982行）
 - **セキュリティレポート**: [security-test-report.md](./security-test-report.md)
 - **MVP2申し送り**: [MVP2-HANDOFF.md](./MVP2-HANDOFF.md)

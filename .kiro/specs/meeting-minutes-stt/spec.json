@@ -24,7 +24,7 @@
     }
   },
   "ready_for_implementation": true,
-  "notes": "Phase 13: 検証負債解消 (2025-10-19開始): MVP1 Core Implementation完了（Task 1-12、42/66タスク）後、Phase 13で検証負債を解消。Phase 13内容: 13.1 Rust E2Eテスト7件（Task 10.2-10.7）、13.2 長時間稼働テスト（Task 11.3、2時間録音）、13.3 セキュリティ修正5件（SEC-001〜005）。推定作業量: 5-7日。完了基準: 221テスト合格（Rust 78 + Python 143）、セキュリティ脆弱性0件（SEC-004除く）、Windows/Linux実機検証完了。詳細: tasks/phase-13-verification.md参照。",
+  "notes": "Phase 13: 検証負債解消 (2025-10-19開始): MVP1 Core Implementation完了（Task 1-12、42/66タスク）後、Phase 13で検証負債を解消。Phase 13内容: 13.1 Rust E2Eテスト7件（Task 10.2-10.7）、13.2 長時間稼働テスト（Task 11.3、2時間録音）、13.3 セキュリティ修正5件（SEC-001〜005）。推定作業量: 5-7日。完了基準: 221テスト合格（Rust 78 + Python 143）、セキュリティ脆弱性0件（SEC-004除く）、Windows/Linux実機検証完了。詳細: tasks.md Phase 13セクション参照。",
   "blockers": [
     {
       "id": "BLOCK-001",
@@ -78,11 +78,11 @@
       "resolved_at": "2025-10-14",
       "resolution_adopted": "adr_013_sidecar_facade_api",
       "resolution_rationale": "ADR-011の方向性は正しかったが、API設計が不明確だった。ADR-013でAudioSink/EventStream facade APIを明確化し、Mutex完全隠蔽を実現。",
-      "resolution_reference": ".kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md",
+      "resolution_reference": ".kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-full-duplex-final-design.md",
       "resolution_actions": {
         "design_updates": [
           "ADR-013作成（Sidecar Facade API + Line-Delimited JSON + 5s buffer戦略）",
-          "意思決定記録作成（decisions/2025-10-14-ipc-architecture-final-decision.md）"
+          "意思決定記録作成（archive/decisions/2025-10-14-ipc-architecture-final-decision.md）"
         ],
         "implementation_updates": [
           "BLOCK-004追加（ADR-013実装トラッキング）"
@@ -100,11 +100,11 @@
       "resolved_at": "2025-10-14",
       "resolution_adopted": "adr_013_5s_buffer_immediate_stop",
       "resolution_rationale": "ADR-012のtry_send()戦略は正しかったが、buffer policy（5s vs 120s + auto-pause）が矛盾。ADR-013で5s + immediate stopに確定し、UX明確化。",
-      "resolution_reference": ".kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md",
+      "resolution_reference": ".kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-full-duplex-final-design.md",
       "resolution_actions": {
         "design_updates": [
           "ADR-013作成（5s buffer + immediate stop戦略明示化）",
-          "意思決定記録作成（decisions/2025-10-14-ipc-architecture-final-decision.md）"
+          "意思決定記録作成（archive/decisions/2025-10-14-ipc-architecture-final-decision.md）"
         ],
         "implementation_updates": [
           "BLOCK-004追加（ADR-013実装トラッキング）"
@@ -116,7 +116,7 @@
       "description": "ADR-013 Sidecar Full-Duplex IPC Final Design実装完了",
       "blocking_phase": "implementation",
       "resolution_required": "ADR-013完全実装・E2Eテスト合格",
-      "reference": ".kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md, decisions/2025-10-14-ipc-architecture-final-decision.md",
+      "reference": ".kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-full-duplex-final-design.md, archive/decisions/2025-10-14-ipc-architecture-final-decision.md",
       "status": "completed",
       "created_at": "2025-10-14",
       "resolved_at": "2025-10-14",

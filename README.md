@@ -44,7 +44,7 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 | Audio callback (P99) | <10μs | 2.125μs | ✅ PASS |
 | Audio callback (平均) | <10μs | 0.356μs | ✅ PASS |
 
-詳細: [Task 10.6](.kiro/specs/meeting-minutes-stt/tasks/phase-13-verification.md#task-10-6)
+詳細: [Task 10.6](.kiro/specs/meeting-minutes-stt/tasks.md#phase-13-verification)
 
 **後方互換性テスト** (2025-10-19測定):
 
@@ -53,7 +53,7 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 | IPC Protocol | 26 | 26 | STT-REQ-007.1-007.6, ADR-003 |
 | WebSocket Extension | 6 | 6 | STT-REQ-008.1-008.3 |
 
-詳細: [Task 10.7](.kiro/specs/meeting-minutes-stt/tasks/phase-13-verification.md#task-10-7)
+詳細: [Task 10.7](.kiro/specs/meeting-minutes-stt/tasks.md#phase-13-verification)
 
 **ドキュメント**:
 - ✅ UML図5種類（コンポーネント、シーケンス×3、クラス）
@@ -78,7 +78,7 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 - **Task 11.3**: 長時間稼働テスト（推定1日）
 - **SEC-001〜005**: セキュリティ修正5件（推定5h）
 
-詳細: [Phase 13完了報告](.kiro/specs/meeting-minutes-stt/phase-13-completion-report.md)
+詳細: [Phase 13検証タスク](.kiro/specs/meeting-minutes-stt/tasks.md#phase-13-verification)
 
 ### 次のフェーズ
 - 📋 **MVP2 Phase 0**: 検証負債解消（Task 10.2-10.7、Task 11.3、SEC-001〜005）

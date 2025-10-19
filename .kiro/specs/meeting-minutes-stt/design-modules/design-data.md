@@ -95,7 +95,7 @@ erDiagram
 ### Data Contracts & Integration
 
 **IPC拡張フィールド** (Rust → Python):  
-> ℹ️ 詳細設計は `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-fullدuplex-final-design.md` を参照。  
+> ℹ️ 詳細設計は `.kiro/specs/meeting-minutes-stt/adrs/ADR-013-sidecar-full-duplex-final-design.md` を参照。  
 > ℹ️ 実装後のクリティカル修正は `ADR-013-P0-bug-fixes.md` に記録。
 
 ```typescript

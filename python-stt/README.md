@@ -31,6 +31,7 @@ source .venv/bin/activate
 ```bash
 pip install -r requirements.txt      # faster-whisper / webrtcvad / numpy / psutil など本番依存
 pip install -r requirements-dev.txt  # pytest / pytest-asyncio など開発依存
+pip install --no-build-isolation -e .  # stt_engine をパッケージとして登録
 ```
 > 初回は faster-whisper が Hugging Face からモデルをダウンロードします（既定: `small`）。事前に `~/.cache/huggingface` を用意すると高速になります。
 
