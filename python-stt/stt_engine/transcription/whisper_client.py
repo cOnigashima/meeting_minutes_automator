@@ -25,6 +25,28 @@ ModelSize = Literal["tiny", "base", "small", "medium", "large-v3"]
 logger = logging.getLogger(__name__)
 
 
+def _log_structured(level: int, component: str, event: str, **details) -> None:
+    payload = {
+        "component": component,
+        "event": event,
+    }
+    if details:
+        payload["details"] = details
+    logger.log(level, json.dumps(payload, ensure_ascii=False))
+
+
+def log_info_event(component: str, event: str, **details) -> None:
+    _log_structured(logging.INFO, component, event, **details)
+
+
+def log_warning_event(component: str, event: str, **details) -> None:
+    _log_structured(logging.WARNING, component, event, **details)
+
+
+def log_error_event(component: str, event: str, **details) -> None:
+    _log_structured(logging.ERROR, component, event, **details)
+
+
 class WhisperSTTEngine:
     """
     WhisperSTTEngine handles audio transcription using faster-whisper.
@@ -209,8 +231,11 @@ class WhisperSTTEngine:
         try:
             cpu_cores = psutil.cpu_count(logical=True) or 1
         except Exception as exc:
-            logger.warning(
-                f"resource_monitor.cpu_count_fallback: {exc} — defaulting to 1 core"
+            log_warning_event(
+                "resource_monitor",
+                "cpu_count_fallback",
+                error=str(exc),
+                default_cpu_cores=1,
             )
             cpu_cores = 1
 
@@ -219,8 +244,11 @@ class WhisperSTTEngine:
             memory_info = psutil.virtual_memory()
             memory_gb = memory_info.total / (1024 ** 3)  # Convert bytes to GB
         except Exception as exc:
-            logger.warning(
-                f"resource_monitor.memory_fallback: {exc} — defaulting to 1GB"
+            log_warning_event(
+                "resource_monitor",
+                "memory_fallback",
+                error=str(exc),
+                default_memory_gb=1.0,
             )
             memory_gb = 1.0
 

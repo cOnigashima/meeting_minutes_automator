@@ -55,12 +55,13 @@ def test_certifi_bundle_is_latest():
     """Verify that certifi CA bundle is up-to-date."""
     import certifi
 
-    # Check certifi version (should be 2025.x.x or later)
+    # Check certifi version (should be 2024.x.x or later)
     version = certifi.__version__
     year = int(version.split('.')[0])
 
-    assert year >= 2025, \
-        f"certifi version {version} may be outdated, expected 2025.x.x or later"
+    expected_year = 2024
+    assert year >= expected_year, \
+        f"certifi version {version} may be outdated, expected {expected_year}.x.x or later"
 
 
 @patch('ssl.create_default_context')

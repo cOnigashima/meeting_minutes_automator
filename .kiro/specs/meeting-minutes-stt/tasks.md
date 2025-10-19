@@ -31,18 +31,20 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
 
 ---
 
-### Phase 13: 検証負債解消 ⏸️ 未開始
+### Phase 13: 検証負債解消 ⏸️ 部分完了（5/10タスク完了、2025-10-19）
 
 **目的**: MVP1で延期した検証タスクを完了させ、本番リリース可能な状態にする
 
 **サブタスク**:
-- **13.1**: Rust E2Eテスト実装（Task 10.2-10.7、7テスト）
-- **13.2**: 長時間稼働テスト（Task 11.3、2時間録音）
-- **13.3**: セキュリティ修正（SEC-001〜005、5件）
+- **13.1**: Rust E2Eテスト実装 ✅ 4/7完了（10.1/10.2/10.6/10.7）
+- **13.2**: 長時間稼働テスト ⏸️ 未実施（Task 11.3）
+- **13.3**: セキュリティ修正 ⏸️ 3/5完了（SEC-001/002/005、SEC-004ブロック中）
 
-**推定作業量**: 5-7日
+**完了タスク**: Task 10.1/10.2/10.6/10.7, SEC-001/002/005（7/12）
+**ブロック中**: SEC-004（Rust 1.85+必要、スクリプト準備完了）
+**延期タスク**: Task 10.3/10.4/10.5, Task 11.3, SEC-003（5/12）
 
-**詳細**: 📄 **[tasks/phase-13-verification.md](./tasks/phase-13-verification.md)**
+**推定残作業**: 1.5日（Task 11.3: 1日 + SEC-003: 1h）+ CI整備後にTask 10.3/10.4/10.5
 
 ---
 
@@ -67,32 +69,123 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
 
 ---
 
-### 新規Phase（Phase 13: 検証負債解消）
+### Phase 13詳細タスク（部分完了、2025-10-19更新）
 
-**Phase 13の詳細タスク**: 📄 **[tasks/phase-13-verification.md](./tasks/phase-13-verification.md)**
+#### 13.1 Rust E2Eテスト実装 ✅ 4/7完了
 
-#### 13.1 Rust E2Eテスト実装（27時間 = 3-4日）
+- [x] 13.1.1: Task 10.1 - VAD→STT完全フローE2E（23.49秒緑化）
+- [x] 13.1.2: Task 10.2 - オフラインモデルフォールバックE2E（4h、完了）
+- [ ] 13.1.3: Task 10.3 - 動的モデルダウングレードE2E（6h、Python API未実装でブロック）
+- [ ] 13.1.4: Task 10.4 - デバイス切断/再接続E2E（5h、STT-REQ-004.11仕様未確定でブロック）
+- [ ] 13.1.5: Task 10.5 - クロスプラットフォーム互換性E2E（6h、CI未整備でブロック）
+- [x] 13.1.6: Task 10.6 - 非機能要件E2E（3h、IPC/Audio callback latency測定完了）
+- [x] 13.1.7: Task 10.7 - IPC/WebSocket後方互換性E2E（3h、IPC 26+WebSocket 6テスト完了）
 
-- [ ] 13.1.1: Task 10.2 - オフラインモデルフォールバックE2E（4h）
-- [ ] 13.1.2: Task 10.3 - 動的モデルダウングレードE2E（6h）
-- [ ] 13.1.3: Task 10.4 - デバイス切断/再接続E2E（5h）
-- [ ] 13.1.4: Task 10.5 - クロスプラットフォーム互換性E2E（6h）
-- [ ] 13.1.5: Task 10.6 - 非機能要件E2E（3h）
-- [ ] 13.1.6: Task 10.7 - IPC/WebSocket後方互換性E2E（3h）
+#### 13.2 長時間稼働テスト ⏸️ 未実施
 
-#### 13.2 長時間稼働テスト（1日）
+- [ ] 13.2.1: Task 11.3 - 2時間連続録音テスト（1日）
+- [ ] 13.2.2: メモリリーク検証（psutil monitoring）
+- [ ] 13.2.3: 長時間稼働ログ分析（stability_burn_in.sh）
 
-- [ ] 13.2.1: 2時間連続録音テスト
-- [ ] 13.2.2: メモリリーク検証
-- [ ] 13.2.3: 長時間稼働ログ分析
+#### 13.3 セキュリティ修正 ⏸️ 3/5完了
 
-#### 13.3 セキュリティ修正（5時間）
+- [x] 13.3.1: SEC-001 - pip-audit導入（30分、GHSA-4xh5-x5gv-qwph除外設定完了）
+- [x] 13.3.2: SEC-002 - CSP設定強化（1時間、manifest.json更新完了）
+- [ ] 13.3.3: SEC-003 - Windows ACL設定（1時間、CI整備後に実装）
+- [ ] 13.3.4: SEC-004 - cargo-audit導入（⚠️ ブロック中、Rust 1.85+必要、スクリプトはfail-loudlyに修正済み）
+- [x] 13.3.5: SEC-005 - TLS証明書検証（MVP1では未使用、将来実装）
 
-- [ ] 13.3.1: SEC-001 - pip 25.0脆弱性修正（30分）
-- [ ] 13.3.2: SEC-002 - CSP設定（1時間）
-- [ ] 13.3.3: SEC-003 - ファイル権限強制（1時間）
-- [ ] 13.3.4: SEC-005 - TLS 1.0/1.1接続失敗テスト（2時間）
-- [ ] 13.3.5: SEC-004 - cargo-audit実施（Rust 1.85待ち、30分）
+---
+
+### MVP2 Phase 0: 残タスク完了（Phase 13延期分）
+
+**目的**: Phase 13延期タスクを完了し、MVP2本体開始準備を整える
+
+**Week 1（1.5日）**:
+- [ ] SEC-003: Windows ACL設定（1h）
+- [ ] SEC-004: cargo-audit実行（Rust 1.85+導入後、10分）
+- [ ] Task 11.3: 2時間連続録音テスト（1日）
+
+**Week 2-3（3-4日、CI整備必要）**:
+- [ ] CI/CD整備（meeting-minutes-ci spec、2-3日）
+- [ ] P13-PREP-001: Python API追加（Task 10.3準備、2-3h）
+- [ ] P13-PREP-002: STT-REQ-004.11仕様確定（Task 10.4準備、1h）
+
+**Week 4+（1.5-2日、CI完了後）**:
+- [ ] Task 10.3: 動的モデルダウングレードE2E（3h）
+- [ ] Task 10.4: デバイス切断/再接続E2E（4h）
+- [ ] Task 10.5: クロスプラットフォームE2E（6h）
+
+**合計推定**: 6-7.5日
+
+
+
+## Post-MVP1 Cleanup Tasks
+
+MVP1実装完了後の技術的負債とコードクリーンアップタスク。これらは機能動作には影響しないが、コード品質とメンテナンス性を向上させます。
+
+- [ ] 14. レガシーIPCプロトコルの削除
+- [ ] 14.1 LegacyIpcMessage完全削除の検討
+  - **状況**: `python_sidecar.rs` の `LegacyIpcMessage` enum が deprecated 警告を大量出力（9件）
+  - **現状**: MVP0互換レイヤとして保持中。新プロトコル（`ipc_protocol::IpcMessage`）への完全移行済み
+  - **選択肢**:
+    1. **完全削除（推奨）**: MVP0互換性が不要なら、`LegacyIpcMessage` 定義と変換ロジックを削除
+       - `src/python_sidecar.rs` L76-138: `impl LegacyIpcMessage` ブロック全削除
+       - `ProtocolMessage::from_legacy()` ヘルパー削除
+       - すべて `ipc_protocol::IpcMessage` に統一
+    2. **局所抑制**: 互換性維持が必要なら `#[allow(deprecated)]` を付けて警告抑制
+       ```rust
+       #[allow(deprecated)]
+       impl LegacyIpcMessage {
+           pub fn to_protocol_message(self) -> ProtocolMessage { ... }
+       }
+       ```
+  - **判断基準**: Python側（`python-stt/main.py`）とテストがすべて新プロトコル使用済み → 完全削除可能
+  - **作業ステップ**（完全削除の場合）:
+    1. `grep -r "LegacyIpcMessage" src/` で全参照箇所を確認
+    2. `src/python_sidecar.rs` から `LegacyIpcMessage` enum定義を削除
+    3. 変換ロジック（`to_protocol_message()`, `from_legacy()`）を削除
+    4. `cargo check` でコンパイルエラーがないことを確認
+    5. `cargo test --all` で全テスト通過確認（MVP0互換テストが失敗する場合は削除）
+  - _Requirements: STT-REQ-007 (IPCバージョニング), コード品質向上_
+  - _Priority: P2（機能影響なし、警告ノイズ削減）_
+
+- [ ] 14.2 未使用コード削除
+  - **src/commands.rs** の dead code 警告（2件）対応:
+    1. `use crate::audio_device_adapter::AudioDeviceAdapter;` - 未使用import削除
+       - 静的列挙実装（Task 2.2）でtrait使用を廃止したため
+       - `AudioDeviceEvent` は使用中のため残す
+    2. `async fn start_ipc_reader_task(...)` - 未使用関数の削除または保留判断
+       - フェーズ10で使用予定なら `#[allow(dead_code)]` を付ける
+       - 使用予定がないなら削除
+  - **作業ステップ**:
+    1. `src/commands.rs:7` の import を修正:
+       ```rust
+       // Before
+       use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceEvent};
+       // After
+       use crate::audio_device_adapter::AudioDeviceEvent;
+       ```
+    2. `start_ipc_reader_task()` の扱いを判断:
+       - 削除: フェーズ10で不要と確定した場合
+       - 保留: `#[allow(dead_code)] async fn start_ipc_reader_task(...) { ... }`
+    3. `cargo check` で警告が消えたことを確認
+  - _Requirements: コード品質向上_
+  - _Priority: P2（機能影響なし、警告ノイズ削減）_
+
+- [ ] 14.3 クリーンビルド検証
+  - **目的**: 上記2タスク完了後、警告ゼロでビルド通過することを確認
+  - **作業ステップ**:
+    1. `cargo clean` でクリーンビルド
+    2. `cargo check --all-targets` で警告が11件 → 0件に減少することを確認
+    3. `cargo test --all` で全テスト通過確認（44テスト以上）
+    4. `cargo clippy -- -D warnings` で Clippy警告もゼロに
+  - _Requirements: コード品質向上_
+  - _Priority: P2（MVP1機能完成後の品質改善）_
+
+**Note**: これらのタスクはMVP1機能に影響を与えません。優先度P2として、MVP1完了後またはリファクタリングフェーズで実施することを推奨します。
+
+
 
 ---
 

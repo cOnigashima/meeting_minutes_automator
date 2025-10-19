@@ -5,6 +5,9 @@
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 
+# Security
+pip-audit>=2.6.0
+
 # Code Quality (optional, can be added later)
 # black>=23.0.0
 # flake8>=6.0.0

@@ -52,17 +52,17 @@ pub enum Event {
     #[serde(rename = "error")]
     Error { message: String },
 
-    /// Legacy direct partial_text event (older protocol)
+    /// Backward-compatible direct partial_text event (older protocol)
     #[serde(rename = "partial_text")]
-    LegacyPartial { text: String },
+    PartialText { text: String },
 
-    /// Legacy direct final_text event
+    /// Backward-compatible direct final_text event
     #[serde(rename = "final_text")]
-    LegacyFinal { text: String },
+    FinalText { text: String },
 
-    /// Legacy no_speech event
+    /// Backward-compatible no_speech event
     #[serde(rename = "no_speech")]
-    LegacyNoSpeech,
+    NoSpeech,
 
     /// Unknown event (for forward compatibility)
     #[serde(other)]

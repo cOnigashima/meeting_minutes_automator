@@ -16,10 +16,23 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-static LOG_MASK_SALT: Lazy<String> =
-    Lazy::new(|| std::env::var("LOG_MASK_SALT").unwrap_or_else(|_| Uuid::new_v4().to_string()));
+static LOG_MASK_SALT: Lazy<String> = Lazy::new(|| {
+    std::env::var("LOG_MASK_SALT").unwrap_or_else(|_| "meeting-minutes-automator".to_string())
+});
+
+static LOG_TRANSCRIPTS_ENABLED: Lazy<bool> = Lazy::new(|| match std::env::var("LOG_TRANSCRIPTS") {
+    Ok(value) => {
+        let lower = value.to_ascii_lowercase();
+        lower == "1" || lower == "true" || lower == "on"
+    }
+    Err(_) => false,
+});
 
 fn mask_text(text: &str) -> String {
+    if *LOG_TRANSCRIPTS_ENABLED {
+        return text.to_string();
+    }
+
     let mut hasher = Sha256::new();
     hasher.update(LOG_MASK_SALT.as_bytes());
     hasher.update(text.as_bytes());
@@ -66,11 +79,19 @@ async fn start_ipc_reader_task(
                 Ok(event) => {
                     // Broadcast to all subscribers (non-blocking)
                     if let Err(e) = event_tx.send(event.clone()) {
-                        log_warn!("ipc::reader", "broadcast_failed", format!("{:?}", e));
+                        log_warn_details!(
+                            "ipc::reader",
+                            "broadcast_failed",
+                            json!({ "error": format!("{:?}", e) })
+                        );
                     }
                 }
                 Err(e) => {
-                    log_warn!("ipc::reader", "receive_error", format!("{:?}", e));
+                    log_warn_details!(
+                        "ipc::reader",
+                        "receive_error",
+                        json!({ "error": format!("{:?}", e) })
+                    );
                     // Don't break - Python may recover
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
@@ -88,7 +109,11 @@ async fn monitor_audio_events(app: AppHandle) {
     let rx = match state.take_audio_event_rx() {
         Some(rx) => rx,
         None => {
-            log_warn!("commands::audio_events", "receiver_unavailable", "");
+            log_warn_details!(
+                "commands::audio_events",
+                "receiver_unavailable",
+                json!({ "reason": "receiver_not_initialized" })
+            );
             return;
         }
     };
@@ -97,7 +122,11 @@ async fn monitor_audio_events(app: AppHandle) {
     while let Ok(event) = rx.recv() {
         match event {
             AudioDeviceEvent::StreamError(err) => {
-                log_error!("commands::audio_events", "stream_error", err.to_string());
+                log_error_details!(
+                    "commands::audio_events",
+                    "stream_error",
+                    json!({ "error": err.to_string() })
+                );
 
                 // Emit to frontend
                 if let Err(e) = app.emit(
@@ -107,18 +136,18 @@ async fn monitor_audio_events(app: AppHandle) {
                         "message": format!("音声ストリームエラー: {}", err),
                     }),
                 ) {
-                    log_error!(
+                    log_error_details!(
                         "commands::audio_events",
                         "emit_stream_error_failed",
-                        format!("{:?}", e)
+                        json!({ "error": format!("{:?}", e) })
                     );
                 }
             }
             AudioDeviceEvent::Stalled { elapsed_ms } => {
-                log_warn!(
+                log_warn_details!(
                     "commands::audio_events",
                     "device_stalled",
-                    format!("elapsed_ms={}", elapsed_ms)
+                    json!({ "elapsed_ms": elapsed_ms })
                 );
 
                 // Emit to frontend
@@ -130,18 +159,18 @@ async fn monitor_audio_events(app: AppHandle) {
                         "elapsed_ms": elapsed_ms,
                     }),
                 ) {
-                    log_error!(
+                    log_error_details!(
                         "commands::audio_events",
                         "emit_stalled_failed",
-                        format!("{:?}", e)
+                        json!({ "error": format!("{:?}", e) })
                     );
                 }
             }
             AudioDeviceEvent::DeviceGone { device_id } => {
-                log_error!(
+                log_error_details!(
                     "commands::audio_events",
                     "device_disconnected",
-                    device_id.clone()
+                    json!({ "device_id": device_id.clone() })
                 );
 
                 // Emit to frontend - STT-REQ-004.10
@@ -153,10 +182,10 @@ async fn monitor_audio_events(app: AppHandle) {
                         "device_id": device_id,
                     }),
                 ) {
-                    log_error!(
+                    log_error_details!(
                         "commands::audio_events",
                         "emit_device_gone_failed",
-                        format!("{:?}", e)
+                        json!({ "error": format!("{:?}", e) })
                     );
                 }
 
@@ -167,7 +196,11 @@ async fn monitor_audio_events(app: AppHandle) {
                     let is_recording = state.is_recording.lock().unwrap();
                     if *is_recording {
                         drop(is_recording);
-                        log_warn!("commands::audio_events", "auto_stop_on_disconnect", "");
+                        log_warn_details!(
+                            "commands::audio_events",
+                            "auto_stop_on_disconnect",
+                            json!({ "device_id": device_id })
+                        );
                         // Note: Actual stop will be triggered by frontend or timeout
                     }
                 }
@@ -186,10 +219,10 @@ pub async fn start_recording(
     device_id: String,
 ) -> Result<String, String> {
     // Task 9.1: Validate and log selected device (STT-REQ-001.2)
-    log_info!(
+    log_info_details!(
         "commands::recording",
         "start_requested",
-        format!("device_id={}", device_id)
+        json!({ "device_id": device_id })
     );
 
     // MVP0: Validate device exists in enumeration
@@ -197,14 +230,13 @@ pub async fn start_recording(
         .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
 
     if !available_devices.iter().any(|d| d.id == device_id) {
-        log_error!(
+        log_error_details!(
             "commands::recording",
             "invalid_device",
-            format!(
-                "requested={}, available={:?}",
-                device_id,
-                available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
-            )
+            json!({
+                "requested": device_id,
+                "available": available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
+            })
         );
         return Err(format!(
             "Invalid device ID: {}. Available: {:?}",
@@ -213,14 +245,18 @@ pub async fn start_recording(
         ));
     }
 
-    log_info!("commands::recording", "device_validated", device_id.clone());
+    log_info_details!(
+        "commands::recording",
+        "device_validated",
+        json!({ "device_id": device_id })
+    );
 
     // Task 9.1: Save selected device to AppState (STT-REQ-001.2)
     state.set_selected_device_id(device_id.clone());
-    log_info!(
+    log_info_details!(
         "commands::recording",
         "device_selection_saved",
-        device_id.clone()
+        json!({ "device_id": device_id })
     );
 
     // MVP1 TODO: Pass device_id to AudioDeviceAdapter::start_recording(device_id)
@@ -229,7 +265,11 @@ pub async fn start_recording(
     {
         let is_recording = state.is_recording.lock().unwrap();
         if *is_recording {
-            log_warn!("commands::recording", "start_rejected_already_running", "");
+            log_warn_details!(
+                "commands::recording",
+                "start_rejected_already_running",
+                json!({ "device_id": device_id })
+            );
             return Err("Already recording".to_string());
         }
     }
@@ -258,10 +298,10 @@ pub async fn start_recording(
 
     let session_id = Uuid::new_v4().to_string();
     state.set_session_id(session_id.clone());
-    log_info!(
+    log_info_details!(
         "commands::recording",
         "session_initialized",
-        format!("session_id={}", session_id)
+        json!({ "session": session_id })
     );
 
     // Set recording state
@@ -273,11 +313,11 @@ pub async fn start_recording(
     // Clone for callback closure
     let python_sidecar_clone = Arc::clone(&python_sidecar);
     let websocket_server_clone = Arc::clone(&websocket_server);
-    let session_id_arc = Arc::new(session_id);
+    let session_id_arc = Arc::new(session_id.clone());
 
     // Start audio device with callback
     let mut device = audio_device.lock().await;
-    device
+    if let Err(err) = device
         .start_with_callback(move |audio_data| {
             let python_sidecar = Arc::clone(&python_sidecar_clone);
             let websocket_server = Arc::clone(&websocket_server_clone);
@@ -310,10 +350,13 @@ pub async fn start_recording(
                 let message_json = match serde_json::to_value(&message) {
                     Ok(json) => json,
                     Err(e) => {
-                        log_error!(
+                        log_error_details!(
                             "commands::recording",
                             "serialize_ipc_failed",
-                            format!("{:?}", e)
+                            json!({
+                                "session": session_id_handle.as_str(),
+                                "error": format!("{:?}", e)
+                            })
                         );
                         return;
                     }
@@ -323,10 +366,13 @@ pub async fn start_recording(
                 {
                     let mut sidecar = python_sidecar.lock().await;
                     if let Err(e) = sidecar.send_message(message_json).await {
-                        log_error!(
+                        log_error_details!(
                             "commands::recording",
                             "send_to_sidecar_failed",
-                            format!("{:?}", e)
+                            json!({
+                                "session": session_id_handle.as_str(),
+                                "error": format!("{:?}", e)
+                            })
                         );
                         return;
                     }
@@ -354,10 +400,13 @@ pub async fn start_recording(
                         {
                             Ok(result) => result,
                             Err(_) => {
-                                log_warn!(
+                                log_warn_details!(
                                     "commands::recording",
                                     "sidecar_receive_timeout",
-                                    "duration_ms=5000"
+                                    json!({
+                                        "session": session_id_handle.as_str(),
+                                        "timeout_ms": 5000
+                                    })
                                 );
                                 break;
                             }
@@ -372,10 +421,13 @@ pub async fn start_recording(
                                 match serde_json::from_value::<ProtocolMessage>(response.clone()) {
                                     Ok(m) => m,
                                     Err(e) => {
-                                        log_error!(
+                                        log_error_details!(
                                             "commands::recording",
                                             "parse_ipc_failed",
-                                            format!("{:?}", e)
+                                            json!({
+                                                "session": session_id_handle.as_str(),
+                                                "error": format!("{:?}", e)
+                                            })
                                         );
                                         break;
                                     }
@@ -384,10 +436,14 @@ pub async fn start_recording(
                             // Task 7.2: Check version compatibility (STT-REQ-007.6)
                             match msg.check_version_compatibility() {
                                 VersionCompatibility::MajorMismatch { received, expected } => {
-                                    log_error!(
+                                    log_error_details!(
                                         "commands::recording",
                                         "ipc_version_major_mismatch",
-                                        format!("received={}, expected={}", received, expected)
+                                        json!({
+                                            "session": session_id_handle.as_str(),
+                                            "received": received,
+                                            "expected": expected
+                                        })
                                     );
 
                                     // P0 FIX: Send error response to Python before breaking
@@ -406,10 +462,13 @@ pub async fn start_recording(
                                     if let Ok(json) = serde_json::to_value(&error_response) {
                                         let mut sidecar = python_sidecar.lock().await;
                                         if let Err(e) = sidecar.send_message(json).await {
-                                            log_error!(
+                                            log_error_details!(
                                                 "commands::recording",
                                                 "send_version_error_failed",
-                                                format!("{:?}", e)
+                                                json!({
+                                                    "session": session_id_handle.as_str(),
+                                                    "error": format!("{:?}", e)
+                                                })
                                             );
                                         }
                                     }
@@ -418,18 +477,25 @@ pub async fn start_recording(
                                     break;
                                 }
                                 VersionCompatibility::MinorMismatch { received, expected } => {
-                                    log_warn!(
+                                    log_warn_details!(
                                         "commands::recording",
                                         "ipc_version_minor_mismatch",
-                                        format!("received={}, expected={}", received, expected)
+                                        json!({
+                                            "session": session_id_handle.as_str(),
+                                            "received": received,
+                                            "expected": expected
+                                        })
                                     );
                                     // Continue processing with backward compatibility
                                 }
                                 VersionCompatibility::Malformed { received } => {
-                                    log_error!(
+                                    log_error_details!(
                                         "commands::recording",
                                         "ipc_version_malformed",
-                                        received.clone()
+                                        json!({
+                                            "session": session_id_handle.as_str(),
+                                            "received": received.clone()
+                                        })
                                     );
 
                                     // P0 FIX: Send error response to Python before breaking
@@ -448,10 +514,13 @@ pub async fn start_recording(
                                     if let Ok(json) = serde_json::to_value(&error_response) {
                                         let mut sidecar = python_sidecar.lock().await;
                                         if let Err(e) = sidecar.send_message(json).await {
-                                            log_error!(
+                                            log_error_details!(
                                                 "commands::recording",
                                                 "send_malformed_version_error_failed",
-                                                format!("{:?}", e)
+                                                json!({
+                                                    "session": session_id_handle.as_str(),
+                                                    "error": format!("{:?}", e)
+                                                })
                                             );
                                         }
                                     }
@@ -473,13 +542,13 @@ pub async fn start_recording(
                                         "speech_start" => {
                                             let request_id =
                                                 request_id_from(&data).unwrap_or("unknown");
-                                            log_info!(
+                                            log_info_details!(
                                                 "commands::ipc_events",
                                                 "speech_start",
-                                                format!(
-                                                    "session={} request={}",
-                                                    session_id_ref, request_id
-                                                )
+                                                json!({
+                                                    "session": session_id_ref,
+                                                    "request": request_id
+                                                })
                                             );
                                             // TODO: Emit to frontend if needed
                                         }
@@ -490,13 +559,14 @@ pub async fn start_recording(
                                                 data.get("text").and_then(|v| v.as_str())
                                             {
                                                 let masked = mask_text(text);
-                                                log_info!(
+                                                log_info_details!(
                                                     "commands::ipc_events",
                                                     "partial_text",
-                                                    format!(
-                                                        "session={} request={} {}",
-                                                        session_id_ref, request_id, masked
-                                                    )
+                                                    json!({
+                                                        "session": session_id_ref,
+                                                        "request": request_id,
+                                                        "text_masked": masked
+                                                    })
                                                 );
 
                                                 let (confidence, language, processing_time_ms) =
@@ -514,7 +584,7 @@ pub async fn start_recording(
                                                             .unwrap()
                                                             .as_millis()
                                                     ),
-                                                    session_id: "session-1".to_string(),
+                                                    session_id: session_id_ref.to_string(),
                                                     text: text.to_string(),
                                                     timestamp: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
@@ -531,10 +601,14 @@ pub async fn start_recording(
                                                 if let Err(e) =
                                                     ws_server.broadcast(ws_message).await
                                                 {
-                                                    log_error!(
+                                                    log_error_details!(
                                                         "commands::ipc_events",
                                                         "broadcast_partial_failed",
-                                                        format!("{:?}", e)
+                                                        json!({
+                                                            "session": session_id_ref,
+                                                            "request": request_id,
+                                                            "error": format!("{:?}", e)
+                                                        })
                                                     );
                                                 }
                                             }
@@ -546,13 +620,14 @@ pub async fn start_recording(
                                                 data.get("text").and_then(|v| v.as_str())
                                             {
                                                 let masked = mask_text(text);
-                                                log_info!(
+                                                log_info_details!(
                                                     "commands::ipc_events",
                                                     "final_text",
-                                                    format!(
-                                                        "session={} request={} {}",
-                                                        session_id_ref, request_id, masked
-                                                    )
+                                                    json!({
+                                                        "session": session_id_ref,
+                                                        "request": request_id,
+                                                        "text_masked": masked
+                                                    })
                                                 );
 
                                                 let (confidence, language, processing_time_ms) =
@@ -570,7 +645,7 @@ pub async fn start_recording(
                                                             .unwrap()
                                                             .as_millis()
                                                     ),
-                                                    session_id: "session-1".to_string(),
+                                                    session_id: session_id_ref.to_string(),
                                                     text: text.to_string(),
                                                     timestamp: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
@@ -587,10 +662,14 @@ pub async fn start_recording(
                                                 if let Err(e) =
                                                     ws_server.broadcast(ws_message).await
                                                 {
-                                                    log_error!(
+                                                    log_error_details!(
                                                         "commands::ipc_events",
                                                         "broadcast_final_failed",
-                                                        format!("{:?}", e)
+                                                        json!({
+                                                            "session": session_id_ref,
+                                                            "request": request_id,
+                                                            "error": format!("{:?}", e)
+                                                        })
                                                     );
                                                 }
                                             }
@@ -598,64 +677,73 @@ pub async fn start_recording(
                                         "speech_end" => {
                                             let request_id =
                                                 request_id_from(&data).unwrap_or("unknown");
-                                            log_info!(
+                                            log_info_details!(
                                                 "commands::ipc_events",
                                                 "speech_end",
-                                                format!(
-                                                    "session={} request={}",
-                                                    session_id_ref, request_id
-                                                )
+                                                json!({
+                                                    "session": session_id_ref,
+                                                    "request": request_id
+                                                })
                                             );
                                             break;
                                         }
                                         "no_speech" => {
                                             let request_id =
                                                 request_id_from(&data).unwrap_or("unknown");
-                                            log_info!(
+                                            log_info_details!(
                                                 "commands::ipc_events",
                                                 "no_speech",
-                                                format!(
-                                                    "session={} request={}",
-                                                    session_id_ref, request_id
-                                                )
+                                                json!({
+                                                    "session": session_id_ref,
+                                                    "request": request_id
+                                                })
                                             );
                                             break;
                                         }
                                         _ => {
-                                            log_warn!(
+                                            log_warn_details!(
                                                 "commands::ipc_events",
                                                 "unknown_event_type",
-                                                event_type
+                                                json!({
+                                                    "session": session_id_ref,
+                                                    "event_type": event_type
+                                                })
                                             );
                                         }
                                     }
                                 }
                                 ProtocolMessage::Error { error_message, .. } => {
-                                    log_error!(
+                                    log_error_details!(
                                         "commands::ipc_events",
                                         "python_sidecar_error",
-                                        format!(
-                                            "session={} message={}",
-                                            session_id_ref, error_message
-                                        )
+                                        json!({
+                                            "session": session_id_ref,
+                                            "message": error_message
+                                        })
                                     );
                                     break;
                                 }
                                 _ => {
-                                    log_warn!(
+                                    log_warn_details!(
                                         "commands::ipc_events",
                                         "unexpected_message_type",
-                                        format!("session={} message={:?}", session_id_ref, msg)
+                                        json!({
+                                            "session": session_id_ref,
+                                            "message": msg
+                                        })
                                     );
                                     break;
                                 }
                             }
                         }
                         Err(e) => {
-                            log_error!(
+                            log_error_details!(
                                 "commands::ipc_events",
                                 "receive_event_failed",
-                                format!("session={} message={:?}", session_id_handle.as_ref(), e)
+                                json!({
+                                    "session": session_id_handle.as_str(),
+                                    "error": format!("{:?}", e)
+                                })
                             );
                             break;
                         }
@@ -664,7 +752,24 @@ pub async fn start_recording(
             });
         })
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        let error_msg = err.to_string();
+        {
+            let mut is_recording = state.is_recording.lock().unwrap();
+            *is_recording = false;
+        }
+        state.clear_session_id();
+        log_error_details!(
+            "commands::recording",
+            "start_failed",
+            json!({
+                "session": session_id,
+                "device_id": device_id,
+                "error": error_msg
+            })
+        );
+        return Err(error_msg);
+    }
 
     // Start monitoring audio device events - MVP1 STT-REQ-004.9/10/11
     // Note: Event monitoring will start when CoreAudioAdapter is used (not FakeAudioDevice)
@@ -673,7 +778,14 @@ pub async fn start_recording(
         monitor_audio_events(app_clone).await;
     });
 
-    log_info!("commands::recording", "started", "");
+    log_info_details!(
+        "commands::recording",
+        "started",
+        json!({
+            "session": session_id,
+            "device_id": device_id
+        })
+    );
     Ok("Recording started".to_string())
 }
 
@@ -688,6 +800,9 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
             return Err("Not recording".to_string());
         }
     }
+
+    let current_session = state.get_session_id();
+    let selected_device = state.get_selected_device_id();
 
     // Get audio device reference
     let audio_device = {
@@ -709,7 +824,14 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
 
     state.clear_session_id();
 
-    log_info!("commands::recording", "stopped", "");
+    log_info_details!(
+        "commands::recording",
+        "stopped",
+        json!({
+            "session": current_session,
+            "device_id": selected_device
+        })
+    );
     Ok("Recording stopped".to_string())
 }
 
@@ -718,7 +840,7 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
 /// Requirement: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.4
 #[tauri::command]
 pub async fn get_whisper_models() -> Result<serde_json::Value, String> {
-    log_info!("commands::models", "request_models", "");
+    log_info!("commands::models", "request_models");
 
     // Task 9.2: Available models (STT-REQ-006.2)
     let models = vec!["tiny", "base", "small", "medium", "large-v3"];
@@ -771,36 +893,39 @@ fn calculate_recommended_model(resources: &serde_json::Value) -> String {
 pub async fn list_audio_devices(
     _state: State<'_, AppState>,
 ) -> Result<Vec<crate::audio_device_adapter::AudioDeviceInfo>, String> {
-    log_info!("commands::audio_devices", "enumerate_requested", "");
+    log_info!("commands::audio_devices", "enumerate_requested");
 
     // Task 9.1: Use static enumeration (no dependency on initialized recorder)
     // For MVP0: FakeAudioDevice::enumerate_devices_static()
     // For MVP1: CpalAudioDeviceAdapter::enumerate_devices_static()
     match crate::audio::FakeAudioDevice::enumerate_devices_static() {
         Ok(devices) => {
-            log_info!(
+            log_info_details!(
                 "commands::audio_devices",
                 "enumerate_success",
-                format!("count={}", devices.len())
+                json!({ "count": devices.len() })
             );
             for device in &devices {
-                log_debug!(
+                log_debug_details!(
                     "commands::audio_devices",
                     "device_entry",
-                    format!(
-                        "id={}, name={}, sample_rate={}, channels={}, loopback={}",
-                        device.id,
-                        device.name,
-                        device.sample_rate,
-                        device.channels,
-                        device.is_loopback
-                    )
+                    json!({
+                        "id": device.id,
+                        "name": device.name,
+                        "sample_rate": device.sample_rate,
+                        "channels": device.channels,
+                        "loopback": device.is_loopback
+                    })
                 );
             }
             Ok(devices)
         }
         Err(e) => {
-            log_error!("commands::audio_devices", "enumerate_failed", e.to_string());
+            log_error_details!(
+                "commands::audio_devices",
+                "enumerate_failed",
+                json!({ "error": e.to_string() })
+            );
             Err(format!("Failed to list audio devices: {}", e))
         }
     }

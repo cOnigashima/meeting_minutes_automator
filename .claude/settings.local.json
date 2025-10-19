@@ -60,7 +60,10 @@
       "Bash(npm run build:*)",
       "Bash(pip-audit:*)",
       "Bash(npm audit:*)",
-      "Bash(.venv/bin/pip-audit:*)"
+      "Bash(.venv/bin/pip-audit:*)",
+      "Bash(awk:*)",
+      "Bash(./scripts/security_audit.sh:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

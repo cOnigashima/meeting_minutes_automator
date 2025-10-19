@@ -62,11 +62,23 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 
 ### 検証負債（MVP2 Phase 0で対応）
 
-⚠️ **以下の検証が未完了です**（詳細は`.kiro/specs/meeting-minutes-stt/MVP2-HANDOFF.md`参照）:
+⚠️ **Phase 13部分完了**: 実装可能タスク完了、残タスクはブロッカーありで延期
 
-- **Task 10.2-10.7**: Rust E2Eテスト未実装（Python単体テストは完了）
-- **Task 11.3**: 長時間稼働安定性テスト（2時間録音）
-- **SEC-001〜005**: セキュリティ修正5件（pip脆弱性、CSP設定、ファイル権限、TLS検証、cargo-audit）
+**完了タスク**（5/10）:
+- ✅ Task 10.1: VAD→STT完全フロー
+- ✅ Task 10.2: オフラインフォールバック
+- ✅ Task 10.6: 非機能要件E2E（レイテンシ測定）
+- ✅ Task 10.7: 後方互換性E2E（IPC 26+WebSocket 6テスト）
+- ✅ Task 11.5: セキュリティテスト実行
+
+**延期タスク**（5/10、MVP2 Phase 0で対応）:
+- **Task 10.3**: 動的モデルダウングレードE2E（ブロッカー: Python API未実装、推定6h）
+- **Task 10.4**: デバイス切断/再接続E2E（ブロッカー: STT-REQ-004.11仕様未確定、推定5h）
+- **Task 10.5**: クロスプラットフォームE2E（ブロッカー: CI未整備、推定6h）
+- **Task 11.3**: 長時間稼働テスト（推定1日）
+- **SEC-001〜005**: セキュリティ修正5件（推定5h）
+
+詳細: [Phase 13完了報告](.kiro/specs/meeting-minutes-stt/phase-13-completion-report.md)
 
 ### 次のフェーズ
 - 📋 **MVP2 Phase 0**: 検証負債解消（Task 10.2-10.7、Task 11.3、SEC-001〜005）
@@ -178,6 +190,18 @@ npm run tauri dev
 ```
 
 Tauri UIウィンドウが自動で開きます（http://localhost:1420/）
+
+#### ログの確認とマスキング設定
+
+- JSON ログは既定で `stdout` に出力されます。`jq` が無い環境では `python -m json.tool` を使って確認できます。
+
+  ```bash
+  npm run tauri dev | python -m json.tool
+  ```
+
+  既存の `tee logs/platform/<timestamp>/tauri-dev.log` フローも併用可能です。
+- 文字起こしテキストはプライバシー保護のため `len=<chars> hash=<prefix>` にマスクされます。検証目的で生テキストを確認したい場合は `LOG_TRANSCRIPTS=1` を、同一ハッシュを再現したい場合は `LOG_MASK_SALT=<固定GUID>` を起動前に設定してください。
+- 長時間バーンイン (`src-tauri/target/debug/stt_burn_in`) の標準出力も同じ JSON 形式で記録され、`logs/platform/<run-id>/` 以下に保存されます。
 
 ## 🧪 E2Eテスト手順
 

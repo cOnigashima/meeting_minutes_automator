@@ -22,6 +22,7 @@ Meeting Minutes Automator のコードベース全体で一貫した品質と保
 - Lint: `cargo clippy --workspace --all-targets --all-features -D warnings` を CI で実行。
 - 命名: プロセス境界に合わせてモジュール (`audio::`, `ipc::`, `storage::` など) を分離し、IPC 型は `Serde` 派生構造体でスキーマを固定。
 - セキュリティ: `tauri` の `allowlist` は必要最小限の feature のみに限定し、`api-all` は禁止。
+- ロギング: すべての Rust 側ログは `log_info_details!` / `log_warn_details!` / `log_error_details!` などの構造化マクロを使用し、`{"session": "...", "request": "...", ...}` を `details` に格納する。音声文字起こしは既定で `mask_text()` により `len` と `hash` のみを残すため、クリアテキストが必要なときは環境変数 `LOG_TRANSCRIPTS=1`、ハッシュの固定化は `LOG_MASK_SALT=<stable guid>` を設定する。
 - テスト: `cargo test --workspace --all-targets` を実行し、ユニット/統合/E2E をすべて通過させてから PR を作成する。`nextest` やカバレッジ計測は将来導入予定。
 
 ## React / TypeScript (Tauri UI)
@@ -48,6 +49,7 @@ Meeting Minutes Automator のコードベース全体で一貫した品質と保
 - 型安全性: `typing.TypedDict` で IPC メッセージ構造を表現し、`mypy --strict` を将来的な目標とする。現状の同期実装では戻り値タイプを明示する。
 - 命名/分割: ファイルは `snake_case.py` を遵守し、`main.py` では I/O、`stt_engine/` では処理責務を分離する。副作用がある処理は関数に閉じ込め、ユニットテストが容易なように設計する。
 - ロギング: 標準 `logging` で `logging.getLogger("python-stt")` を用い、IPC 送受信時に `info`、例外時に `exception` を出力する。`print` を使用する場合はログと重複しないよう統一する。
+- ログ出力の構造化: Python サイドカーも JSON 形式で `{"component": "...", "event": "...", "details": {...}}` を標準出力へ送り、リソース検出に失敗した場合は `level=warn, component=resource_monitor` でフォールバックが分かるようにする。Rust 同様、トランスクリプトのマスキングは `LOG_TRANSCRIPTS` / `LOG_MASK_SALT` を尊重する。
 - 例外: 基底の `PythonSidecarError` を定義し、IPC 関連は `IpcError`、処理系は `ProcessingError` で区別する。ユーザーに返すエラーメッセージと内部ログ出力を分ける。
 - テスト: `pytest` を基本とし、既存の `tests/test_integration.py` に加えてユニットテストを追加する。将来 async API を導入する際は `pytest.mark.asyncio` を活用する。
 - IPC ベストプラクティス: `json.loads` 失敗時は `logger.exception` で記録し、`{"type": "error", "message": ...}` 形式の安全なレスポンスを返す。EOF 検知時はクリーンに終了する。

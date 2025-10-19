@@ -283,17 +283,17 @@ async fn monitor_events(
                             }
                         }
                     }
-                    Ok(Event::LegacyPartial { text }) => {
+                    Ok(Event::PartialText { text }) => {
                         logger.log(&format!("[event] partial_text: {}", text));
                         let mut guard = stats.lock().await;
                         guard.partial_text += 1;
                     }
-                    Ok(Event::LegacyFinal { text }) => {
+                    Ok(Event::FinalText { text }) => {
                         logger.log(&format!("[event] final_text: {}", text));
                         let mut guard = stats.lock().await;
                         guard.final_text += 1;
                     }
-                    Ok(Event::LegacyNoSpeech) => {
+                    Ok(Event::NoSpeech) => {
                         logger.log("[event] no_speech");
                         let mut guard = stats.lock().await;
                         guard.no_speech += 1;

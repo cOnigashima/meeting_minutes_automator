@@ -74,10 +74,40 @@ macro_rules! log_info {
 }
 
 #[macro_export]
+macro_rules! log_info_details {
+    ($component:expr, $event:expr, $details:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Info, $component, $event)
+            .with_details($details)
+            .log();
+    };
+    ($component:expr, $event:expr, $details:expr, $msg:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Info, $component, $event)
+            .with_message($msg)
+            .with_details($details)
+            .log();
+    };
+}
+
+#[macro_export]
 macro_rules! log_error {
     ($component:expr, $event:expr, $msg:expr) => {
         $crate::logger::LogEntry::new($crate::logger::LogLevel::Error, $component, $event)
             .with_message($msg)
+            .log();
+    };
+}
+
+#[macro_export]
+macro_rules! log_error_details {
+    ($component:expr, $event:expr, $details:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Error, $component, $event)
+            .with_details($details)
+            .log();
+    };
+    ($component:expr, $event:expr, $details:expr, $msg:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Error, $component, $event)
+            .with_message($msg)
+            .with_details($details)
             .log();
     };
 }
@@ -92,10 +122,40 @@ macro_rules! log_warn {
 }
 
 #[macro_export]
+macro_rules! log_warn_details {
+    ($component:expr, $event:expr, $details:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Warn, $component, $event)
+            .with_details($details)
+            .log();
+    };
+    ($component:expr, $event:expr, $details:expr, $msg:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Warn, $component, $event)
+            .with_message($msg)
+            .with_details($details)
+            .log();
+    };
+}
+
+#[macro_export]
 macro_rules! log_debug {
     ($component:expr, $event:expr, $msg:expr) => {
         $crate::logger::LogEntry::new($crate::logger::LogLevel::Debug, $component, $event)
             .with_message($msg)
+            .log();
+    };
+}
+
+#[macro_export]
+macro_rules! log_debug_details {
+    ($component:expr, $event:expr, $details:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Debug, $component, $event)
+            .with_details($details)
+            .log();
+    };
+    ($component:expr, $event:expr, $details:expr, $msg:expr) => {
+        $crate::logger::LogEntry::new($crate::logger::LogLevel::Debug, $component, $event)
+            .with_message($msg)
+            .with_details($details)
             .log();
     };
 }

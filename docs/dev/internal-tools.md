@@ -34,4 +34,4 @@ STT 統合テストやベンチマークのログを集計し、メトリクス�
 
 ## stability_burn_in.sh
 
-長時間稼働テスト（デフォルト 2 時間）を半自動化するラッパースクリプト。`cargo run --manifest-path src-tauri/Cargo.toml --bin stt_burn_in` を適切なログディレクトリ付きで実行し、`logs/platform/stability-<timestamp>-<label>/` に成果物を集約する。`--duration`・`--python`・`--session-label` オプションでランを調整でき、Step 5 の手動リソース計測と組み合わせて `docs/platform-verification.md` の「Long-run Stability Playbook」を埋めることを目的とする。
+長時間稼働テスト（デフォルト 2 時間）を半自動化するラッパースクリプト。`cargo run --manifest-path src-tauri/Cargo.toml --bin stt_burn_in` を適切なログディレクトリ付きで実行し、`logs/platform/stability-<timestamp>-<label>/` に成果物を集約する。`--duration`・`--python`・`--session-label` オプションでランを調整でき、Step 5 の手動リソース計測と組み合わせて `docs/platform-verification.md` の「Long-run Stability Playbook」を埋めることを目的とする。実行中のログは JSON 形式なので、`python -m json.tool` や `jq` でフィルタリングできる。トランスクリプトをマスクしたまま確認する場合は既定値そのままで、プレーンテキストが必要なら `LOG_TRANSCRIPTS=1` を設定すること。
