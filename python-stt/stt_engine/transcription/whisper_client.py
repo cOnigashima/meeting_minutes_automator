@@ -295,9 +295,9 @@ class WhisperSTTEngine:
         Detect model path following priority order (STT-REQ-002.1, STT-REQ-002.4, STT-REQ-002.6):
         1. User-specified path (~/.config/meeting-minutes-automator/whisper_model_path)
         2. HuggingFace Hub cache (~/.cache/huggingface/hub/models--Systran--faster-whisper-*)
-        3. Bundled model (multiple installation paths checked)
-        4. Try HuggingFace Hub download (if not offline mode)
-        5. HuggingFace Hub model ID (automatic download, online mode only)
+        3. HuggingFace Hub model ID (online mode - triggers auto-download)
+        4. Bundled model (offline mode only - multiple installation paths checked)
+        5. Error (offline mode with no bundled model)
 
         Returns:
             str: Detected model path
@@ -335,9 +335,23 @@ class WhisperSTTEngine:
             logger.info(f"Using HuggingFace cache model: {hf_model_dir}")
             return str(hf_model_dir)
 
-        # Priority 3: Bundled model (STT-REQ-002.4/002.6)
-        # Check for bundled model in application resources
-        # MVP1: Check common installation paths
+        # Priority 3: HuggingFace Hub model ID (online mode - STT-REQ-002.1/002.3)
+        # In online mode, prefer downloading from Hub over bundled fallback
+        if not self.offline_mode:
+            # Check if already in cache (quick check)
+            downloaded_path = self._try_download_from_hub(self.model_size)
+            if downloaded_path:
+                logger.info(f"Using cached model from Hub: {downloaded_path}")
+                return downloaded_path
+
+            # Not in cache, return Hub model ID to trigger auto-download
+            # This ensures we download the requested model size before falling back to bundled
+            model_id = f"Systran/faster-whisper-{self.model_size}"
+            logger.info(f"Using HuggingFace Hub model ID: {model_id} (will auto-download)")
+            return model_id
+
+        # Priority 4: Bundled model fallback (OFFLINE MODE ONLY - STT-REQ-002.4/002.6)
+        # Candidate directories for bundled models
         bundled_base_dirs = [
             Path(__file__).parent.parent.parent / "models" / "faster-whisper",
             Path.home() / ".local" / "share" / "meeting-minutes-automator" / "models" / "faster-whisper",
@@ -352,8 +366,6 @@ class WhisperSTTEngine:
                 return str(bundled_path)
 
         # STT-REQ-002.4/002.6: If requested size not found, fallback to bundled 'base' model
-        # Typical scenario: installer bundles only 'base' (lightweight), but user's system
-        # resources recommend 'small' or higher
         if self.model_size != 'base':
             logger.warning(f"Requested model '{self.model_size}' not found in bundle, falling back to 'base'")
             for base_dir in bundled_base_dirs:
@@ -364,21 +376,7 @@ class WhisperSTTEngine:
                     self.model_size = "base"
                     return str(bundled_base_path)
 
-        # Priority 4: Try HuggingFace Hub download (unless offline mode)
-        if not self.offline_mode:
-            downloaded_path = self._try_download_from_hub(self.model_size)
-            if downloaded_path:
-                logger.info(f"Using downloaded model: {downloaded_path}")
-                return downloaded_path
-
-            # Priority 5: HuggingFace Hub model ID (automatic download fallback)
-            # Only in online mode - faster-whisper will auto-download if not cached
-            model_id = f"Systran/faster-whisper-{self.model_size}"
-            logger.info(f"No cached model found, using HuggingFace Hub: {model_id}")
-            logger.info(f"Model will be automatically downloaded on first use")
-            return model_id
-
-        # Offline mode: No model available after all fallbacks
+        # Priority 5: No model available after all fallbacks (offline mode only)
         # STT-REQ-002.4/002.6: Bundled model paths checked but not found
         raise FileNotFoundError(
             f"No Whisper model found for '{self.model_size}' in offline mode. "
@@ -450,18 +448,22 @@ class WhisperSTTEngine:
             logger.error(f"Failed to initialize WhisperSTTEngine: {e}")
             raise
 
-    async def load_model(self, new_model_size: ModelSize) -> None:
+    async def load_model(self, new_model_size: ModelSize) -> str:
         """
         Dynamically switch to a different model size (Task 5.2, STT-REQ-006.9).
 
         This method:
         1. Saves current model state for rollback
-        2. Loads the new model
+        2. Loads the new model (may fallback to bundled base if requested size unavailable)
         3. Only unloads old model after new model loads successfully
         4. Rolls back to old model on any failure
 
         Args:
             new_model_size: Target model size to load
+
+        Returns:
+            str: The actual model size that was loaded (may differ from new_model_size
+                 if bundled fallback occurred)
 
         Raises:
             Exception: If model loading fails (after rollback)
@@ -510,18 +512,28 @@ class WhisperSTTEngine:
                 # faster-whisper doesn't have close() method, relies on GC
                 gc.collect()
 
-            logger.info(f"Model switch complete: {old_model_size} → {new_model_size}")
+            # Log actual loaded model (may differ from requested due to bundled fallback)
+            if self.model_size != new_model_size:
+                logger.warning(
+                    f"Model switch with fallback: requested '{new_model_size}', "
+                    f"but loaded '{self.model_size}' (bundled fallback)"
+                )
+            else:
+                logger.info(f"Model switch complete: {old_model_size} → {self.model_size}")
+
+            # Return actual loaded model size (STT-REQ-006.9/006.12)
+            return self.model_size
 
         except Exception as e:
             # CRITICAL: Rollback to old model state on ANY failure
             logger.error(f"Failed to load model {new_model_size}: {e}")
             logger.info(f"Rolling back to previous model: {old_model_size}")
-            
+
             # Restore all state (model, size, path)
             self.model = old_model
             self.model_size = old_model_size
             self.model_path = old_model_path
-            
+
             raise
 
     async def transcribe(self, audio_data: bytes, sample_rate: int = 16000, is_final: bool = False) -> dict:

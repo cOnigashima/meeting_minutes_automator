@@ -885,5 +885,97 @@ class TestMonitoringLoop:
                 "current_model should remain unchanged after downgrade failure"
 
 
+class TestAppMemoryMonitoring:
+    """Test application-specific memory monitoring (Fix for system-wide memory bug)"""
+
+    def test_app_memory_not_system_memory(self):
+        """
+        Verify that memory monitoring uses app RSS, not system-wide memory
+
+        GIVEN ResourceMonitor with app-specific memory tracking
+        WHEN get_current_memory_usage() is called
+        THEN returned value should be app memory (much smaller than system memory)
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        import psutil
+
+        monitor = ResourceMonitor()
+        app_memory = monitor.get_current_memory_usage()
+
+        # Get system-wide memory for comparison
+        system_memory_gb = psutil.virtual_memory().used / (1024**3)
+
+        # App memory should be much smaller than system memory
+        assert app_memory < system_memory_gb, \
+            f"App memory ({app_memory:.2f}GB) should be < system memory ({system_memory_gb:.2f}GB)"
+
+        # Python sidecar should typically use < 2GB
+        assert app_memory < 2.0, \
+            f"Python sidecar memory ({app_memory:.2f}GB) seems too high (expected < 2GB)"
+
+    def test_should_downgrade_memory_with_app_thresholds(self):
+        """
+        STT-REQ-006.8: Memory downgrade uses app-specific thresholds (2.0GB/1.5GB)
+
+        GIVEN app memory monitoring
+        WHEN app memory reaches 2.0GB (critical) or 1.5GB (warning)
+        THEN appropriate downgrade should be triggered
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+
+        monitor = ResourceMonitor()
+
+        # Test critical threshold (>= 2.0GB -> immediate downgrade to base)
+        should_downgrade, target_model = monitor.should_downgrade_memory(2.5)
+        assert should_downgrade is True
+        assert target_model == 'base', "Should immediately downgrade to base at 2.5GB"
+
+        # Test warning threshold (>= 1.5GB -> gradual downgrade)
+        should_downgrade, target_model = monitor.should_downgrade_memory(1.7)
+        assert should_downgrade is True
+        assert target_model is None, "Should gradually downgrade at 1.7GB"
+
+        # Test safe level (< 1.5GB -> no downgrade)
+        should_downgrade, target_model = monitor.should_downgrade_memory(1.0)
+        assert should_downgrade is False
+        assert target_model is None, "Should not downgrade at 1.0GB"
+
+    def test_monitor_cycle_uses_app_memory(self):
+        """
+        Verify that _monitor_cycle() uses app-specific memory, not system-wide
+
+        GIVEN ResourceMonitor with monitoring enabled
+        WHEN _monitor_cycle() executes
+        THEN it should check app memory (via get_current_memory_usage)
+        AND not trigger false positives from system-wide memory usage
+        """
+        from stt_engine.resource_monitor import ResourceMonitor
+        import asyncio
+
+        monitor = ResourceMonitor()
+        monitor.current_model = 'small'
+        monitor.initial_model = 'small'
+
+        downgrade_called = False
+        async def mock_downgrade(old, new):
+            nonlocal downgrade_called
+            downgrade_called = True
+
+        # Run one monitoring cycle
+        async def test():
+            await monitor._monitor_cycle(
+                on_downgrade=mock_downgrade,
+                on_upgrade_proposal=None,
+                on_pause_recording=None
+            )
+
+        asyncio.run(test())
+
+        # With typical Python sidecar memory (< 1.5GB), downgrade should NOT be triggered
+        # (Unlike system-wide memory which would often be > 3GB)
+        assert not downgrade_called, \
+            "Downgrade should not trigger with typical app memory usage"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

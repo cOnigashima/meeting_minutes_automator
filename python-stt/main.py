@@ -458,10 +458,11 @@ class AudioProcessor:
 
         try:
             # Load new model in WhisperSTTEngine
-            await self.stt_engine.load_model(new_model)
+            # Returns actual loaded model (may differ due to bundled fallback)
+            actual_model = await self.stt_engine.load_model(new_model)
 
-            # Update ResourceMonitor state (only after successful load)
-            self.resource_monitor.current_model = new_model
+            # Update ResourceMonitor state with ACTUAL loaded model
+            self.resource_monitor.current_model = actual_model
 
             # Send IPC notification to UI (STT-REQ-006.9, STT-REQ-007.1 Event format)
             if self.ipc:
@@ -471,11 +472,12 @@ class AudioProcessor:
                     'eventType': 'model_change',
                     'data': {
                         'old_model': old_model,
-                        'new_model': new_model,
+                        'new_model': actual_model,  # Actual loaded model
+                        'requested_model': new_model,  # What was requested
                         'reason': 'cpu_high' if self.resource_monitor.cpu_high_start_time else 'memory_high'
                     }
                 })
-                logger.info(f"Sent model_change IPC notification: {old_model} → {new_model}")
+                logger.info(f"Sent model_change IPC notification: {old_model} → {actual_model}")
 
         except Exception as e:
             logger.error(f"Failed to handle model downgrade: {e}", exc_info=True)
@@ -581,10 +583,14 @@ class AudioProcessor:
 
         try:
             # Load new model in WhisperSTTEngine
-            await self.stt_engine.load_model(target_model)
+            # Returns actual loaded model (may differ from target_model due to bundled fallback)
+            actual_model = await self.stt_engine.load_model(target_model)
 
-            # Update ResourceMonitor state (only after successful load)
-            self.resource_monitor.current_model = target_model
+            # Update ResourceMonitor state with ACTUAL loaded model (STT-REQ-006.9/006.12)
+            self.resource_monitor.current_model = actual_model
+
+            # Check if fallback occurred
+            upgrade_succeeded = (actual_model == target_model)
 
             # Send IPC messages (STT-REQ-006.12, STT-REQ-007.1, STT-REQ-007.2)
             if self.ipc:
@@ -594,25 +600,35 @@ class AudioProcessor:
                     'type': 'response',
                     'version': '1.0',
                     'result': {  # Nested structure (new format)
-                        'success': True,
+                        'success': upgrade_succeeded,
                         'old_model': old_model,
-                        'new_model': target_model
+                        'new_model': actual_model,  # Actual loaded model
+                        'requested_model': target_model,  # What user requested
+                        'fallback_occurred': not upgrade_succeeded
                     }
                 })
-                logger.info(f"Sent approve_upgrade response: {old_model} → {target_model}")
+                logger.info(f"Sent approve_upgrade response: {old_model} → {actual_model} (requested: {target_model})")
 
                 # 2. イベント通知（UI通知用、オプショナル、STT-REQ-007.1 Event format）
+                if upgrade_succeeded:
+                    event_type = 'upgrade_success'
+                    message = f'Model upgraded successfully to {actual_model}'
+                else:
+                    event_type = 'upgrade_fallback'
+                    message = f'Requested {target_model} not available, using {actual_model} instead'
+
                 await self.ipc.send_message({
                     'type': 'event',
                     'version': '1.0',
-                    'eventType': 'upgrade_success',
+                    'eventType': event_type,
                     'data': {
                         'old_model': old_model,
-                        'new_model': target_model,
-                        'message': f'Model upgraded successfully to {target_model}'
+                        'new_model': actual_model,
+                        'requested_model': target_model,
+                        'message': message
                     }
                 })
-                logger.info(f"Sent upgrade_success event notification")
+                logger.info(f"Sent {event_type} event notification")
 
         except Exception as e:
             logger.error(f"Failed to handle approved upgrade: {e}", exc_info=True)

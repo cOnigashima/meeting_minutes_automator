@@ -4,4 +4,4 @@
 [env]
 # Python executable for E2E tests (BLOCK-005 resolution)
 # Uses python-stt/.venv/bin/python instead of system python
-APP_PYTHON = { value = "python-stt/.venv/bin/python", relative = true }
+APP_PYTHON = { value = "../python-stt/.venv/bin/python", relative = true }

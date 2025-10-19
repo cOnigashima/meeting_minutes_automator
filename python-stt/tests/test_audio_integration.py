@@ -430,16 +430,18 @@ class TestResourceMonitorIntegration:
         with patch('main.WhisperSTTEngine') as mock_whisper_class, \
              patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
              patch('psutil.cpu_percent', return_value=90), \
-             patch('psutil.virtual_memory') as mock_mem:
+             patch('psutil.Process') as mock_process_class:
 
-            # Mock memory to be low (safe, < 3GB)
-            mock_mem.return_value.percent = 50
-            mock_mem.return_value.used = 2.0 * (1024 ** 3)  # 2GB
+            # Mock app memory to be low (safe, < 1.5GB)
+            mock_process = MagicMock()
+            mock_process.memory_info.return_value.rss = 1.0 * (1024 ** 3)  # 1GB app memory
+            mock_process_class.return_value = mock_process
 
             # Mock STT engine
             mock_stt = MagicMock()
             mock_stt.model_size = 'large-v3'
-            mock_stt.load_model = AsyncMock()
+            # load_model returns the new model size (contract: str)
+            mock_stt.load_model = AsyncMock(side_effect=lambda size: size)
             mock_whisper_class.return_value = mock_stt
 
             from main import AudioProcessor
@@ -474,15 +476,15 @@ class TestResourceMonitorIntegration:
             assert mock_stt.load_model.called, "load_model should be called for downgrade"
 
             # Verify IPC notification was sent
-            model_change_msgs = [m for m in sent_messages if m.get('event') == 'model_change']
+            model_change_msgs = [m for m in sent_messages if m.get('eventType') == 'model_change']
             assert len(model_change_msgs) > 0, "model_change event should be sent via IPC"
 
             # Verify notification format
             msg = model_change_msgs[0]
             assert msg['type'] == 'event'
-            assert 'old_model' in msg
-            assert 'new_model' in msg
-            assert msg['reason'] in ['cpu_high', 'memory_high']
+            assert 'old_model' in msg['data']
+            assert 'new_model' in msg['data']
+            assert msg['data']['reason'] in ['cpu_high', 'memory_high']
 
     @pytest.mark.asyncio
     async def test_model_downgrade_on_high_memory(self):
@@ -499,16 +501,18 @@ class TestResourceMonitorIntegration:
         with patch('main.WhisperSTTEngine') as mock_whisper_class, \
              patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
              patch('psutil.cpu_percent', return_value=50), \
-             patch('psutil.virtual_memory') as mock_mem:
+             patch('psutil.Process') as mock_process_class:
 
-            # Mock critical memory usage (>= 4GB)
-            mock_mem.return_value.percent = 92
-            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB (critical)
+            # Mock critical app memory usage (>= 2.0GB)
+            mock_process = MagicMock()
+            mock_process.memory_info.return_value.rss = 2.5 * (1024 ** 3)  # 2.5GB app memory (critical)
+            mock_process_class.return_value = mock_process
 
             # Mock STT engine
             mock_stt = MagicMock()
             mock_stt.model_size = 'large-v3'
-            mock_stt.load_model = AsyncMock()
+            # load_model returns the new model size (contract: str)
+            mock_stt.load_model = AsyncMock(side_effect=lambda size: size)
             mock_whisper_class.return_value = mock_stt
 
             from main import AudioProcessor
@@ -542,10 +546,10 @@ class TestResourceMonitorIntegration:
             assert call_args[0][0] == 'base', "Should downgrade to base for critical memory"
 
             # Verify IPC notification
-            model_change_msgs = [m for m in sent_messages if m.get('event') == 'model_change']
+            model_change_msgs = [m for m in sent_messages if m.get('eventType') == 'model_change']
             assert len(model_change_msgs) > 0
-            assert model_change_msgs[0]['new_model'] == 'base'
-            assert model_change_msgs[0]['reason'] == 'memory_high'
+            assert model_change_msgs[0]['data']['new_model'] == 'base'
+            assert model_change_msgs[0]['data']['reason'] == 'memory_high'
 
     @pytest.mark.asyncio
     async def test_upgrade_proposal_on_recovery(self):
@@ -563,11 +567,12 @@ class TestResourceMonitorIntegration:
         with patch('main.WhisperSTTEngine') as mock_whisper_class, \
              patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
              patch('psutil.cpu_percent', return_value=30), \
-             patch('psutil.virtual_memory') as mock_mem:
+             patch('psutil.Process') as mock_process_class:
 
-            # Mock low resource usage (recovered, < 2GB)
-            mock_mem.return_value.percent = 40
-            mock_mem.return_value.used = 1.5 * (1024 ** 3)  # 1.5GB (low)
+            # Mock low app resource usage (recovered, < 0.5GB for upgrade proposal)
+            mock_process = MagicMock()
+            mock_process.memory_info.return_value.rss = 0.3 * (1024 ** 3)  # 0.3GB app memory (very low, triggers upgrade proposal)
+            mock_process_class.return_value = mock_process
 
             # Mock STT engine with downgraded model
             mock_stt = MagicMock()
@@ -606,13 +611,13 @@ class TestResourceMonitorIntegration:
             await task
 
             # Verify upgrade proposal was sent
-            upgrade_msgs = [m for m in sent_messages if m.get('event') == 'upgrade_proposal']
+            upgrade_msgs = [m for m in sent_messages if m.get('eventType') == 'upgrade_proposal']
             assert len(upgrade_msgs) > 0, "upgrade_proposal event should be sent"
 
             msg = upgrade_msgs[0]
             assert msg['type'] == 'event'
-            assert msg['current_model'] == 'small'
-            assert msg['proposed_model'] == 'large-v3'
+            assert msg['data']['current_model'] == 'small'
+            assert msg['data']['proposed_model'] == 'large-v3'
 
     @pytest.mark.asyncio
     async def test_recording_pause_notification(self):
@@ -629,11 +634,12 @@ class TestResourceMonitorIntegration:
         with patch('main.WhisperSTTEngine') as mock_whisper_class, \
              patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
              patch('psutil.cpu_percent', return_value=95), \
-             patch('psutil.virtual_memory') as mock_mem:
+             patch('psutil.Process') as mock_process_class:
 
-            # Mock very high memory usage (>= 4GB triggers pause)
-            mock_mem.return_value.percent = 95
-            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB (critical)
+            # Mock very high app memory usage (>= 2.0GB triggers pause with tiny)
+            mock_process = MagicMock()
+            mock_process.memory_info.return_value.rss = 2.2 * (1024 ** 3)  # 2.2GB app memory (critical)
+            mock_process_class.return_value = mock_process
 
             # Mock STT engine with tiny model
             mock_stt = MagicMock()
@@ -666,12 +672,12 @@ class TestResourceMonitorIntegration:
             await task
 
             # Verify recording_paused notification
-            pause_msgs = [m for m in sent_messages if m.get('event') == 'recording_paused']
+            pause_msgs = [m for m in sent_messages if m.get('eventType') == 'recording_paused']
             assert len(pause_msgs) > 0, "recording_paused event should be sent"
             
             msg = pause_msgs[0]
             assert msg['type'] == 'event'
-            assert msg['reason'] == 'insufficient_resources'
+            assert msg['data']['reason'] == 'insufficient_resources'
 
     @pytest.mark.asyncio
     async def test_model_downgrade_failure_state_consistency(self):
@@ -688,11 +694,12 @@ class TestResourceMonitorIntegration:
         with patch('main.WhisperSTTEngine') as mock_whisper_class, \
              patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad'), \
              patch('psutil.cpu_percent', return_value=50), \
-             patch('psutil.virtual_memory') as mock_mem:
+             patch('psutil.Process') as mock_process_class:
 
-            # Mock critical memory usage (>= 4GB)
-            mock_mem.return_value.percent = 92
-            mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB
+            # Mock app-specific critical memory usage (>= 2.0GB for downgrade)
+            mock_process = MagicMock()
+            mock_process.memory_info.return_value.rss = 2.5 * (1024 ** 3)  # 2.5GB (> 2.0GB threshold)
+            mock_process_class.return_value = mock_process
 
             # Mock STT engine with failing load_model
             mock_stt = MagicMock()
@@ -745,7 +752,8 @@ class TestResourceMonitorIntegration:
         import asyncio
 
         mock_stt = MagicMock()
-        mock_stt.load_model = AsyncMock(return_value=None)  # Success
+        # load_model returns the new model size (contract: str)
+        mock_stt.load_model = AsyncMock(side_effect=lambda size: size)
         mock_stt.transcribe = AsyncMock(return_value=("", 0.0, ""))
 
         processor = AudioProcessor()

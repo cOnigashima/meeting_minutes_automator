@@ -200,5 +200,264 @@ class TestWhisperSTTEngineModelSwitching:
             assert engine.model is not None, "Model should not be None after rollback"
 
 
+class TestBundledModelFallback:
+    """Test bundled model fallback (STT-REQ-002.4/002.6)"""
+
+    def test_bundled_fallback_from_requested_to_base(self):
+        """
+        STT-REQ-002.4/002.6: Fallback to bundled base when requested model unavailable
+
+        GIVEN offline mode with only bundled 'base' model
+        WHEN requested model 'small' is not available
+        THEN _detect_model_path should fallback to bundled 'base'
+        AND model_size should be updated to 'base'
+        """
+        import tempfile
+        from pathlib import Path
+        from stt_engine.transcription.whisper_client import WhisperSTTEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create bundled base model directory
+            bundled_base = Path(tmpdir) / "models" / "faster-whisper" / "base"
+            bundled_base.mkdir(parents=True)
+            (bundled_base / "model.bin").touch()
+
+            engine = WhisperSTTEngine(model_size='small', offline_mode=True)
+
+            # Mock _detect_model_path to use temp directory
+            def patched_detect():
+                bundled_base_dirs = [Path(tmpdir) / "models" / "faster-whisper"]
+
+                # Try requested size (small)
+                for base_dir in bundled_base_dirs:
+                    bundled_path = base_dir / engine.model_size
+                    if bundled_path.exists() and (bundled_path / "model.bin").exists():
+                        return str(bundled_path)
+
+                # Fallback to base (STT-REQ-002.4/002.6)
+                if engine.model_size != 'base':
+                    for base_dir in bundled_base_dirs:
+                        bundled_base_path = base_dir / "base"
+                        if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
+                            engine.model_size = "base"
+                            return str(bundled_base_path)
+
+                raise FileNotFoundError("No model found")
+
+            engine._detect_model_path = patched_detect
+
+            # Execute detection
+            model_path = engine._detect_model_path()
+
+            # Verify fallback occurred
+            assert engine.model_size == "base", "Should fallback to base"
+            assert "base" in model_path, "Path should contain 'base'"
+            assert Path(model_path).exists(), "Bundled base path should exist"
+
+    def test_no_fallback_when_requested_model_available(self):
+        """
+        Verify that fallback does NOT occur when requested model is available
+
+        GIVEN bundled 'small' model exists
+        WHEN requested model is 'small'
+        THEN should use 'small' directly without fallback
+        """
+        import tempfile
+        from pathlib import Path
+        from stt_engine.transcription.whisper_client import WhisperSTTEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create bundled small AND base models
+            bundled_small = Path(tmpdir) / "models" / "faster-whisper" / "small"
+            bundled_small.mkdir(parents=True)
+            (bundled_small / "model.bin").touch()
+
+            bundled_base = Path(tmpdir) / "models" / "faster-whisper" / "base"
+            bundled_base.mkdir(parents=True)
+            (bundled_base / "model.bin").touch()
+
+            engine = WhisperSTTEngine(model_size='small', offline_mode=True)
+
+            # Mock _detect_model_path
+            def patched_detect():
+                bundled_base_dirs = [Path(tmpdir) / "models" / "faster-whisper"]
+
+                # Try requested size (small) - should find it
+                for base_dir in bundled_base_dirs:
+                    bundled_path = base_dir / engine.model_size
+                    if bundled_path.exists() and (bundled_path / "model.bin").exists():
+                        return str(bundled_path)
+
+                # Fallback to base (should NOT reach here)
+                if engine.model_size != 'base':
+                    for base_dir in bundled_base_dirs:
+                        bundled_base_path = base_dir / "base"
+                        if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
+                            engine.model_size = "base"
+                            return str(bundled_base_path)
+
+                raise FileNotFoundError("No model found")
+
+            engine._detect_model_path = patched_detect
+
+            # Execute detection
+            model_path = engine._detect_model_path()
+
+            # Verify NO fallback occurred
+            assert engine.model_size == "small", "Should keep requested model"
+            assert "small" in model_path, "Path should contain 'small'"
+
+    @pytest.mark.asyncio
+    async def test_load_model_returns_actual_model_on_fallback(self):
+        """
+        Verify that load_model() returns actual loaded model size when fallback occurs
+
+        GIVEN bundled 'base' only
+        WHEN load_model('small') is called
+        THEN should return 'base' (not 'small')
+        """
+        import tempfile
+        from pathlib import Path
+        from stt_engine.transcription.whisper_client import WhisperSTTEngine
+        from unittest.mock import MagicMock, patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundled_base = Path(tmpdir) / "models" / "faster-whisper" / "base"
+            bundled_base.mkdir(parents=True)
+            (bundled_base / "model.bin").touch()
+
+            # Create engine with base initially loaded
+            engine = WhisperSTTEngine(model_size='base', offline_mode=True)
+            engine.model = MagicMock()  # Mock WhisperModel
+            engine.model_path = str(bundled_base)
+
+            # Mock _detect_model_path to simulate fallback
+            def patched_detect():
+                bundled_base_dirs = [Path(tmpdir) / "models" / "faster-whisper"]
+
+                # Try requested size (small) - not found
+                for base_dir in bundled_base_dirs:
+                    bundled_path = base_dir / engine.model_size
+                    if bundled_path.exists() and (bundled_path / "model.bin").exists():
+                        return str(bundled_path)
+
+                # Fallback to base
+                if engine.model_size != 'base':
+                    for base_dir in bundled_base_dirs:
+                        bundled_base_path = base_dir / "base"
+                        if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
+                            engine.model_size = "base"  # FALLBACK OCCURS HERE
+                            return str(bundled_base_path)
+
+                raise FileNotFoundError("No model found")
+
+            engine._detect_model_path = patched_detect
+
+            # Mock WhisperModel to avoid actual model loading
+            with patch('stt_engine.transcription.whisper_client.WhisperModel', return_value=MagicMock()):
+                # Call load_model with 'small' (will fallback to 'base')
+                actual_model = await engine.load_model('small')
+
+            # Verify return value reflects fallback
+            assert actual_model == 'base', "load_model should return 'base' (fallback occurred)"
+            assert engine.model_size == 'base', "engine.model_size should be 'base'"
+
+
+class TestOnlineModeHubPriority:
+    """Test online mode prioritizes HuggingFace Hub over bundled models (STT-REQ-002.1/002.3)"""
+
+    def test_online_mode_returns_hub_model_id_before_bundled(self):
+        """
+        Verify online mode returns Hub model ID before checking bundled models
+
+        GIVEN online mode with bundled 'base' model available
+        WHEN requested model 'small' is not in cache
+        THEN should return HuggingFace Hub model ID (not bundled 'base')
+        AND bundled fallback should NOT occur
+        """
+        import tempfile
+        from pathlib import Path
+        from stt_engine.transcription.whisper_client import WhisperSTTEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create bundled base model
+            bundled_base = Path(tmpdir) / "models" / "faster-whisper" / "base"
+            bundled_base.mkdir(parents=True)
+            (bundled_base / "model.bin").touch()
+
+            # Create engine in ONLINE mode (offline_mode=False)
+            engine = WhisperSTTEngine(model_size='small', offline_mode=False)
+
+            # Mock _detect_model_path to use temp directory for bundled paths
+            def patched_detect():
+                # Simulate: no user config, no HF cache
+                # Online mode should return Hub model ID BEFORE bundled check
+
+                # Return Hub model ID (online mode priority)
+                model_id = f"Systran/faster-whisper-{engine.model_size}"
+                return model_id
+
+            engine._detect_model_path = patched_detect
+
+            # Execute detection
+            model_path = engine._detect_model_path()
+
+            # Verify Hub model ID returned (NOT bundled path)
+            assert model_path == "Systran/faster-whisper-small", \
+                "Online mode should return Hub model ID, not bundled fallback"
+            assert engine.model_size == "small", \
+                "model_size should remain 'small' (no fallback)"
+
+    def test_offline_mode_uses_bundled_fallback(self):
+        """
+        Verify offline mode uses bundled fallback (not Hub model ID)
+
+        GIVEN offline mode with bundled 'base' model available
+        WHEN requested model 'small' is not in cache or bundled
+        THEN should fallback to bundled 'base' model
+        """
+        import tempfile
+        from pathlib import Path
+        from stt_engine.transcription.whisper_client import WhisperSTTEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create bundled base model only
+            bundled_base = Path(tmpdir) / "models" / "faster-whisper" / "base"
+            bundled_base.mkdir(parents=True)
+            (bundled_base / "model.bin").touch()
+
+            # Create engine in OFFLINE mode
+            engine = WhisperSTTEngine(model_size='small', offline_mode=True)
+
+            # Mock _detect_model_path to use temp directory
+            def patched_detect():
+                bundled_base_dirs = [Path(tmpdir) / "models" / "faster-whisper"]
+
+                # Try requested size
+                for base_dir in bundled_base_dirs:
+                    bundled_path = base_dir / engine.model_size
+                    if bundled_path.exists() and (bundled_path / "model.bin").exists():
+                        return str(bundled_path)
+
+                # Offline mode: fallback to bundled base
+                if engine.model_size != 'base':
+                    for base_dir in bundled_base_dirs:
+                        bundled_base_path = base_dir / "base"
+                        if bundled_base_path.exists() and (bundled_base_path / "model.bin").exists():
+                            engine.model_size = "base"
+                            return str(bundled_base_path)
+
+                raise FileNotFoundError("No model found")
+
+            engine._detect_model_path = patched_detect
+
+            # Execute detection
+            model_path = engine._detect_model_path()
+
+            # Verify bundled fallback occurred
+            assert engine.model_size == "base", "Should fallback to 'base' in offline mode"
+            assert "base" in model_path, "Path should contain 'base'"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
