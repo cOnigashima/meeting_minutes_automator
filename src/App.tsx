@@ -164,147 +164,105 @@ function App() {
       <h1>Meeting Minutes Automator</h1>
       <h2>Walking Skeleton (MVP0)</h2>
 
-      {/* Task 9.1: Audio Device Selection */}
-      <div style={{ marginTop: "2rem", padding: "1rem", backgroundColor: "#f9f9f9", borderRadius: "4px" }}>
-        <label htmlFor="audio-device-select" style={{ fontWeight: "bold", marginRight: "10px" }}>
-          Audio Device:
-        </label>
-        <select
-          id="audio-device-select"
-          value={selectedDeviceId}
-          onChange={(e) => setSelectedDeviceId(e.target.value)}
-          disabled={isRecording}
-          style={{
-            padding: "8px 12px",
-            fontSize: "14px",
-            borderRadius: "4px",
-            border: "1px solid #ccc",
-            minWidth: "300px",
-          }}
-        >
-          {audioDevices.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.name} ({device.sample_rate / 1000}kHz, {device.channels}ch)
-              {device.is_loopback ? " [Loopback]" : ""}
-            </option>
-          ))}
-        </select>
+      <section className="card">
+        <div className="card-header">
+          <label htmlFor="audio-device-select">Audio Device</label>
+          <select
+            id="audio-device-select"
+            value={selectedDeviceId}
+            onChange={(e) => setSelectedDeviceId(e.target.value)}
+            disabled={isRecording}
+          >
+            {audioDevices.map((device) => (
+              <option key={device.id} value={device.id}>
+                {device.name} ({device.sample_rate / 1000}kHz, {device.channels}ch)
+                {device.is_loopback ? " [Loopback]" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
         {audioDevices.length === 0 && (
-          <p style={{ marginTop: "8px", color: "#999", fontSize: "12px" }}>
-            No audio devices found
-          </p>
+          <p className="helper-text">No audio devices found</p>
         )}
-      </div>
+      </section>
 
-      {/* Task 9.2: Whisper Model Selection */}
-      <div style={{ marginTop: "2rem", padding: "1rem", backgroundColor: "#f9f9f9", borderRadius: "4px" }}>
-        <div style={{ marginBottom: "12px" }}>
-          <label style={{ fontWeight: "bold", display: "flex", alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={useAutoSelect}
-              onChange={(e) => setUseAutoSelect(e.target.checked)}
-              disabled={isRecording}
-              style={{ marginRight: "8px" }}
-            />
-            Auto-select model (recommended)
-          </label>
+      <section className="card">
+        <div className="checkbox-row">
+          <input
+            type="checkbox"
+            id="auto-select-model"
+            checked={useAutoSelect}
+            onChange={(e) => setUseAutoSelect(e.target.checked)}
+            disabled={isRecording}
+          />
+          <label htmlFor="auto-select-model">Auto-select model (recommended)</label>
         </div>
 
         {whisperModels && (
           <>
-            <label htmlFor="whisper-model-select" style={{ fontWeight: "bold", marginRight: "10px" }}>
-              Whisper Model:
-            </label>
-            <select
-              id="whisper-model-select"
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              disabled={isRecording || useAutoSelect}
-              style={{
-                padding: "8px 12px",
-                fontSize: "14px",
-                borderRadius: "4px",
-                border: "1px solid #ccc",
-                minWidth: "200px",
-                backgroundColor: useAutoSelect ? "#e0e0e0" : "white",
-              }}
-            >
-              {whisperModels.available_models.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                  {model === whisperModels.recommended_model ? " (recommended)" : ""}
-                </option>
-              ))}
-            </select>
+            <div className="card-header">
+              <label htmlFor="whisper-model-select">Whisper Model</label>
+              <select
+                id="whisper-model-select"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isRecording || useAutoSelect}
+              >
+                {whisperModels.available_models.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                    {model === whisperModels.recommended_model ? " (recommended)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-            {/* System Resources Info */}
-            <div style={{ marginTop: "12px", fontSize: "12px", color: "#666" }}>
+            <div className="helper-text">
               <div>
                 System: {whisperModels.system_resources.cpu_cores} cores,
                 {whisperModels.system_resources.total_memory_gb}GB RAM
                 {whisperModels.system_resources.gpu_available &&
                   `, GPU: ${whisperModels.system_resources.gpu_memory_gb}GB`}
               </div>
-              {/* Task 9.2: STT-REQ-006.5 - Only warn if selected model is heavier than recommended */}
               {!useAutoSelect && isModelTooHeavy(selectedModel, whisperModels.recommended_model) && (
-                <div style={{ color: "#ff9800", marginTop: "4px" }}>
+                <div className="warning-text">
                   ⚠️ Selected model may exceed system resources (recommended: {whisperModels.recommended_model})
                 </div>
               )}
             </div>
           </>
         )}
-      </div>
+      </section>
 
-      <div className="row" style={{ marginTop: "2rem" }}>
-        <button
-          onClick={startRecording}
-          disabled={isRecording}
-          style={{
-            padding: "10px 20px",
-            fontSize: "16px",
-            backgroundColor: isRecording ? "#ccc" : "#4CAF50",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: isRecording ? "not-allowed" : "pointer",
-          }}
-        >
-          {isRecording ? "Recording..." : "Start Recording"}
-        </button>
+      <section className="card">
+        <div className="controls">
+          <button className="primary" onClick={startRecording} disabled={isRecording}>
+            {isRecording ? "Recording..." : "Start Recording"}
+          </button>
+          <button className="danger" onClick={stopRecording} disabled={!isRecording}>
+            Stop Recording
+          </button>
+        </div>
+        <div className="status-message">{statusMsg}</div>
+      </section>
 
-        <button
-          onClick={stopRecording}
-          disabled={!isRecording}
-          style={{
-            padding: "10px 20px",
-            fontSize: "16px",
-            backgroundColor: !isRecording ? "#ccc" : "#f44336",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: !isRecording ? "not-allowed" : "pointer",
-            marginLeft: "10px",
-          }}
-        >
-          Stop Recording
-        </button>
-      </div>
-
-      <p style={{ marginTop: "1rem", color: "#666" }}>{statusMsg}</p>
-
-      <div style={{ marginTop: "2rem", padding: "1rem", backgroundColor: "#f5f5f5", borderRadius: "4px" }}>
-        <h3>Instructions for E2E Test:</h3>
-        <ol style={{ textAlign: "left", maxWidth: "600px", margin: "0 auto" }}>
-          <li>Open Chrome and load the extension from <code>chrome-extension/</code></li>
-          <li>Navigate to <a href="https://meet.google.com" target="_blank">Google Meet</a></li>
+      <section className="card card-muted">
+        <h3>Instructions for E2E Test</h3>
+        <ol>
+          <li>
+            Open Chrome and load the extension from <code>chrome-extension/</code>
+          </li>
+          <li>
+            Navigate to <a href="https://meet.google.com" target="_blank">Google Meet</a>
+          </li>
           <li>Open Chrome DevTools Console (F12)</li>
           <li>Click "Start Recording" button above</li>
-          <li>Watch Console for: <code>[Meeting Minutes] 📝 Transcription: This is a fake transcription result</code></li>
+          <li>
+            Watch Console for: <code>[Meeting Minutes] 📝 Transcription: This is a fake transcription result</code>
+          </li>
           <li>Click "Stop Recording" when done</li>
         </ol>
-      </div>
+      </section>
     </main>
   );
 }

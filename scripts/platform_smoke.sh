@@ -46,15 +46,32 @@ log_step "Ring buffer / IPC quick check (optional target)"
 run_optional cargo test --manifest-path "${PROJECT_ROOT}/src-tauri/Cargo.toml" ring_buffer -- --ignored --nocapture
 
 log_step "Python sidecar import smoke test"
-run_optional env PYTHONPATH="${PROJECT_ROOT}/python-stt:${PYTHONPATH:-}" python3 - <<'PY'
+if [ -f "${PROJECT_ROOT}/python-stt/.venv/bin/python" ]; then
+  run_optional env PYTHONPATH="${PROJECT_ROOT}/python-stt:${PYTHONPATH:-}" "${PROJECT_ROOT}/python-stt/.venv/bin/python" - <<'PY'
 try:
     from stt_engine.audio_pipeline import AudioPipeline  # noqa: F401
-    from transcription.voice_activity_detector import VoiceActivityDetector  # noqa: F401
+    from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector  # noqa: F401
+    from stt_engine.transcription.whisper_client import WhisperClient  # noqa: F401
     print("Python sidecar modules import: OK")
 except Exception as exc:  # pragma: no cover
     print(f"Python sidecar import failed: {exc!r}")
     raise
 PY
+else
+  log_warn "Python venv not found at ${PROJECT_ROOT}/python-stt/.venv"
+  printf '   ℹ️  Run: cd python-stt && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt\n'
+fi
+
+log_step "Python unit tests (quick smoke)"
+if [ -f "${PROJECT_ROOT}/python-stt/.venv/bin/pytest" ]; then
+  run_optional "${PROJECT_ROOT}/python-stt/.venv/bin/python" -m pytest "${PROJECT_ROOT}/python-stt/tests/" -k "not test_audio_recording" --maxfail=3 -v
+else
+  log_warn "pytest not found, skipping Python tests"
+fi
 
 log_step "Smoke test completed"
-printf 'Logs written to %s\n' "${LOG_FILE}"
+printf '\n==> Summary\n'
+printf '   Platform: %s\n' "$(uname -s)"
+printf '   Logs: %s\n' "${LOG_FILE}"
+printf '   Next: Review logs for failures, run full E2E test with:\n'
+printf '         cargo test --test stt_e2e_test -- --ignored --nocapture\n'

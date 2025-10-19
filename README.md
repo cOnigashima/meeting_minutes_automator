@@ -4,31 +4,60 @@ Google Meetの音声を自動で文字起こしし、議事録を生成するデ
 
 ## 🎯 Project Status
 
-**Current Phase**: MVP1 Real STT Integration 🔄（2025-10-19時点）
+**Current Phase**: MVP1 Core Implementation Milestone ✅（2025-10-19時点）
 
-- Pythonサイドカーは `VoiceActivityDetector` + `AudioPipeline` + `WhisperSTTEngine` によるリアルタイム文字起こしを実装済み（`python-stt/main.py`）。  
-- Rust側はイベントストリーム対応のIPC/ WebSocket配送を実装し、部分結果と確定結果に `isPartial` / `confidence` / `language` / `processingTimeMs` を含めて配信します（`src-tauri/src/commands.rs`, `src-tauri/src/websocket.rs`）。  
-- クロスプラットフォームの `AudioDeviceAdapter`（CoreAudio / WASAPI / ALSA）実装とイベント監視は完了済みですが、UI統合中のため既定では `FakeAudioDevice` を使用しています（`src-tauri/src/state.rs`）。  
-- Chrome拡張はストレージ同期と再接続ロジックを保持し、拡張されたメッセージ形式を受信できます。
+### 完了した機能（MVP1 Core Implementation）
 
-### 完了した機能（MVP0）
+**基盤機能**（MVP0）:
 - ✅ Tauri + Python + Chrome拡張の3プロセスアーキテクチャ
-- ✅ Fake音声録音（100ms間隔でダミーデータ生成）
 - ✅ Pythonサイドカープロセス管理（起動/終了/ヘルスチェック）
-- ✅ JSON IPC通信（Rust ↔ Python）
-- ✅ WebSocketサーバー（Rust ↔ Chrome拡張）
+- ✅ JSON IPC通信（Rust ↔ Python、Line-Delimited JSON）
+- ✅ WebSocketサーバー（Rust ↔ Chrome拡張、ポート9001）
 - ✅ Chrome拡張スケルトン（Google Meetページで動作）
-- ✅ E2E疎通確認（録音→処理→配信→表示）
 
-### 現在進行中の成果（MVP1 スナップショット）
-- ✅ WhisperベースのリアルSTTパイプラインとリソース監視（モデル自動ダウングレード/アップグレード提案）
-- ✅ IPCイベントストリーム（speech_start / partial_text / final_text / speech_end / no_speech / model_change）
-- ✅ Rust統合テスト（`stt_e2e_test.rs`, `audio_ipc_integration.rs`）でサイドカーとの往復を検証
-- ⏳ 実マイク入力のUI統合（`AudioDeviceAdapter`と録音デバイス選択UIの結合を実装中）
+**STT機能**（MVP1）:
+- ✅ **faster-whisper統合**: リアルタイム音声認識（tiny/base/small/medium/large-v3）
+- ✅ **VAD統合**: webrtcvadによる音声活動検出（speech_start/speech_end）
+- ✅ **部分テキスト/確定テキスト**: `isPartial`フラグ付き配信（<0.5s/<2s応答）
+- ✅ **オフラインフォールバック**: HuggingFace Hub接続失敗時にbundled baseモデルへ自動切替
+- ✅ **リソース監視**: CPU/メモリ使用率に応じた動的モデルダウングレード/アップグレード提案
+- ✅ **音声デバイス管理**: CoreAudio/WASAPI/ALSA対応、デバイス切断検出・自動再接続
+- ✅ **ローカルストレージ**: セッション別音声/文字起こし保存（audio.wav, transcription.jsonl, session.json）
+- ✅ **UI拡張**: 音声デバイス選択、Whisperモデル選択、リソース情報表示
+
+**テスト・品質保証**:
+- ✅ Rust: 71テスト合格（E2Eテスト含む）
+- ✅ Python: 143テスト合格（単体・統合テスト）
+- ✅ E2Eテスト: Task 10.1緑化（VAD→STT完全フロー、23.49秒実行）
+- ✅ セキュリティテスト: Task 11.5完了（検証完了、修正はMVP2 Phase 0）
+
+**ドキュメント**:
+- ✅ UML図5種類（コンポーネント、シーケンス×3、クラス）
+- ✅ ADR 7件実装完了（ADR-001, 002, 003, 013, 014, 016, 017）
+- ✅ MVP2申し送りドキュメント（検証負債・リスク宣言付き）
+
+### 検証負債（MVP2 Phase 0で対応）
+
+⚠️ **以下の検証が未完了です**（詳細は`.kiro/specs/meeting-minutes-stt/MVP2-HANDOFF.md`参照）:
+
+- **Task 10.2-10.7**: Rust E2Eテスト未実装（Python単体テストは完了）
+- **Task 11.3**: 長時間稼働安定性テスト（2時間録音）
+- **SEC-001〜005**: セキュリティ修正5件（pip脆弱性、CSP設定、ファイル権限、TLS検証、cargo-audit）
 
 ### 次のフェーズ
-- 📋 MVP2: Google Docs同期（OAuth 2.0、Named Range管理）
-- 📋 MVP3: LLM要約 + UI（プロダクション準備）
+- 📋 **MVP2 Phase 0**: 検証負債解消（Task 10.2-10.7、Task 11.3、SEC-001〜005）
+- 📋 **MVP2**: Google Docs同期（OAuth 2.0、Named Range管理、オフライン同期）
+- 📋 **MVP3**: LLM要約 + UI（プロダクション準備）
+
+---
+
+## 📚 ドキュメント
+
+- **[ユーザーガイド](docs/user-guide.md)**: インストール、音声デバイス設定、faster-whisperモデル設定、トラブルシューティング
+- **[アーキテクチャ図](docs/diagrams/)**: UML図5種類（コンポーネント、シーケンス×3、クラス）
+- **[ADR実装レビュー](.kiro/specs/meeting-minutes-stt/adr-implementation-review.md)**: ADR-001〜017実装状況確認
+- **[セキュリティテストレポート](.kiro/specs/meeting-minutes-stt/security-test-report.md)**: SEC-001〜005詳細
+- **[MVP2申し送り](.kiro/specs/meeting-minutes-stt/MVP2-HANDOFF.md)**: MVP2 Phase 0ブロッカー、リスク宣言
 
 ## 📚 Architecture Decision Records
 - ADR履歴の俯瞰: `.kiro/specs/meeting-minutes-stt/adrs/ADR-history.md`

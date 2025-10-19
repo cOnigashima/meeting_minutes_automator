@@ -76,12 +76,21 @@ mkdir -p "${SESSION_DIR}"
 LOG_FILE="${SESSION_DIR}/burnin.log"
 SUMMARY_FILE="${SESSION_DIR}/summary.txt"
 
+if [[ -z "${APP_PYTHON:-}" && -z "${PYTHON_PATH}" ]]; then
+  DEFAULT_PYTHON="${PROJECT_ROOT}/python-stt/.venv/bin/python"
+  if [[ -x "${DEFAULT_PYTHON}" ]]; then
+    export APP_PYTHON="${DEFAULT_PYTHON}"
+  fi
+fi
+
 {
   echo "Stability burn-in session"
   echo "Started at: ${TIMESTAMP}"
   echo "Duration (sec): ${DURATION_SECS}"
   if [[ -n "${PYTHON_PATH}" ]]; then
     echo "Python override: ${PYTHON_PATH}"
+  elif [[ -n "${APP_PYTHON:-}" ]]; then
+    echo "Python via APP_PYTHON: ${APP_PYTHON}"
   fi
   echo "Log file: ${LOG_FILE}"
 } | tee "${SUMMARY_FILE}"
