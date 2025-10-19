@@ -4,7 +4,7 @@
 // Task 7.1.5: IPC Protocol Migration Support
 
 use crate::audio::AudioDevice;
-use crate::audio_device_adapter::AudioDeviceEvent;
+use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceEvent};
 use crate::ipc_protocol::{IpcMessage as ProtocolMessage, VersionCompatibility, PROTOCOL_VERSION};
 use crate::state::AppState;
 use crate::websocket::WebSocketMessage;
@@ -137,8 +137,36 @@ async fn monitor_audio_events(app: AppHandle) {
 
 /// Start recording command
 /// Starts FakeAudioDevice and processes audio data through Python sidecar
+/// Task 9.1: Accept device_id to honor user's device selection (STT-REQ-001.2)
 #[tauri::command]
-pub async fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+pub async fn start_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<String, String> {
+    // Task 9.1: Validate and log selected device (STT-REQ-001.2)
+    println!("[Meeting Minutes] Starting recording with device: {}", device_id);
+
+    // MVP0: Validate device exists in enumeration
+    let available_devices = crate::audio::FakeAudioDevice::enumerate_devices_static()
+        .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
+
+    if !available_devices.iter().any(|d| d.id == device_id) {
+        return Err(format!(
+            "Invalid device ID: {}. Available: {:?}",
+            device_id,
+            available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
+        ));
+    }
+
+    println!("[Meeting Minutes] Device validated: {}", device_id);
+
+    // Task 9.1: Save selected device to AppState (STT-REQ-001.2)
+    state.set_selected_device_id(device_id.clone());
+    println!("[Meeting Minutes] Device selection saved to state");
+
+    // MVP1 TODO: Pass device_id to AudioDeviceAdapter::start_recording(device_id)
+
     // Check if already recording
     {
         let is_recording = state.is_recording.lock().unwrap();
@@ -514,4 +542,35 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
 
     println!("[Meeting Minutes] ✅ Recording stopped");
     Ok("Recording stopped".to_string())
+}
+
+/// List available audio input devices
+/// Task 9.1: Audio device selection UI
+/// Requirement: STT-REQ-001.1, STT-REQ-001.2
+///
+/// IMPORTANT: Decoupled from recorder instance to allow enumeration before recording starts.
+/// This matches the real device adapter pattern (CoreAudio/WASAPI/ALSA perform static host queries).
+#[tauri::command]
+pub async fn list_audio_devices(_state: State<'_, AppState>) -> Result<Vec<crate::audio_device_adapter::AudioDeviceInfo>, String> {
+    println!("[Meeting Minutes] Listing audio devices...");
+
+    // Task 9.1: Use static enumeration (no dependency on initialized recorder)
+    // For MVP0: FakeAudioDevice::enumerate_devices_static()
+    // For MVP1: CpalAudioDeviceAdapter::enumerate_devices_static()
+    match crate::audio::FakeAudioDevice::enumerate_devices_static() {
+        Ok(devices) => {
+            println!("[Meeting Minutes] Found {} audio devices", devices.len());
+            for device in &devices {
+                println!(
+                    "  - {} (ID: {}, {}Hz, {} ch, loopback: {})",
+                    device.name, device.id, device.sample_rate, device.channels, device.is_loopback
+                );
+            }
+            Ok(devices)
+        }
+        Err(e) => {
+            eprintln!("[Meeting Minutes] Failed to enumerate audio devices: {}", e);
+            Err(format!("Failed to list audio devices: {}", e))
+        }
+    }
 }

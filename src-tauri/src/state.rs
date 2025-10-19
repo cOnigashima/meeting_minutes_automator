@@ -14,6 +14,10 @@ pub struct AppState {
     /// Recording state
     pub is_recording: Mutex<bool>,
 
+    /// Selected audio device ID
+    /// Task 9.1 - STT-REQ-001.2 (user device selection)
+    pub selected_device_id: Mutex<Option<String>>,
+
     /// WebSocket server for Chrome extension communication
     /// Initialized during Tauri setup, None before initialization
     pub websocket_server: Mutex<Option<Arc<tokio::sync::Mutex<WebSocketServer>>>>,
@@ -44,6 +48,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             is_recording: Mutex::new(false),
+            selected_device_id: Mutex::new(None),
             websocket_server: Mutex::new(None),
             python_sidecar: Mutex::new(None),
             audio_device: Mutex::new(None),
@@ -99,5 +104,19 @@ impl AppState {
     pub fn subscribe_ipc_events(&self) -> Option<broadcast::Receiver<serde_json::Value>> {
         let tx_lock = self.ipc_event_tx.lock().unwrap();
         tx_lock.as_ref().map(|tx| tx.subscribe())
+    }
+
+    /// Set selected audio device ID
+    /// Task 9.1 - STT-REQ-001.2
+    pub fn set_selected_device_id(&self, device_id: String) {
+        let mut selected = self.selected_device_id.lock().unwrap();
+        *selected = Some(device_id);
+    }
+
+    /// Get selected audio device ID
+    /// Task 9.1 - STT-REQ-001.2
+    pub fn get_selected_device_id(&self) -> Option<String> {
+        let selected = self.selected_device_id.lock().unwrap();
+        selected.clone()
     }
 }

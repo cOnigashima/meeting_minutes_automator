@@ -4,6 +4,7 @@
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceInfo};
 
 /// Audio chunk callback type
 pub type AudioChunkCallback = Box<dyn Fn(Vec<u8>) + Send + Sync>;
@@ -130,5 +131,66 @@ impl AudioDevice for FakeAudioDevice {
 impl Drop for FakeAudioDevice {
     fn drop(&mut self) {
         let _ = self.stop();
+    }
+}
+
+impl FakeAudioDevice {
+    /// Task 9.1: Static device enumeration (decoupled from recorder instance)
+    /// Returns dummy device list for MVP0/UI testing
+    /// Note: This approach aligns with real device adapters (CoreAudio/WASAPI/ALSA)
+    /// which perform static host queries without requiring an active stream.
+    pub fn enumerate_devices_static() -> Result<Vec<AudioDeviceInfo>> {
+        Ok(vec![
+            AudioDeviceInfo {
+                id: "fake-device-0".to_string(),
+                name: "Fake Microphone".to_string(),
+                sample_rate: 16000,
+                channels: 1,
+                is_loopback: false,
+            },
+            AudioDeviceInfo {
+                id: "fake-device-1".to_string(),
+                name: "Fake BlackHole 2ch".to_string(),
+                sample_rate: 16000,
+                channels: 2,
+                is_loopback: true,
+            },
+        ])
+    }
+}
+
+/// Task 9.1: Implement AudioDeviceAdapter for FakeAudioDevice
+/// Returns dummy device list for UI testing
+impl AudioDeviceAdapter for FakeAudioDevice {
+    fn enumerate_devices(&self) -> Result<Vec<AudioDeviceInfo>> {
+        // Delegate to static method (backwards compatibility)
+        Self::enumerate_devices_static()
+    }
+
+    fn start_recording(&mut self, _device_id: &str) -> Result<()> {
+        self.start()
+    }
+
+    fn start_recording_with_callback(
+        &mut self,
+        _device_id: &str,
+        _callback: crate::audio_device_adapter::AudioChunkCallback,
+    ) -> Result<()> {
+        // For MVP0, just set running flag
+        self.is_running = true;
+        Ok(())
+    }
+
+    fn stop_recording(&mut self) -> Result<()> {
+        self.stop()
+    }
+
+    fn is_recording(&self) -> bool {
+        self.is_running
+    }
+
+    fn check_permission(&self) -> Result<()> {
+        // Always return Ok for fake device
+        Ok(())
     }
 }

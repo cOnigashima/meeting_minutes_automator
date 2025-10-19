@@ -56,6 +56,16 @@ WebSocketサーバーがポート9001-9100の範囲で起動します。
 - 現在は最小限の実装（メッセージリレーのみ）
 - Content Scriptからのメッセージを処理
 
+### WebSocketメッセージ型
+
+Content Script と Rust 側 (`WebSocketServer`) の間では、以下の TypeScript 型を利用しています。
+
+- `WebSocketMessageType` — `connected` / `transcription` / `error` の列挙値。
+- `ConnectedMessage` — 接続確立時の通知ペイロード（`sessionId` / `timestamp` など）。
+- `TranscriptionMessage` — `text`, `isPartial`, `confidence`, `language`, `processingTimeMs` を含む文字起こしイベント。
+- `ErrorMessage` — エラー発生時に Chrome 拡張へ通知するメッセージ。
+- `WebSocketMessage` — 上記バリアントを束ねる discriminated union。`WebSocketClient` クラス内で送受信を担います。
+
 ## WebSocketメッセージ仕様
 
 ### 受信メッセージ

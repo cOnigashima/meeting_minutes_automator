@@ -96,6 +96,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_recording,
             commands::stop_recording,
+            commands::list_audio_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 shiori (CLI) - 実装 ⇔ ドキュメントの乖離検知・在庫化・API抽出
+詳しい説明と今後の拡張案は `scripts/docs_crawler.md` を参照してください。
 =======================================================
 個人開発向けの**完全オフライン**・**単体ファイル**のCLIツールです。
 APIや外部サービスは呼びません（= 課金ゼロ）。
@@ -137,10 +138,16 @@ def extract_links_md_like(text: str) -> List[str]:
 def sanitize_docs_for_output(docs: List[Dict[str, object]]) -> List[Dict[str, object]]:
     sanitized: List[Dict[str, object]] = []
     for doc in docs:
-        entry = {
-            k: (list(v) if isinstance(v, list) else v)
-            for k, v in doc.items() if k != "text"
-        }
+        entry: Dict[str, object] = {}
+        for k, v in doc.items():
+            if k == "text":
+                continue
+            if k == "headings" and isinstance(v, list):
+                entry[k] = ";".join(v)
+            elif k == "links" and isinstance(v, list):
+                entry[k] = ";".join(v)
+            else:
+                entry[k] = v
         sanitized.append(entry)
     return sanitized
 
@@ -187,11 +194,15 @@ def extract_symbols_from_code(txt: str, lang: str, path_rel: str) -> Iterable[Di
         except Exception:
             return []
         for node in t.body:
-            if getattr(node, "name", None) and not node.name.startswith("_"):
-                if node.__class__.__name__ == "FunctionDef":
-                    yield {"lang": lang, "kind": "function", "name": node.name, "path": path_rel}
-                elif node.__class__.__name__ == "ClassDef":
-                    yield {"lang": lang, "kind": "class", "name": node.name, "path": path_rel}
+            name = getattr(node, "name", None)
+            if not name:
+                continue
+            if name.startswith("_") or name.startswith("Test"):
+                continue
+            if node.__class__.__name__ == "FunctionDef":
+                yield {"lang": lang, "kind": "function", "name": name, "path": path_rel}
+            elif node.__class__.__name__ == "ClassDef":
+                yield {"lang": lang, "kind": "class", "name": name, "path": path_rel}
         return
 
     if lang in ("ts", "js"):
@@ -206,7 +217,10 @@ def extract_symbols_from_code(txt: str, lang: str, path_rel: str) -> Iterable[Di
         names: Set[str] = set()
         for pat in patterns:
             for m in re.finditer(pat, txt):
-                names.add(m.group(1))
+                candidate = m.group(1)
+                if candidate.startswith("Test"):
+                    continue
+                names.add(candidate)
         for name in sorted(names):
             # 種別は簡易に "symbol" とする（必要なら詳細化）
             yield {"lang": lang, "kind": "symbol", "name": name, "path": path_rel}
@@ -214,14 +228,20 @@ def extract_symbols_from_code(txt: str, lang: str, path_rel: str) -> Iterable[Di
 
     if lang == "go":
         for m in re.finditer(r"func\s+([A-Z]\w*)\s*\(", txt):
-            yield {"lang": lang, "kind": "function", "name": m.group(1), "path": path_rel}
+            name = m.group(1)
+            if name.startswith("Test"):
+                continue
+            yield {"lang": lang, "kind": "function", "name": name, "path": path_rel}
         for m in re.finditer(r"type\s+([A-Z]\w*)\s+", txt):
             yield {"lang": lang, "kind": "type", "name": m.group(1), "path": path_rel}
         return
 
     if lang == "rust":
         for m in re.finditer(r"pub\s+(?:async\s+)?fn\s+(\w+)\s*\(", txt):
-            yield {"lang": lang, "kind": "function", "name": m.group(1), "path": path_rel}
+            name = m.group(1)
+            if name.startswith("test_") or name.startswith("Test"):
+                continue
+            yield {"lang": lang, "kind": "function", "name": name, "path": path_rel}
         for m in re.finditer(r"pub\s+struct\s+(\w+)", txt):
             yield {"lang": lang, "kind": "struct", "name": m.group(1), "path": path_rel}
         for m in re.finditer(r"pub\s+enum\s+(\w+)", txt):
@@ -245,10 +265,18 @@ def extract_api_surface(repo: Path, target_langs: Set[str], ignore_dirs: Set[str
         lang = detect_lang_of_file(p)
         if not lang or lang not in target_langs:
             continue
+        rel = relpath(repo, p)
+        # Skip test / fixture files (python: test_*.py, *_test.py, directories named tests/fixture/...)
+        parts = set(p.parts)
+        if "tests" in parts or "__tests__" in parts or "fixtures" in parts:
+            continue
+        name_lower = p.name.lower()
+        if name_lower.startswith("test_") or name_lower.endswith("_test.py") or name_lower.endswith("_tests.py"):
+            continue
         if is_binary(p):
             continue
         txt = read_text(p)
-        for entry in extract_symbols_from_code(txt, lang, relpath(repo, p)):
+        for entry in extract_symbols_from_code(txt, lang, rel):
             items.append(entry)
     return items
 
@@ -339,7 +367,7 @@ def write_csv(path: Path, rows: List[Dict[str, object]], fieldnames: Sequence[st
 def write_reports(outdir: Path, repo: Path, docs: List[Dict[str, object]], symbols: List[Dict[str, str]], sym_idx: Dict[str, Dict[str, object]], drift: Dict[str, object]) -> None:
     # docs-inventory.csv
     write_csv(outdir / "docs-inventory.csv", docs,
-              ["path","size","num_headings","num_links","sha1","mtime"])
+              ["path","size","num_headings","num_links","sha1","mtime","headings","links"])
 
     # api-surface.csv
     write_csv(outdir / "api-surface.csv", symbols,
