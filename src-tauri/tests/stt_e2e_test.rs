@@ -28,20 +28,20 @@ mod helpers;
 
 /// Task 10.1: 音声録音→VAD→STT→保存の完全フロー検証
 ///
-/// Phase 1 (Current): VAD + STT Core Flow
+/// Phase 1 (✅ COMPLETED): VAD + STT Core Flow
 /// - ✅ Python sidecar起動とWhisper初期化確認
 /// - ✅ VAD音声検出（speech_start、no_speech）
 /// - ✅ 部分テキスト生成（partial_text with is_final=false）
+/// - ✅ 確定テキスト生成（final_text with is_final=true）
+/// - ✅ speech_end イベント検証
 /// - ✅ IPCイベント配信（process_audio_stream）
-/// - ✅ リソースモニタリング（model_change on memory pressure）
 ///
-/// Phase 2 (Future): WebSocket + LocalStorage Integration
+/// Phase 2 (Future - Separate Task): WebSocket + LocalStorage Integration
 /// - ⏸️ WebSocket経由でChrome拡張へのメッセージ配信を確認
 /// - ⏸️ ローカルストレージへのセッション保存（audio.wav, transcription.jsonl, session.json）を検証
-/// - ⏸️ 確定テキスト（final_text with is_final=true）と speech_end イベント検証
 ///
-/// Requirements: STT-REQ-001, STT-REQ-002, STT-REQ-003 (Phase 1)
-///              STT-REQ-005, STT-REQ-008 (Phase 2)
+/// Requirements: STT-REQ-001, STT-REQ-002, STT-REQ-003 (Phase 1 ✅)
+///              STT-REQ-005, STT-REQ-008 (Phase 2 - Future)
 ///
 /// Current Implementation Status:
 /// - ✅ BLOCK-007 resolved: Test helpers implemented and validated
@@ -109,6 +109,44 @@ async fn test_audio_recording_to_transcription_full_flow() {
         }
     }
 
+    // Send trailing silence frames to trigger speech_end
+    // VAD requires 50 consecutive silence frames (500ms) to detect speech offset
+    println!("DEBUG: Sending trailing silence frames to trigger speech_end...");
+    let silence_frame = vec![0i16; 160]; // 10ms of silence (160 samples at 16kHz)
+
+    for i in 0..60 {  // Send 60 silence frames (600ms) to ensure speech_end
+        let audio_bytes = fixtures::pcm_samples_to_bytes(&silence_frame);
+
+        let request = serde_json::json!({
+            "id": format!("silence-{}", i),
+            "type": "request",
+            "version": "1.0",
+            "method": "process_audio_stream",
+            "params": {
+                "audio_data": audio_bytes
+            }
+        });
+
+        sidecar
+            .send_message(request)
+            .await
+            .expect("Should send silence frame");
+
+        // Receive events (with timeout to prevent hanging)
+        match timeout(Duration::from_millis(100), sidecar.receive_message()).await {
+            Ok(Ok(response)) => {
+                println!("DEBUG: Silence {} received event: {:?}", i, response);
+                events.push(response);
+            }
+            Ok(Err(e)) => {
+                println!("DEBUG: Silence {} receive error: {:?}", i, e);
+            }
+            Err(_) => {
+                // Timeout - expected for most chunks
+            }
+        }
+    }
+
     // Wait for final events (give Python time to process Whisper transcription)
     // Whisper inference can take several seconds, especially on first run
     println!("DEBUG: Waiting for final events (Whisper may take time)...");
@@ -135,11 +173,52 @@ async fn test_audio_recording_to_transcription_full_flow() {
     helpers::verify_partial_final_text_distribution(&events)
         .expect("Partial/final text distribution should be correct");
 
-    // Step 4: Shutdown
+    // Step 4: Verify speech_end event
+    let has_speech_end = events.iter().any(|event| {
+        event
+            .get("eventType")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "speech_end")
+            .unwrap_or(false)
+    });
+
+    assert!(has_speech_end, "speech_end event should be received");
+    println!("✅ speech_end event received");
+
+    // Step 5: Verify final_text event with is_final=true
+    let final_texts: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event
+                .get("eventType")
+                .and_then(|t| t.as_str())
+                .map(|t| t == "final_text")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert!(!final_texts.is_empty(), "At least one final_text event should be received");
+
+    // Verify is_final=true in final_text events
+    for event in &final_texts {
+        let is_final = event
+            .get("data")
+            .and_then(|d| d.get("is_final"))
+            .and_then(|f| f.as_bool())
+            .unwrap_or(false);
+
+        assert!(is_final, "final_text event should have is_final=true");
+    }
+
+    println!("✅ final_text event received with is_final=true ({} events)", final_texts.len());
+
+    // Step 6: Shutdown
     sidecar.shutdown().await.expect("Should shutdown cleanly");
 
-    println!("✅ Received {} events", events.len());
-    println!("✅ Partial/final text distribution verified");
+    println!("✅ Task 10.1 Phase 1 COMPLETED:");
+    println!("   - Total events received: {}", events.len());
+    println!("   - Partial/final text distribution verified");
+    println!("   - speech_end and final_text events verified");
 }
 
 //
