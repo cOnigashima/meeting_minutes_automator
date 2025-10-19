@@ -97,6 +97,7 @@ pub fn run() {
             commands::start_recording,
             commands::stop_recording,
             commands::list_audio_devices,
+            commands::get_whisper_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

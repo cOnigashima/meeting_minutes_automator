@@ -544,6 +544,54 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
     Ok("Recording stopped".to_string())
 }
 
+/// Get available Whisper models and system resources
+/// Task 9.2: Whisper model selection UI
+/// Requirement: STT-REQ-006.1, STT-REQ-006.2, STT-REQ-006.4
+#[tauri::command]
+pub async fn get_whisper_models() -> Result<serde_json::Value, String> {
+    println!("[Meeting Minutes] Getting Whisper models and system resources...");
+
+    // Task 9.2: Available models (STT-REQ-006.2)
+    let models = vec!["tiny", "base", "small", "medium", "large-v3"];
+
+    // Task 9.2: Get system resources (MVP0: static values, MVP1: actual detection)
+    let system_resources = serde_json::json!({
+        "cpu_cores": num_cpus::get(),
+        "total_memory_gb": 8,  // MVP0: static, TODO: actual detection
+        "gpu_available": false,  // MVP0: static, TODO: actual detection
+        "gpu_memory_gb": 0,
+    });
+
+    // Task 9.2: Calculate recommended model based on STT-REQ-006.2
+    let recommended_model = calculate_recommended_model(&system_resources);
+
+    Ok(serde_json::json!({
+        "available_models": models,
+        "system_resources": system_resources,
+        "recommended_model": recommended_model,
+    }))
+}
+
+/// Calculate recommended Whisper model based on system resources
+/// Implements STT-REQ-006.2 model selection rules
+fn calculate_recommended_model(resources: &serde_json::Value) -> String {
+    let memory_gb = resources["total_memory_gb"].as_f64().unwrap_or(4.0);
+    let gpu_available = resources["gpu_available"].as_bool().unwrap_or(false);
+    let gpu_memory_gb = resources["gpu_memory_gb"].as_f64().unwrap_or(0.0);
+
+    if gpu_available && memory_gb >= 8.0 && gpu_memory_gb >= 10.0 {
+        "large-v3".to_string()
+    } else if gpu_available && memory_gb >= 4.0 && gpu_memory_gb >= 5.0 {
+        "medium".to_string()
+    } else if memory_gb >= 4.0 {
+        "small".to_string()
+    } else if memory_gb >= 2.0 {
+        "base".to_string()
+    } else {
+        "tiny".to_string()
+    }
+}
+
 /// List available audio input devices
 /// Task 9.1: Audio device selection UI
 /// Requirement: STT-REQ-001.1, STT-REQ-001.2

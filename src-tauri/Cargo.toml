@@ -45,6 +45,7 @@ cpal = "0.13.5"
 sys-info = "0.9.1"
 fs2 = "0.4.3"
 ringbuf = "0.4" # ADR-013: SPSC Ring Buffer
+num_cpus = "1.17.0"
 
 [dev-dependencies]
 tempfile = "3"
