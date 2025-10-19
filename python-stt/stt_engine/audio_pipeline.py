@@ -155,7 +155,8 @@ class AudioPipeline:
         event_type = vad_result.get('event')
 
         if event_type == 'speech_start':
-            return await self._handle_speech_start()
+            pre_roll_data = vad_result.get('pre_roll')
+            return await self._handle_speech_start(pre_roll_data)
 
         elif event_type == 'speech_end':
             segment_data = vad_result.get('segment', {})
@@ -203,7 +204,8 @@ class AudioPipeline:
             event_type = vad_result.get('event')
 
             if event_type == 'speech_start':
-                return await self._handle_speech_start()
+                pre_roll_data = vad_result.get('pre_roll')
+                return await self._handle_speech_start(pre_roll_data)
 
             elif event_type == 'speech_end':
                 segment_data = vad_result.get('segment', {})
@@ -233,14 +235,27 @@ class AudioPipeline:
 
         return False
 
-    async def _handle_speech_start(self) -> Dict[str, Any]:
+    async def _handle_speech_start(
+        self,
+        pre_roll: Optional[bytes] = None
+    ) -> Dict[str, Any]:
         """
         Handle speech start event.
+
+        Args:
+            pre_roll: Optional pre-roll audio data from VAD (P0.5 FIX)
 
         Returns:
             Speech start event dict
         """
         self._current_speech_buffer = bytearray()
+
+        # ✅ P0.5 FIX: Seed with pre-roll if available
+        # This ensures partial_text includes all leading frames
+        if pre_roll:
+            self._current_speech_buffer.extend(pre_roll)
+            logger.info(f"Seeded speech buffer with {len(pre_roll)} bytes pre-roll ({len(pre_roll) // 320} frames)")
+
         self._speech_start_time = int(time.time() * 1000)
         self._last_partial_time = None
         self._frame_count_since_partial = 0  # P1 fix: Reset frame counter

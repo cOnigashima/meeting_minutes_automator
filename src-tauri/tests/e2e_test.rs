@@ -175,18 +175,29 @@ mod e2e_tests {
         let _ = timeout(Duration::from_secs(1), send_task).await;
 
         // Verify responses from Python
+        // Note: Python now uses new IPC protocol (type="response"), not legacy "transcription_result"
         let mut sidecar = sidecar_arc.lock().await;
         for i in 0..2 {
             let result = timeout(Duration::from_secs(1), sidecar.receive_message()).await;
 
             match result {
                 Ok(Ok(response)) => {
-                    assert_eq!(
-                        response.get("type").and_then(|v| v.as_str()),
-                        Some("transcription_result"),
-                        "Response {} should be transcription_result",
-                        i
+                    // New protocol returns type="response" with result field
+                    let msg_type = response.get("type").and_then(|v| v.as_str());
+                    assert!(
+                        msg_type == Some("response") || msg_type == Some("transcription_result"),
+                        "Response {} should be 'response' (new protocol) or 'transcription_result' (legacy), got {:?}",
+                        i, msg_type
                     );
+
+                    // Verify result field exists for new protocol
+                    if msg_type == Some("response") {
+                        assert!(
+                            response.get("result").is_some(),
+                            "Response {} should have 'result' field",
+                            i
+                        );
+                    }
                 }
                 _ => panic!("Should receive response {}", i),
             }

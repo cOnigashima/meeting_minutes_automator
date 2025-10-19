@@ -49,7 +49,8 @@ mod helpers;
 /// - ✅ Model path placeholder bug fixed (HuggingFace model ID fallback)
 /// - ✅ Test successfully receives 18 events including partial_text
 #[tokio::test]
-#[ignore] // Requires Whisper model download (use `cargo test -- --ignored` to run)
+// NOTE: Requires Whisper model (will auto-download 'small' model on first run)
+// BLOCK-005/006/007 resolved: Python sidecar handshake + fixtures + helpers ready
 async fn test_audio_recording_to_transcription_full_flow() {
     use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
     use tokio::time::{timeout, Duration};

@@ -1,4 +1,4 @@
-# ADR-013 P0 Bug Fixes
+# ADR-015 P0 Bug Fixes (Round 2)
 
 **Date**: 2025-10-14
 **Status**: Completed

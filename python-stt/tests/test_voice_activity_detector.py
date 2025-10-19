@@ -441,9 +441,94 @@ class TestSegmentFinalization:
             assert result is not None
             assert 'segment' in result
             assert 'duration_ms' in result['segment']
-            # Speech onset at frame 30, then 21 speech frames (30-50) + 50 silence frames
-            # Total: 21 + 50 = 71 frames = 710ms
-            assert result['segment']['duration_ms'] == 710
+            # P0 FIX: Pre-roll buffer now preserves all 30 leading frames
+            # Speech onset: frames 0-29 (30 frames) preserved in pre-roll
+            # Active speech: frames 30-49 (20 frames) after onset confirmation
+            # Silence frames: frames 50-99 (50 frames) accumulated
+            # Total: 30 + 20 + 50 = 100 frames = 1000ms
+            assert result['segment']['duration_ms'] == 1000
+
+
+class TestPreRollBufferIntegrity:
+    """
+    Test that VAD preserves leading audio frames before speech onset confirmation.
+
+    P0 BUG: Current implementation discards the first 30 frames (0.3s) because
+    process_frame() only accumulates to current_segment AFTER speech_onset_threshold
+    is reached, then immediately clears the buffer before appending the 31st frame.
+
+    Requirements:
+        STT-REQ-003.4: Speech onset detection (0.3s continuous speech)
+        NFR-001.1: Partial text response time < 0.5s (requires full audio)
+    """
+
+    def test_speech_onset_preserves_leading_frames(self):
+        """
+        GIVEN a user starts speaking immediately without silence padding
+        WHEN VAD detects speech onset after 30 frames (0.3s)
+        THEN all 30 leading frames + subsequent frames should be preserved in segment
+
+        P0 BUG DETECTION: This test WILL FAIL with current implementation because
+        current_segment is cleared at line 153 and only frame 30 is appended.
+        Expected: 30 frames, Actual: 1 frame
+        """
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+
+            # All frames are speech (simulate user speaking immediately)
+            mock_vad_instance.is_speech.return_value = True
+
+            detector = VoiceActivityDetector()
+            frame = b'\x00' * 320  # 10ms frame at 16kHz
+
+            # Send 29 speech frames (not yet at threshold)
+            for i in range(29):
+                result = detector.process_frame(frame)
+                assert result is None, f"Frame {i} should not trigger event"
+
+            # Frame 30 (index 29) should trigger speech_start
+            result = detector.process_frame(frame)
+            assert result['event'] == 'speech_start'
+            assert 'pre_roll' in result  # P0.5 FIX: pre-roll data included
+
+            # ✅ EXPECTED: All 30 leading frames preserved for Whisper
+            # Pre-roll buffer accumulated frames 0-29, then transferred to current_segment
+            assert len(detector.current_segment) == 30, \
+                f"Expected 30 frames (0-29), got {len(detector.current_segment)}. " \
+                f"Leading {30 - len(detector.current_segment)} frames were lost!"
+
+    def test_pre_roll_buffer_content_integrity(self):
+        """
+        GIVEN different frame content for each leading frame
+        WHEN speech onset is detected
+        THEN all unique leading frames should be preserved in order
+
+        This test verifies not just frame count but actual frame content preservation.
+        """
+        from stt_engine.transcription.voice_activity_detector import VoiceActivityDetector
+
+        with patch('stt_engine.transcription.voice_activity_detector.webrtcvad.Vad') as mock_vad_class:
+            mock_vad_instance = MagicMock()
+            mock_vad_class.return_value = mock_vad_instance
+            mock_vad_instance.is_speech.return_value = True
+
+            detector = VoiceActivityDetector()
+
+            # Create unique frames with incrementing byte values
+            unique_frames = [bytes([i] * 320) for i in range(30)]
+
+            # Send 30 frames (reaches threshold on 30th frame)
+            for i in range(30):
+                result = detector.process_frame(unique_frames[i])
+
+            # Verify all 30 frames are preserved in order
+            assert len(detector.current_segment) == 30
+            for i in range(30):
+                assert detector.current_segment[i] == unique_frames[i], \
+                    f"Frame {i} content mismatch or missing"
 
 
 if __name__ == "__main__":

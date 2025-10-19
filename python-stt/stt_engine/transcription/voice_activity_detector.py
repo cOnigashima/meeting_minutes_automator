@@ -59,9 +59,15 @@ class VoiceActivityDetector:
         self.speech_onset_threshold = 30  # 0.3 seconds = 30 frames
         self.speech_offset_threshold = 50  # 0.5 seconds = 50 frames
 
+        # Pre-roll buffer to preserve leading frames (P0 FIX)
+        # Implements webrtcvad official pattern: ring buffer for speech onset context
+        # Prevents 0.3s audio loss at speech start by accumulating frames before confirmation
+        from collections import deque
+        self.pre_roll_buffer = deque(maxlen=self.speech_onset_threshold)
+
         logger.info(
             f"VoiceActivityDetector initialized: sample_rate={sample_rate}Hz, "
-            f"aggressiveness={aggressiveness}"
+            f"aggressiveness={aggressiveness}, pre_roll_buffer={self.speech_onset_threshold} frames"
         )
 
     def split_into_frames(self, audio_data: bytes) -> List[bytes]:
@@ -142,6 +148,10 @@ class VoiceActivityDetector:
 
         # Handle speech onset detection (STT-REQ-003.4)
         if not self.is_in_speech:
+            # Always push to pre-roll ring buffer (P0 FIX)
+            # This preserves leading frames before speech confirmation
+            self.pre_roll_buffer.append(frame)
+
             if is_speech_frame:
                 # Increment speech counter
                 self.speech_frames += 1
@@ -150,10 +160,23 @@ class VoiceActivityDetector:
                 # Check if speech onset threshold reached (30 frames = 0.3s)
                 if self.speech_frames >= self.speech_onset_threshold:
                     self.is_in_speech = True
-                    self.current_segment = []  # Start new segment
-                    self.current_segment.append(frame)
-                    logger.info("Speech onset detected")
-                    return {'event': 'speech_start'}
+
+                    # ✅ P0 FIX: Transfer pre-roll buffer to current_segment
+                    # This preserves all 30 leading frames before confirmation
+                    self.current_segment = list(self.pre_roll_buffer)
+
+                    # ✅ P0.5 FIX: Provide pre-roll audio to AudioPipeline
+                    # This allows partial_text to include leading frames
+                    pre_roll_audio = b''.join(self.current_segment)
+
+                    # Clear pre-roll buffer for next segment
+                    self.pre_roll_buffer.clear()
+
+                    logger.info(f"Speech onset detected with {len(self.current_segment)} pre-roll frames")
+                    return {
+                        'event': 'speech_start',
+                        'pre_roll': pre_roll_audio
+                    }
             else:
                 # Reset speech counter on silence
                 self.speech_frames = 0

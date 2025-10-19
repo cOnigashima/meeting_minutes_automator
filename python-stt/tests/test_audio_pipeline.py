@@ -250,5 +250,106 @@ class TestStatistics:
         assert 'modified' not in stats2
 
 
+class TestPartialTextPreRollIntegrity:
+    """
+    Test that partial_text includes VAD pre-roll frames from speech onset.
+
+    P0.5 BUG: VAD correctly preserves 30 leading frames in current_segment,
+    but AudioPipeline._current_speech_buffer is reset to empty on speech_start
+    (audio_pipeline.py:237), and only accumulates frames AFTER is_in_speech=True
+    (audio_pipeline.py:189). The 30-frame pre-roll never reaches the partial
+    transcription buffer, so users see leading syllables disappear in real-time.
+
+    Requirements:
+        STT-REQ-003.4: Speech onset detection (0.3s continuous speech)
+        NFR-001.1: Partial text response time < 0.5s (requires full audio)
+    """
+
+    @pytest.mark.asyncio
+    async def test_partial_text_includes_pre_roll_frames(self):
+        """
+        GIVEN user starts speaking immediately (no silence padding)
+        WHEN partial_text is generated after speech_start
+        THEN the transcribed audio should include all 30 leading frames
+
+        P0.5 BUG DETECTION: This test WILL FAIL because _current_speech_buffer
+        is reset on speech_start and only accumulates frames 31+.
+        Expected: 30 pre-roll + N active = (30+N) frames
+        Actual: N frames only (missing 30 pre-roll)
+        """
+        from stt_engine.audio_pipeline import AudioPipeline
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Mock VAD to return speech_start with pre-roll data
+        mock_vad = MagicMock()
+        mock_vad.is_in_speech = False
+
+        # Create unique frames
+        unique_frames = [bytes([i] * 320) for i in range(50)]
+
+        # Track process_frame calls
+        call_count = [0]
+
+        def mock_process_frame(frame):
+            idx = call_count[0]
+            call_count[0] += 1
+
+            if idx < 29:
+                # Frames 0-28: no event
+                return None
+            elif idx == 29:
+                # Frame 29: speech_start with pre-roll
+                mock_vad.is_in_speech = True
+                pre_roll_audio = b''.join(unique_frames[:30])
+                return {
+                    'event': 'speech_start',
+                    'pre_roll': pre_roll_audio  # ✅ Expected field
+                }
+            else:
+                # Frame 30+: no event (continue accumulating)
+                return None
+
+        mock_vad.process_frame = mock_process_frame
+
+        # Mock STT engine
+        mock_stt = AsyncMock()
+        mock_stt.transcribe = AsyncMock(return_value={
+            'text': 'こんにちは',  # Should include leading "こ"
+            'confidence': 0.9,
+            'language': 'ja'
+        })
+
+        # Create pipeline
+        pipeline = AudioPipeline()
+        pipeline.vad = mock_vad
+        pipeline.stt_engine = mock_stt
+
+        # Send 50 frames
+        for i in range(50):
+            await pipeline.process_audio_frame_with_partial(unique_frames[i])
+
+        # Force partial transcription generation
+        pipeline._frame_count_since_partial = 100  # Trigger threshold
+        result = await pipeline._generate_partial_transcription()
+
+        # Verify STT received all frames including pre-roll
+        assert mock_stt.transcribe.called
+        transcribed_audio = mock_stt.transcribe.call_args[0][0]
+
+        # ❌ BUG: Expected 50 frames (30 pre-roll + 20 active)
+        # ✅ FIXED: Should be 50 frames * 320 bytes = 16000 bytes
+        expected_size = 50 * 320
+        assert len(transcribed_audio) == expected_size, \
+            f"Expected {expected_size} bytes (50 frames), got {len(transcribed_audio)} bytes. " \
+            f"Missing {(expected_size - len(transcribed_audio)) // 320} frames!"
+
+        # Verify content integrity (first 30 frames should match pre-roll)
+        for i in range(30):
+            frame_start = i * 320
+            frame_end = frame_start + 320
+            assert transcribed_audio[frame_start:frame_end] == unique_frames[i], \
+                f"Pre-roll frame {i} content mismatch"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
