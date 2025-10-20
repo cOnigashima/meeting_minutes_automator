@@ -8,6 +8,113 @@ Related Requirements:
 - STT-REQ-006.6-006.12: 動的ダウングレードとアップグレード提案
 - STT-NFR-001.6: 30秒間隔の監視ループ
 - STT-NFR-005.4: 30秒間隔のDEBUGログ出力
+
+Phase 0.1 Design Enhancement (2025-10-20):
+========================================
+
+## Missing Features (P13-PREP-001)
+
+### 1. Hierarchical State Management
+**Current**: Only `cpu_high_start_time` and `low_resource_start_time`
+**Required**:
+- `cpu_samples: collections.deque` - CPU usage history (maxlen=2, for 60s @ 30s interval)
+- `recovery_sample_count: int` - Recovery state counter (need 10 samples = 5min)
+- `last_downgrade_timestamp: float` - For debounce logic
+
+### 2. Debounce Logic
+**Purpose**: Prevent chattering when metrics oscillate around threshold
+**Implementation**:
+- Minimum 60s between consecutive downgrades
+- Check `time.time() - last_downgrade_timestamp >= 60`
+
+### 3. Recovery State Machine
+**States**:
+1. `monitoring` - Normal monitoring, current_model == initial_model
+2. `degraded` - Downgraded, monitoring for recovery
+3. `recovering` - Low resources sustained, counting samples (need 10)
+
+**Transitions**:
+- monitoring → degraded: on downgrade
+- degraded → recovering: when resources drop below recovery threshold
+- recovering → monitoring: after 10 consecutive low-resource samples + user approval
+- recovering → degraded: if resources spike again (reset counter)
+
+### 4. API Extensions
+**New Methods**:
+```python
+def set_model_level(self, level: str) -> bool:
+    \"\"\"
+    Switch model programmatically (for IPC integration)
+
+    Args:
+        level: Target model name (e.g., 'base', 'small')
+
+    Returns:
+        True if switch successful
+
+    Note: Validates model is in MODEL_SEQUENCE before switching
+    \"\"\"
+
+def get_downgrade_history(self) -> List[Dict[str, Any]]:
+    \"\"\"
+    Get downgrade history for troubleshooting
+
+    Returns:
+        List of {timestamp, old_model, new_model, reason}
+    \"\"\"
+```
+
+### 5. IPC Event Integration
+**Event Emission** (to Rust via stdout):
+```python
+def _emit_ipc_event(self, event_type: str, data: Dict[str, Any]) -> None:
+    event = {
+        "type": "event",
+        "version": "1.0",
+        "eventType": event_type,
+        "data": data
+    }
+    print(json.dumps(event), flush=True)
+```
+
+**Event Types**:
+- `model_downgrade`: {old_model, new_model, reason: "cpu_high_60s"|"memory_critical"}
+- `upgrade_proposal`: {current_model, proposed_model}
+- `recording_paused`: {reason: "tiny_insufficient"} (STT-REQ-006.11)
+
+### 6. Requirement Mapping
+**STT-REQ-006.7** (CPU 85% for 60s):
+- Current: Partial (`should_downgrade_cpu` checks duration)
+- Missing: CPU sample history, debounce
+
+**STT-REQ-006.8** (Memory 4GB immediate):
+- Current: Implemented (`should_downgrade_memory` returns 'base')
+- Note: Threshold adjusted to 2GB (app memory) from 4GB (system memory)
+
+**STT-REQ-006.9** (Seamless switching):
+- Current: Notification creation only
+- Missing: Coordination with WhisperSTTEngine for segment boundary
+
+**STT-REQ-006.10** (Recovery after 5min):
+- Current: `should_propose_upgrade` checks duration
+- Missing: Sample counting, state machine
+
+**STT-REQ-006.11** (Pause if tiny insufficient):
+- Current: Not implemented
+- Required: Check if tiny model still exceeds threshold → emit recording_paused
+
+### 7. Design Decisions
+**Memory Threshold Adjustment**:
+- Requirement uses system-wide memory (3GB/4GB)
+- Implementation uses app memory (RSS): 1.5GB/2.0GB
+- Rationale: Whisper model sizes (tiny: ~100MB, base: ~200MB, small: ~500MB, large: ~3GB)
+- App memory more reliable for model-specific decisions
+
+**Sample Interval**:
+- Requirement: Monitor every 30s (STT-NFR-001.6)
+- Implementation: Matches requirement
+- CPU 60s check: Need 2 consecutive high samples
+- Recovery 5min: Need 10 consecutive low samples
 """
 
 import logging

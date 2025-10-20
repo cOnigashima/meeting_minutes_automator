@@ -68,17 +68,17 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
 
 ---
 
-### Phase 13詳細タスク（部分完了、2025-10-19更新）
+### Phase 13詳細タスク（Re-scoping、2025-10-20更新）
 
-#### 13.1 Rust E2Eテスト実装 ✅ 4/7完了
+#### 13.1 Rust E2Eテスト実装 ✅ 4/7完了（CI依存2タスクを別SPEC移行）
 
-- [x] 13.1.1: Task 10.1 - VAD→STT完全フローE2E（23.49秒緑化）
-- [x] 13.1.2: Task 10.2 - オフラインモデルフォールバックE2E（4h、完了）
-- [ ] 13.1.3: Task 10.3 - 動的モデルダウングレードE2E（6h、モデル切り替えAPI未実装でブロック）
-- [ ] 13.1.4: Task 10.4 - デバイス切断/再接続E2E（5h、✅ 実装可能）
-- [ ] 13.1.5: Task 10.5 - クロスプラットフォーム互換性E2E（6h、CI未整備でブロック）
-- [x] 13.1.6: Task 10.6 - 非機能要件E2E（3h、IPC/Audio callback latency測定完了）
-- [x] 13.1.7: Task 10.7 - IPC/WebSocket後方互換性E2E（3h、IPC 26+WebSocket 6テスト完了）
+- [x] 13.1.1: Task 10.1 - VAD→STT完全フローE2E（✅ 完了）
+- [x] 13.1.2: Task 10.2 - オフラインモデルフォールバックE2E（✅ 完了）
+- [ ] 13.1.3: Task 10.3 - 動的モデルダウングレードE2E（P13-PREP-001完了後に実施）
+- [ ] 13.1.4: Task 10.4 - デバイス切断/再接続E2E（Phase 1完了、Phase 2実施中）
+- [x] 13.1.5: Task 10.5 - クロスプラットフォーム互換性E2E（→ **meeting-minutes-ci spec移行**）
+- [x] 13.1.6: Task 10.6 - 非機能要件E2E（✅ 完了）
+- [x] 13.1.7: Task 10.7 - IPC/WebSocket後方互換性E2E（✅ 完了）
 
 #### 13.2 長時間稼働テスト ✅ 完了（2025-10-20）
 
@@ -118,15 +118,25 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
 - [x] SEC-004: cargo-audit実行（✅ 完了、Rust beta 1.91.0使用、16件warning（脆弱性0件））
 - [x] Task 11.3: 2時間連続録音テスト本番実施（✅ 完了、メモリリークなし）
 
-**Week 2-3（3-4日、CI整備必要）**:
-- [ ] CI/CD整備（meeting-minutes-ci spec、2-3日）
-- [ ] P13-PREP-001: Python API追加（Task 10.3準備、2-3h）
-- [ ] P13-PREP-002: STT-REQ-004.11仕様確定（Task 10.4準備、1h）
+**Phase 13 Re-scoping (2025-10-20)**: CI依存タスクを別SPEC分離
 
-**Week 4+（1.5-2日、CI完了後）**:
-- [ ] Task 10.3: 動的モデルダウングレードE2E（3h）
-- [ ] Task 10.4: デバイス切断/再接続E2E（4h）
-- [ ] Task 10.5: クロスプラットフォームE2E（6h）
+**Week 2-3（2-3日、CI不要）**:
+- [ ] P13-PREP-001: Python API追加（Task 10.3準備、2-3h）
+- [x] P13-PREP-002: STT-REQ-004.11仕様確定（✅ 完了、元々定義済み）
+- [ ] Task 10.3: 動的モデルダウングレードE2E（3h、P13-PREP-001完了後）
+- [ ] Task 10.4完遂: 本番再接続ロジック実装（3-4h）
+  - **Phase 1完了済み（下地）**:
+    - ✅ FakeAudioDevice拡張（`src/audio.rs:51-88`）
+    - ✅ 単体テスト6シナリオ（`tests/device_disconnect_e2e.rs`）
+  - **Phase 2（本番実装、BLOCKING）**:
+    - ❌ `commands.rs:193`リトライループ実装（最大3回、5秒間隔、`start_recording`再実行）
+    - ❌ AppState統合テスト（DeviceGone → 自動再接続検証）
+  - **STT-REQ-004.11ステータス**: 🔴 Phase 2未実装
+
+**別SPEC移行（meeting-minutes-ci）**:
+- [ ] CI/CD整備（GitHub Actions、クロスプラットフォームマトリックス、2-3日）
+- [ ] Task 10.5: クロスプラットフォームE2E（6h、CI整備後に実施）
+- [ ] SEC-003: Windows ACL設定（1h、Windows CI環境構築後）
 
 **合計推定**: 6-7.5日
 
@@ -221,12 +231,16 @@ MVP1実装完了後の技術的負債とコードクリーンアップタスク�
 
 ## 完了基準
 
-### Phase 13完了基準
-- [ ] 13.1: Rust E2Eテスト7件全合格
-- [ ] 13.2: 2時間連続録音成功、メモリリークなし
-- [ ] 13.3: SEC-001/002/003/005修正完了、SEC-004待機中
-- [ ] Windows/Linux実機検証完了（platform-verification.md更新）
-- [ ] 全テスト合格（Rust 78 + Python 143 = 221テスト）
+### Phase 13完了基準（Re-scoping後、2025-10-20）
+- [ ] 13.1: Rust E2Eテスト5件完了（Task 10.3, 10.4のみ、**10.5はCI spec移行**）
+- [x] 13.2: 2時間連続録音成功、メモリリークなし（✅ 完了）
+- [ ] 13.3: SEC-001/002/005修正完了（**SEC-003/004はCI spec移行**）
+- [ ] 全テスト合格（Rust + Python、CI依存テスト除く）
+
+**CI spec移行タスク** (`meeting-minutes-ci`):
+- Task 10.5: クロスプラットフォームE2E
+- SEC-003: Windows ACL設定
+- SEC-004: cargo-audit（Rust 1.85リリース待ち）
 
 ### リリース判定基準
 - [ ] Phase 13完了

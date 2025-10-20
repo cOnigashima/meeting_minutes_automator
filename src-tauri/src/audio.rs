@@ -1,7 +1,7 @@
 // Audio Device Abstraction
 // Walking Skeleton (MVP0) - Fake Implementation with Timer Loop
 
-use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceInfo};
+use crate::audio_device_adapter::{AudioDeviceAdapter, AudioDeviceEvent, AudioDeviceInfo, AudioEventSender};
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -22,6 +22,7 @@ pub trait AudioDevice: Send + Sync {
 }
 
 /// Fake audio device for testing (generates dummy data every 100ms)
+/// Task 10.4: Extended with device event simulation for E2E testing
 pub struct FakeAudioDevice {
     /// Flag to track if the device is currently running
     is_running: bool,
@@ -29,6 +30,10 @@ pub struct FakeAudioDevice {
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Background task handle
     task_handle: Option<JoinHandle<()>>,
+    /// Event sender for device monitoring (Task 10.4)
+    event_tx: Option<AudioEventSender>,
+    /// Device ID for simulation (Task 10.4)
+    device_id: Option<String>,
 }
 
 impl FakeAudioDevice {
@@ -38,7 +43,48 @@ impl FakeAudioDevice {
             is_running: false,
             shutdown_tx: None,
             task_handle: None,
+            event_tx: None,
+            device_id: None,
         }
+    }
+
+    /// Set event sender for device monitoring (Task 10.4)
+    /// Must be called before start_recording to enable event simulation
+    pub fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
+    }
+
+    /// Simulate device disconnect (Task 10.4: STT-REQ-004.9)
+    /// Sends DeviceGone event and stops recording
+    pub fn simulate_disconnect(&mut self) -> Result<()> {
+        if let Some(ref tx) = self.event_tx {
+            if let Some(ref dev_id) = self.device_id {
+                tx.send(AudioDeviceEvent::DeviceGone {
+                    device_id: dev_id.clone(),
+                })
+                .map_err(|e| anyhow::anyhow!("Failed to send DeviceGone event: {}", e))?;
+            }
+        }
+        self.stop()
+    }
+
+    /// Simulate successful reconnect (Task 10.4: STT-REQ-004.11)
+    /// Restarts recording with the same device_id
+    pub fn simulate_reconnect(&mut self) -> Result<()> {
+        if !self.is_running {
+            self.is_running = true;
+        }
+        Ok(())
+    }
+
+    /// Simulate stream error (Task 10.4: testing)
+    /// Sends StreamError event without stopping recording
+    pub fn simulate_stream_error(&self, error_msg: &str) -> Result<()> {
+        if let Some(ref tx) = self.event_tx {
+            tx.send(AudioDeviceEvent::StreamError(error_msg.to_string()))
+                .map_err(|e| anyhow::anyhow!("Failed to send StreamError event: {}", e))?;
+        }
+        Ok(())
     }
 
     /// Generate 16 bytes of dummy audio data
@@ -173,9 +219,11 @@ impl AudioDeviceAdapter for FakeAudioDevice {
 
     fn start_recording_with_callback(
         &mut self,
-        _device_id: &str,
+        device_id: &str,
         _callback: crate::audio_device_adapter::AudioChunkCallback,
     ) -> Result<()> {
+        // Store device_id for simulation (Task 10.4)
+        self.device_id = Some(device_id.to_string());
         // For MVP0, just set running flag
         self.is_running = true;
         Ok(())
