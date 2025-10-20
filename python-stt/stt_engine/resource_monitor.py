@@ -9,112 +9,11 @@ Related Requirements:
 - STT-NFR-001.6: 30秒間隔の監視ループ
 - STT-NFR-005.4: 30秒間隔のDEBUGログ出力
 
-Phase 0.1 Design Enhancement (2025-10-20):
-========================================
-
-## Missing Features (P13-PREP-001)
-
-### 1. Hierarchical State Management
-**Current**: Only `cpu_high_start_time` and `low_resource_start_time`
-**Required**:
-- `cpu_samples: collections.deque` - CPU usage history (maxlen=2, for 60s @ 30s interval)
-- `recovery_sample_count: int` - Recovery state counter (need 10 samples = 5min)
-- `last_downgrade_timestamp: float` - For debounce logic
-
-### 2. Debounce Logic
-**Purpose**: Prevent chattering when metrics oscillate around threshold
-**Implementation**:
-- Minimum 60s between consecutive downgrades
-- Check `time.time() - last_downgrade_timestamp >= 60`
-
-### 3. Recovery State Machine
-**States**:
-1. `monitoring` - Normal monitoring, current_model == initial_model
-2. `degraded` - Downgraded, monitoring for recovery
-3. `recovering` - Low resources sustained, counting samples (need 10)
-
-**Transitions**:
-- monitoring → degraded: on downgrade
-- degraded → recovering: when resources drop below recovery threshold
-- recovering → monitoring: after 10 consecutive low-resource samples + user approval
-- recovering → degraded: if resources spike again (reset counter)
-
-### 4. API Extensions
-**New Methods**:
-```python
-def set_model_level(self, level: str) -> bool:
-    \"\"\"
-    Switch model programmatically (for IPC integration)
-
-    Args:
-        level: Target model name (e.g., 'base', 'small')
-
-    Returns:
-        True if switch successful
-
-    Note: Validates model is in MODEL_SEQUENCE before switching
-    \"\"\"
-
-def get_downgrade_history(self) -> List[Dict[str, Any]]:
-    \"\"\"
-    Get downgrade history for troubleshooting
-
-    Returns:
-        List of {timestamp, old_model, new_model, reason}
-    \"\"\"
-```
-
-### 5. IPC Event Integration
-**Event Emission** (to Rust via stdout):
-```python
-def _emit_ipc_event(self, event_type: str, data: Dict[str, Any]) -> None:
-    event = {
-        "type": "event",
-        "version": "1.0",
-        "eventType": event_type,
-        "data": data
-    }
-    print(json.dumps(event), flush=True)
-```
-
-**Event Types**:
-- `model_downgrade`: {old_model, new_model, reason: "cpu_high_60s"|"memory_critical"}
-- `upgrade_proposal`: {current_model, proposed_model}
-- `recording_paused`: {reason: "tiny_insufficient"} (STT-REQ-006.11)
-
-### 6. Requirement Mapping
-**STT-REQ-006.7** (CPU 85% for 60s):
-- Current: Partial (`should_downgrade_cpu` checks duration)
-- Missing: CPU sample history, debounce
-
-**STT-REQ-006.8** (Memory 4GB immediate):
-- Current: Implemented (`should_downgrade_memory` returns 'base')
-- Note: Threshold adjusted to 2GB (app memory) from 4GB (system memory)
-
-**STT-REQ-006.9** (Seamless switching):
-- Current: Notification creation only
-- Missing: Coordination with WhisperSTTEngine for segment boundary
-
-**STT-REQ-006.10** (Recovery after 5min):
-- Current: `should_propose_upgrade` checks duration
-- Missing: Sample counting, state machine
-
-**STT-REQ-006.11** (Pause if tiny insufficient):
-- Current: Not implemented
-- Required: Check if tiny model still exceeds threshold → emit recording_paused
-
-### 7. Design Decisions
-**Memory Threshold Adjustment**:
-- Requirement uses system-wide memory (3GB/4GB)
-- Implementation uses app memory (RSS): 1.5GB/2.0GB
-- Rationale: Whisper model sizes (tiny: ~100MB, base: ~200MB, small: ~500MB, large: ~3GB)
-- App memory more reliable for model-specific decisions
-
-**Sample Interval**:
-- Requirement: Monitor every 30s (STT-NFR-001.6)
-- Implementation: Matches requirement
-- CPU 60s check: Need 2 consecutive high samples
-- Recovery 5min: Need 10 consecutive low samples
+Implementation (P13-PREP-001 完了 2025-10-20):
+- Hierarchical state machine: monitoring → degraded → recovering
+- Debounce logic: 60s minimum between downgrades
+- Recovery counter: 10 consecutive low-resource samples (5min @ 30s interval)
+- IPC integration: model_change events via IpcHandler.send_message()
 """
 
 import logging
@@ -182,26 +81,26 @@ class ResourceMonitor:
 
         logger.info("ResourceMonitor initialized with state machine")
 
-    async def set_model_level(self, level: int) -> str:
+    async def set_model_level(self, target_model: str) -> str:
         """
-        Programmatic model switching API (Phase 1.1).
+        Programmatic model switching API (Phase 1.1 - FIXED: string-based).
         
         Coordinates with WhisperSTTEngine to ensure state consistency.
         Emits IPC event via proper protocol channel.
         
         Args:
-            level: Model level (2=small, 1=base, 0=tiny)
+            target_model: Target model size ("tiny", "base", "small", "medium", "large-v3")
             
         Returns:
             str: Actual model size loaded (may differ due to bundled fallback)
             
         Raises:
-            ValueError: If stt_engine or ipc not configured
+            ValueError: If stt_engine/ipc not configured or invalid model size
             Exception: If model loading fails
             
         Example:
             >>> monitor = ResourceMonitor(stt_engine, ipc_handler)
-            >>> actual_model = await monitor.set_model_level(1)  # Request base
+            >>> actual_model = await monitor.set_model_level("base")
             >>> print(actual_model)  # "base" or fallback
         """
         if self.stt_engine is None:
@@ -209,9 +108,13 @@ class ResourceMonitor:
         if self.ipc is None:
             raise ValueError("ipc_handler not configured - cannot emit events")
         
-        # Map level to model size
-        model_map = {2: "small", 1: "base", 0: "tiny"}
-        target_model = model_map.get(level, "tiny")
+        # Validate model size against MODEL_SEQUENCE
+        valid_models = self.MODEL_SEQUENCE
+        if target_model not in valid_models:
+            raise ValueError(
+                f"Invalid model size '{target_model}'. "
+                f"Must be one of {valid_models}"
+            )
         
         old_model = self.current_model
         
@@ -231,11 +134,11 @@ class ResourceMonitor:
                     "old_model": old_model or "unknown",
                     "new_model": actual_model,
                     "reason": "manual_switch",
-                    "target_level": level
+                    "target_model": target_model
                 }
             })
             
-            logger.info(f"Model switched: {old_model} -> {actual_model} (level={level})")
+            logger.info(f"Model switched: {old_model} -> {actual_model} (target={target_model})")
             return actual_model
             
         except Exception as e:
@@ -797,6 +700,10 @@ class ResourceMonitor:
                 else:
                     if on_downgrade:
                         await on_downgrade(old_model, 'base')
+                        # Phase 1.1 FIX: Update state machine (指摘2対応)
+                        self.last_downgrade_timestamp = current_time
+                        self.monitoring_state = "degraded"
+                        self.recovery_sample_count = 0  # 指摘3対応: リカバリーカウンターリセット
                     # Reset CPU timer as we just downgraded
                     self.cpu_high_start_time = None
             else:
@@ -807,6 +714,10 @@ class ResourceMonitor:
                 # Don't update current_model here - let callback handle it after success
                 if new_model and on_downgrade:
                     await on_downgrade(old_model, new_model)
+                    # Phase 1.1 FIX: Update state machine (指摘2対応)
+                    self.last_downgrade_timestamp = current_time
+                    self.monitoring_state = "degraded"
+                    self.recovery_sample_count = 0  # 指摘3対応: リカバリーカウンターリセット
                 # Reset CPU timer as we just downgraded
                 self.cpu_high_start_time = None
 
@@ -829,6 +740,7 @@ class ResourceMonitor:
                         self.last_downgrade_timestamp = current_time
                         # Transition to degraded state
                         self.monitoring_state = "degraded"
+                        self.recovery_sample_count = 0  # 指摘3対応: リカバリーカウンターリセット
                     # Reset timer after downgrade
                     self.cpu_high_start_time = None
 

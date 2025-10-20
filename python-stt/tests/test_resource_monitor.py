@@ -670,6 +670,7 @@ class TestMonitoringLoop:
             # Set memory low enough to avoid memory-based downgrade (< 3GB)
             mock_mem.return_value.percent = 30
             mock_mem.return_value.used = 2.0 * (1024 ** 3)  # 2GB (< 3GB threshold)
+            mock_mem.return_value.available = 4 * (1024 ** 3)  # Phase 1.1: _update_state_machine needs available
 
             on_downgrade = AsyncMock()
 
@@ -747,6 +748,7 @@ class TestMonitoringLoop:
 
             mock_mem.return_value.percent = 92  # High percentage (for logging)
             mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB (critical, >= 4GB)
+            mock_mem.return_value.available = 0.5 * (1024 ** 3)  # Phase 1.1: _update_state_machine needs available
 
             on_downgrade = AsyncMock()
 
@@ -861,6 +863,7 @@ class TestMonitoringLoop:
 
             mock_mem.return_value.percent = 92
             mock_mem.return_value.used = 4.5 * (1024 ** 3)  # 4.5GB
+            mock_mem.return_value.available = 0.5 * (1024 ** 3)  # Phase 1.1: _update_state_machine needs available
 
             # Mock callback that fails
             async def failing_downgrade(old_model, new_model):

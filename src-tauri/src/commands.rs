@@ -700,6 +700,127 @@ pub async fn start_recording(
                                             );
                                             break;
                                         }
+                                        "model_change" => {
+                                            // Phase 1.3: Handle model_change event (P13-PREP-001)
+                                            // STT-REQ-006.9: Dynamic model switching notification
+
+                                            // Validate required fields (addressing external review)
+                                            let old_model = data.get("old_model")
+                                                .and_then(|v| v.as_str());
+                                            let new_model = data.get("new_model")
+                                                .and_then(|v| v.as_str());
+                                            let reason = data.get("reason")
+                                                .and_then(|v| v.as_str());
+
+                                            // CRITICAL: Validate schema compliance
+                                            if old_model.is_none() || new_model.is_none() || reason.is_none() {
+                                                log_error_details!(
+                                                    "commands::ipc_events",
+                                                    "model_change_invalid_schema",
+                                                    json!({
+                                                        "session": session_id_ref,
+                                                        "data": data,
+                                                        "missing_fields": {
+                                                            "old_model": old_model.is_none(),
+                                                            "new_model": new_model.is_none(),
+                                                            "reason": reason.is_none()
+                                                        }
+                                                    })
+                                                );
+
+                                                // Emit schema error to UI
+                                                let ws_server = websocket_server.lock().await;
+                                                if let Err(e) = ws_server.broadcast(
+                                                    WebSocketMessage::Error {
+                                                        message_id: format!("ws-{}",
+                                                            std::time::SystemTime::now()
+                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                .unwrap()
+                                                                .as_millis()),
+                                                        session_id: session_id_ref.to_string(),
+                                                        message: "モデル変更通知のデータ形式が不正です".to_string(),
+                                                        timestamp: std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap()
+                                                            .as_millis() as u64,
+                                                    }
+                                                ).await {
+                                                    log_error_details!(
+                                                        "commands::ipc_events",
+                                                        "broadcast_schema_error_failed",
+                                                        json!({
+                                                            "session": session_id_ref,
+                                                            "error": format!("{:?}", e)
+                                                        })
+                                                    );
+                                                }
+                                                // Continue processing despite schema error
+                                            } else {
+                                                // Schema valid - extract values safely
+                                                let old_model = old_model.unwrap();
+                                                let new_model = new_model.unwrap();
+                                                let reason = reason.unwrap();
+
+                                                log_info_details!(
+                                                    "commands::ipc_events",
+                                                    "model_change",
+                                                    json!({
+                                                        "session": session_id_ref,
+                                                        "old_model": old_model,
+                                                        "new_model": new_model,
+                                                        "reason": reason
+                                                    })
+                                                );
+
+                                                // STT-REQ-006.9: UI notification required
+                                                let notification_msg = format!(
+                                                    "モデル変更: {} → {} (理由: {})",
+                                                    old_model,
+                                                    new_model,
+                                                    match reason {
+                                                        "cpu_high" => "CPU負荷",
+                                                        "memory_high" => "メモリ不足",
+                                                        "memory_critical" => "メモリ緊急",
+                                                        "manual_switch" => "手動切り替え",
+                                                        _ => reason
+                                                    }
+                                                );
+
+                                                let ws_server = websocket_server.lock().await;
+                                                if let Err(e) = ws_server.broadcast(
+                                                    WebSocketMessage::Notification {
+                                                        message_id: format!("ws-{}",
+                                                            std::time::SystemTime::now()
+                                                                .duration_since(std::time::UNIX_EPOCH)
+                                                                .unwrap()
+                                                                .as_millis()),
+                                                        session_id: session_id_ref.to_string(),
+                                                        notification_type: "model_change".to_string(),
+                                                        message: notification_msg,
+                                                        timestamp: std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap()
+                                                            .as_millis() as u64,
+                                                        data: Some(json!({
+                                                            "old_model": old_model,
+                                                            "new_model": new_model,
+                                                            "reason": reason
+                                                        })),
+                                                    }
+                                                ).await {
+                                                    log_error_details!(
+                                                        "commands::ipc_events",
+                                                        "broadcast_model_change_failed",
+                                                        json!({
+                                                            "session": session_id_ref,
+                                                            "error": format!("{:?}", e)
+                                                        })
+                                                    );
+                                                }
+                                            }
+
+                                            // model_change is non-terminating - continue processing audio
+                                        }
                                         _ => {
                                             log_warn_details!(
                                                 "commands::ipc_events",

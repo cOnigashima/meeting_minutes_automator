@@ -70,6 +70,22 @@ pub enum WebSocketMessage {
         message: String,
         timestamp: u64,
     },
+
+    /// Notification message (STT-REQ-006.9: Model change, upgrade proposal, etc.)
+    #[serde(rename = "notification")]
+    Notification {
+        #[serde(rename = "messageId")]
+        message_id: String,
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "notificationType")]
+        notification_type: String,
+        message: String,
+        timestamp: u64,
+        /// Optional: Additional data (e.g., old_model, new_model, reason)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
+    },
 }
 
 type WsWriter = SplitSink<WebSocketStream<TcpStream>, Message>;
