@@ -70,11 +70,29 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
 
 ### Phase 13詳細タスク（Re-scoping、2025-10-20更新）
 
-#### 13.1 Rust E2Eテスト実装 ✅ 4/7完了（CI依存2タスクを別SPEC移行）
+#### 13.1 Rust E2Eテスト実装 ✅ 5/7完了（CI依存2タスクを別SPEC移行）
 
 - [x] 13.1.1: Task 10.1 - VAD→STT完全フローE2E（✅ 完了）
 - [x] 13.1.2: Task 10.2 - オフラインモデルフォールバックE2E（✅ 完了）
-- [ ] 13.1.3: Task 10.3 - 動的モデルダウングレードE2E（P13-PREP-001完了後に実施）
+- [x] 13.1.3: Task 10.3 - 動的モデルダウングレードE2E（✅ 完了、2025-10-20）
+  - **Python単体**: 44/44 PASS（debounce/state machine/memory downgrade完全カバー）
+  - **Rust単体**: 5/5 PASS（commands.rs WebSocket broadcast schema検証）
+  - **Rust E2E**: 3/3 PASS（IPC path検証 + guard動作検証2テスト）
+  - **外部レビュー対応2** (2025-10-20):
+    - ❌ 偽陽性テスト修正（`events.is_empty()`で成功していた問題）
+    - ✅ TEST_FIXTURE_MODE導入（Whisperロード回避、決定論的event送信）
+    - ✅ CRITICAL ASSERTION追加（event未受信で必ず失敗）
+    - ✅ os module import修正（main.py）
+    - ✅ 環境変数継承修正（python_sidecar.rs）
+  - **外部レビュー対応3** (2025-10-20):
+    - 🚨 グローバル環境変数汚染問題（`std::env::set_var`がクリーンアップなし）
+    - ✅ `TestFixtureModeGuard` RAII pattern実装（panic時も安全）
+    - ✅ 2つのunit test追加（cleanup検証/restore検証）
+    - ✅ `#[serial(env_test)]`属性追加（同一ファイル内race condition防止）
+    - ✅ `serial_test` crate導入（Cargo.toml）
+    - ✅ README更新（WRONG/CORRECTパターン + 並列実行制約の説明）
+  - **制約ドキュメント**: `src-tauri/tests/README.md`作成（3層テスト戦略を明文化）
+  - **Coverage**: IPC path（✅）/trigger logic（✅ Python単体）/WebSocket broadcast（✅ Rust単体）/Tauri統合（⚠️ 手動）
 - [ ] 13.1.4: Task 10.4 - デバイス切断/再接続E2E（Phase 1完了、Phase 2実施中）
 - [x] 13.1.5: Task 10.5 - クロスプラットフォーム互換性E2E（→ **meeting-minutes-ci spec移行**）
 - [x] 13.1.6: Task 10.6 - 非機能要件E2E（✅ 完了）

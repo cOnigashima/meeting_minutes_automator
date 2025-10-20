@@ -5,6 +5,8 @@
 **Status**: Active
 **Decision Authority**: Project Lead
 
+**Purpose**: Phase 13の公式スコープ定義書。本決定はMVP2ハンドオフ資料（`./MVP2-HANDOFF.md`）の前提であり、最新の残作業・ステータスは`./tasks.md`を唯一の運用原本とする。
+
 ---
 
 ## Executive Summary
@@ -33,12 +35,13 @@ Phase 13（検証負債解消）のスコープを再定義し、CI依存タス�
    - 現状: Rust beta 1.91.0使用、16件warning（脆弱性0件）
    - ブロッカー: Rust 1.85安定版リリース待ち（2025-11予定）
 
-#### **Phase 13残存タスク**（meeting-minutes-stt）
-1. **Task 10.3**: 動的モデルダウングレードE2E（3h）
-2. **Task 10.4**: デバイス切断/再接続E2E Phase 2（3-4h）
-3. **SEC-001/002/005**: macOS環境セキュリティ修正（完了済み）
-
----
+#### Phase 13で維持する作業（meeting-minutes-stt）
+- **Task 10.3**: 動的モデルダウングレードE2E  
+  - ✅ 2025-10-20時点で完了。再開が必要な場合は`./tasks.md`のPhase 13セクションを更新する。  
+- **Task 10.4**: デバイス切断/再接続E2E Phase 2  
+  - ⏳ Phase 2実装・自動再接続検証を継続。最新の作業メモと所要時間は`./tasks.md`に統合。  
+- **SEC-001/002/005**: macOS環境セキュリティ修正  
+  - ✅ 対象ファイル権限・証明書設定は完了済み。再発時は`./tasks.md`でトラッキング。  
 
 ## 2. Technical Rationale
 
@@ -95,58 +98,19 @@ Track 2 (meeting-minutes-ci):
 
 ## 3. Risk Analysis
 
-### 3.1 Identified Risks
+### 3.1 Key Risks（詳細な緩和策・最新状況は`./tasks.md`で追跡）
 
-#### **Risk 1**: CI未整備でのリリース判断
-**Description**: macOS単一プラットフォームでのMVP1リリース時、Windows/Linux動作保証なし
+- **macOS単一リリース判断**  
+  クロスプラットフォーム検証に先行してMVP1をmacOS限定で出荷する意思決定。リスクはユーザーベースの限定とRust依存アップデート待ち。  
+  - 対応: リリースノートで対象OSを明記し、CI spec完了後にv1.1でWindows/Linux対応をリリース。  
 
-**Likelihood**: High（CI整備が遅延する可能性）
-**Impact**: Medium（macOS限定リリースは技術的に可能だが、ユーザーベース制限）
+- **タスク分離による追跡性低下**  
+  Task 10.5/SEC-003/SEC-004が`meeting-minutes-ci`に移ることで進捗を見失う可能性。  
+  - 対応: 本Decision Recordで移行理由・日付を明示し、`meeting-minutes-ci`側のtasks.mdには「移管元: Phase 13」と記録する。隔週レビュー時に両specをクロスチェック。  
 
-**Mitigation Strategy**:
-1. **MVP1リリース範囲の明確化**
-   - 対象OS: **macOS only**（明示的に記載）
-   - リリースノート: "Windows/Linux support coming in v1.1"
-
-2. **段階的リリース計画**
-   - v1.0: macOS MVP1（Phase 13完了後）
-   - v1.1: クロスプラットフォーム対応（CI spec完了後）
-
-3. **リリース判定基準**（macOS MVP1）
-   - ✅ Phase 13完了（Task 10.3, 10.4）
-   - ✅ macOS環境で全テスト合格
-   - ✅ 2時間連続録音成功
-   - ✅ セキュリティ脆弱性0件（SEC-004除く、Rust 1.85待ち）
-
-#### **Risk 2**: タスク分離による追跡性低下
-**Description**: Task 10.5がCI specへ移動後、STT spec側で進捗確認困難
-
-**Likelihood**: Low
-**Impact**: Low（ドキュメント管理の問題）
-
-**Mitigation Strategy**:
-1. **Cross-Reference Maintenance**
-   - `meeting-minutes-stt/tasks.md`: 別SPEC移行タスクを明記
-   - `meeting-minutes-ci/tasks.md`: 移行元（STT spec）を記載
-
-2. **Bi-weekly Sync**
-   - 両specの進捗を隔週レビューで確認
-   - ブロッカー相互依存の早期検出
-
-#### **Risk 3**: CI整備遅延によるクロスプラットフォーム対応遅延
-**Description**: CI spec完了が遅延し、Windows/Linux対応が長期間未完
-
-**Likelihood**: Medium
-**Impact**: Medium（ユーザーベース拡大遅延）
-
-**Mitigation Strategy**:
-1. **CI Spec優先度設定**
-   - MVP2（Google Docs同期）と**同等優先度**で並行推進
-   - リソース配分: STT 50% / CI 30% / Docs 20%
-
-2. **MVP1.5マイルストーン**
-   - MVP1完了後、MVP2着手前に**CI整備スプリント**設定（1週間）
-   - 早期クロスプラットフォーム対応でリスク低減
+- **CI整備遅延**  
+  CI整備そのものが遅延するとWindows/Linux対応が後ろ倒しになる。  
+  - 対応: MVP2着手前にCIスプリント（MVP1.5）を設定し、リソース配分をSTT 50% / CI 30% / Docs 20%で固定する。  
 
 ---
 
@@ -169,6 +133,8 @@ Track 2 (meeting-minutes-ci):
   - **除外**: SEC-003（→ CI spec移行）
   - **除外**: SEC-004（→ CI spec移行）
 - [ ] macOS環境で全テスト合格（CI依存テスト除く）
+
+**現在の進捗サマリー（2025-10-20）**: Task 10.3完了・Task 10.4継続中・SEC-001/002/005完了。詳細ステータスは`./tasks.md`を参照し、そちらのみを更新対象とする。
 
 ### 4.2 meeting-minutes-ci Spec Completion Criteria (New)
 - [ ] CI/CD環境整備（GitHub Actions、クロスプラットフォームマトリックス）
@@ -242,6 +208,7 @@ Track 2 (meeting-minutes-ci):
 
 - **Related Specs**:
   - `.kiro/specs/meeting-minutes-stt/tasks.md`
+  - `.kiro/specs/meeting-minutes-stt/MVP2-HANDOFF.md`
   - `.kiro/specs/meeting-minutes-ci/spec.json`
 
 - **Related Requirements**:

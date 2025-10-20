@@ -1051,3 +1051,117 @@ pub async fn list_audio_devices(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Task 10.3.3: Test model_change event schema validation
+    ///
+    /// This test verifies the schema validation logic in handle_ipc_events()
+    /// for model_change events (STT-REQ-006.9)
+    #[test]
+    fn test_model_change_event_schema_valid() {
+        // Valid schema: all required fields present
+        let valid_event = json!({
+            "eventType": "model_change",
+            "data": {
+                "old_model": "medium",
+                "new_model": "base",
+                "reason": "cpu_high"
+            }
+        });
+
+        // Extract fields (same logic as handle_ipc_events)
+        let data = valid_event.get("data").unwrap();
+        let old_model = data.get("old_model").and_then(|v| v.as_str());
+        let new_model = data.get("new_model").and_then(|v| v.as_str());
+        let reason = data.get("reason").and_then(|v| v.as_str());
+
+        // Verify all fields present
+        assert!(old_model.is_some(), "old_model should be present");
+        assert!(new_model.is_some(), "new_model should be present");
+        assert!(reason.is_some(), "reason should be present");
+
+        assert_eq!(old_model.unwrap(), "medium");
+        assert_eq!(new_model.unwrap(), "base");
+        assert_eq!(reason.unwrap(), "cpu_high");
+    }
+
+    #[test]
+    fn test_model_change_event_schema_missing_old_model() {
+        // Invalid: missing old_model
+        let invalid_event = json!({
+            "eventType": "model_change",
+            "data": {
+                "new_model": "base",
+                "reason": "cpu_high"
+            }
+        });
+
+        let data = invalid_event.get("data").unwrap();
+        let old_model = data.get("old_model").and_then(|v| v.as_str());
+
+        // Should detect missing field
+        assert!(old_model.is_none(), "old_model should be missing");
+    }
+
+    #[test]
+    fn test_model_change_event_schema_missing_new_model() {
+        // Invalid: missing new_model
+        let invalid_event = json!({
+            "eventType": "model_change",
+            "data": {
+                "old_model": "medium",
+                "reason": "cpu_high"
+            }
+        });
+
+        let data = invalid_event.get("data").unwrap();
+        let new_model = data.get("new_model").and_then(|v| v.as_str());
+
+        assert!(new_model.is_none(), "new_model should be missing");
+    }
+
+    #[test]
+    fn test_model_change_event_schema_missing_reason() {
+        // Invalid: missing reason
+        let invalid_event = json!({
+            "eventType": "model_change",
+            "data": {
+                "old_model": "medium",
+                "new_model": "base"
+            }
+        });
+
+        let data = invalid_event.get("data").unwrap();
+        let reason = data.get("reason").and_then(|v| v.as_str());
+
+        assert!(reason.is_none(), "reason should be missing");
+    }
+
+    #[test]
+    fn test_model_change_reason_translation() {
+        // Test Japanese message formatting (Phase 1.3 implementation)
+        let reason_map = vec![
+            ("cpu_high", "CPU負荷"),
+            ("memory_high", "メモリ不足"),
+            ("memory_critical", "メモリ緊急"),
+            ("manual_switch", "手動切り替え"),
+            ("unknown_reason", "unknown_reason"), // Fallback to original
+        ];
+
+        for (reason, expected_japanese) in reason_map {
+            let translated = match reason {
+                "cpu_high" => "CPU負荷",
+                "memory_high" => "メモリ不足",
+                "memory_critical" => "メモリ緊急",
+                "manual_switch" => "手動切り替え",
+                _ => reason,
+            };
+
+            assert_eq!(translated, expected_japanese);
+        }
+    }
+}

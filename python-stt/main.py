@@ -14,6 +14,7 @@ Related Requirements:
 """
 
 import sys
+import os
 import asyncio
 import logging
 import time
@@ -680,6 +681,44 @@ async def main():
 
         # Phase 1.2: Set IPC handler in ResourceMonitor (for event emission)
         processor.resource_monitor.ipc = processor.ipc
+
+        # Task 10.3: TEST_FIXTURE_MODE for E2E testing without Whisper models
+        # This mode emits scripted model_change events for deterministic testing
+        if os.getenv("TEST_FIXTURE_MODE") == "1":
+            logger.info("TEST_FIXTURE_MODE enabled: Using scripted events (no Whisper loading)")
+
+            # Disable real STT engine
+            processor.stt_engine = None
+
+            # Send ready signal
+            await processor.ipc.send_message({
+                'type': 'ready',
+                'message': 'Python sidecar ready (TEST_FIXTURE_MODE)'
+            })
+            logger.info("TEST_FIXTURE_MODE: Ready signal sent")
+
+            # Wait for Rust to be ready to receive events
+            await asyncio.sleep(0.5)
+
+            # Emit scripted model_change event
+            import time
+            await processor.ipc.send_message({
+                'type': 'event',
+                'version': '1.0',
+                'eventType': 'model_change',
+                'data': {
+                    'old_model': 'medium',
+                    'new_model': 'base',
+                    'reason': 'cpu_high',
+                    'timestamp': int(time.time() * 1000)
+                }
+            })
+            logger.info("TEST_FIXTURE_MODE: model_change event emitted (medium → base, reason: cpu_high)")
+
+            # Keep sidecar alive for test verification
+            logger.info("TEST_FIXTURE_MODE: Sidecar running, waiting for shutdown...")
+            await processor.ipc.start()
+            return
 
         # CRITICAL: Initialize WhisperSTTEngine before sending ready signal
         # Without this, transcribe() will raise "WhisperSTTEngine not initialized"

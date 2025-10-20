@@ -67,7 +67,12 @@
       "Read(//opt/homebrew/Cellar/python@3.12/3.12.9/Frameworks/Python.framework/Versions/3.12/bin/**)",
       "Bash(curl:*)",
       "Bash(../python-stt/.venv/bin/python3:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(TEST_FIXTURE_MODE=1 python-stt/.venv/bin/python python-stt/main.py)",
+      "Bash(TEST_FIXTURE_MODE=1 gtimeout 5 python-stt/.venv/bin/python python-stt/main.py)",
+      "Bash(echo:*)",
+      "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v)",
+      "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v --tb=short)"
     ],
     "deny": [],
     "ask": []

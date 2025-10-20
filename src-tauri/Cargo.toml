@@ -53,3 +53,4 @@ num_cpus = "1.17.0"
 
 [dev-dependencies]
 tempfile = "3"
+serial_test = "3.2" # Task 10.3: Serialize tests that mutate global env vars

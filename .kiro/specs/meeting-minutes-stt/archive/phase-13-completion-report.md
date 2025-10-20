@@ -402,3 +402,11 @@ Phase 13（検証負債解消）の**実装可能タスクを完了**しまし�
 - `security-test-report.md` - SEC-001〜005詳細
 - `MVP2-HANDOFF.md` - MVP1→MVP2申し送り
 - `README.md` - 性能指標・後方互換性テスト結果
+
+---
+
+## Related Documents（2025-10-20追加）
+
+- `../phase-13-re-scoping-rationale.md` — Phase 13再スコープ決定記録
+- `../MVP2-HANDOFF.md` — 運用中の申し送り計画
+- `../tasks.md` — Phase 13残作業の最新ステータス原本

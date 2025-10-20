@@ -381,12 +381,15 @@ impl PythonSidecarManager {
 
         // Start Python process with unbuffered mode (-u flag)
         // BLOCK-005 Fix: Force line-buffered stdout to ensure ready signal is flushed
+        // Task 10.3: Inherit environment variables (including TEST_FIXTURE_MODE for E2E testing)
         let mut child = Command::new(&python_path)
             .arg("-u") // Unbuffered stdout/stderr (critical for IPC handshake)
             .arg(&script_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .env_clear() // Clear inherited env
+            .envs(std::env::vars()) // Re-add all current env vars (includes TEST_FIXTURE_MODE)
             .spawn()
             .map_err(|e| PythonSidecarError::StartupFailed(e.to_string()))?;
 
