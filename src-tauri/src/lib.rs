@@ -1,6 +1,7 @@
 // Meeting Minutes Automator - Main Library
 // Walking Skeleton (MVP0) - WebSocket Server Integration
 // MVP1 - Real STT Implementation
+// Task 10.4 Phase 2 - Device Reconnection
 
 #[macro_use]
 pub mod logger;
@@ -9,6 +10,7 @@ pub mod audio_device_adapter;
 pub mod commands;
 pub mod ipc_protocol;
 pub mod python_sidecar;
+pub mod reconnection_manager; // Task 10.4 Phase 2 - STT-REQ-004.11
 pub mod ring_buffer; // ADR-013: Phase 2 - Ring Buffer
 pub mod sidecar; // ADR-013: Phase 1 - Facade API
 pub mod state;
@@ -74,6 +76,16 @@ pub fn run() {
                 let device_arc = Arc::new(tokio::sync::Mutex::new(audio_device));
                 app_state.set_audio_device(device_arc);
 
+                // 2.5. Initialize audio event channel (MVP1 - STT-REQ-004.9/10/11)
+                let (audio_event_tx, audio_event_rx) = std::sync::mpsc::channel();
+                app_state.set_audio_event_channel(audio_event_tx, audio_event_rx);
+
+                // 2.6. Start monitoring audio device events
+                let app_clone = app_handle.clone();
+                tokio::spawn(async move {
+                    commands::monitor_audio_events(app_clone).await;
+                });
+
                 // 3. Start WebSocket server
                 let mut ws_server = WebSocketServer::new();
                 match ws_server.start().await {
@@ -103,6 +115,7 @@ pub fn run() {
             commands::stop_recording,
             commands::list_audio_devices,
             commands::get_whisper_models,
+            commands::cancel_reconnection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

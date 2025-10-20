@@ -1,10 +1,12 @@
 // Application State Management
 // Walking Skeleton (MVP0) - WebSocket Server Integration
 // MVP1 - Audio Device Event Management
+// Task 10.4 Phase 2 - Device Reconnection Management
 
 use crate::audio::FakeAudioDevice;
 use crate::audio_device_adapter::{AudioEventReceiver, AudioEventSender};
 use crate::python_sidecar::PythonSidecarManager;
+use crate::reconnection_manager::ReconnectionManager;
 use crate::websocket::WebSocketServer;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -45,6 +47,11 @@ pub struct AppState {
 
     /// Current recording session identifier (UUID v4)
     pub session_id: Mutex<Option<String>>,
+
+    /// Reconnection manager for audio device recovery
+    /// Task 10.4 Phase 2 - STT-REQ-004.11
+    /// Using tokio::sync::Mutex to allow .await across lock (Send requirement)
+    pub reconnection_manager: tokio::sync::Mutex<ReconnectionManager>,
 }
 
 impl AppState {
@@ -59,6 +66,7 @@ impl AppState {
             audio_event_rx: Mutex::new(None),
             ipc_event_tx: Mutex::new(None),
             session_id: Mutex::new(None),
+            reconnection_manager: tokio::sync::Mutex::new(ReconnectionManager::new()),
         }
     }
 

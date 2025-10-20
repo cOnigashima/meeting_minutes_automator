@@ -2,6 +2,7 @@
 // Walking Skeleton (MVP0) - Recording Commands Implementation
 // MVP1 - Audio Device Event Monitoring
 // Task 7.1.5: IPC Protocol Migration Support
+// Task 10.4 Phase 2: Auto-Reconnection
 
 use crate::audio::AudioDevice;
 use crate::audio_device_adapter::AudioDeviceEvent;
@@ -102,7 +103,7 @@ async fn start_ipc_reader_task(
 
 /// Monitor audio device events and notify UI
 /// MVP1 - STT-REQ-004.9/10/11
-async fn monitor_audio_events(app: AppHandle) {
+pub(crate) async fn monitor_audio_events(app: AppHandle) {
     let state = app.state::<AppState>();
 
     // Take the receiver (can only be done once)
@@ -189,35 +190,48 @@ async fn monitor_audio_events(app: AppHandle) {
                     );
                 }
 
-                // Stop recording automatically
-                // TODO: Implement auto-reconnect (STT-REQ-004.11)
+                // Auto-reconnect (STT-REQ-004.11) - Task 10.4 Phase 2 (Final Revision)
+                // Job-based architecture: short lock, independent task execution
                 {
                     let state = app.state::<AppState>();
-                    let is_recording = state.is_recording.lock().unwrap();
-                    if *is_recording {
-                        drop(is_recording);
-                        log_warn_details!(
+
+                    // Step 1: Complete cleanup of existing session
+                    if let Err(e) = stop_recording_internal(&state).await {
+                        log_error_details!(
                             "commands::audio_events",
-                            "auto_stop_on_disconnect",
-                            json!({ "device_id": device_id })
+                            "cleanup_on_disconnect_failed",
+                            json!({
+                                "device_id": device_id,
+                                "error": e
+                            })
                         );
-                        // Note: Actual stop will be triggered by frontend or timeout
                     }
+
+                    // Step 2: Start reconnection job (lock held for microseconds only)
+                    {
+                        let mut reconnection_mgr = state.reconnection_manager.lock().await;
+                        reconnection_mgr.start_job(device_id.clone(), app.clone());
+                    } // Lock released immediately
+
+                    log_info_details!(
+                        "commands::audio_events",
+                        "reconnection_job_started",
+                        json!({ "device_id": device_id })
+                    );
                 }
             }
         }
     }
 }
 
-/// Start recording command
-/// Starts FakeAudioDevice and processes audio data through Python sidecar
-/// Task 9.1: Accept device_id to honor user's device selection (STT-REQ-001.2)
-#[tauri::command]
-pub async fn start_recording(
-    app: AppHandle,
-    state: State<'_, AppState>,
+/// Internal helper for starting recording
+/// Used by start_recording command and reconnection logic
+/// Task 10.4 Phase 2: Reusable session initialization for device reconnection
+pub(crate) async fn start_recording_internal(
+    _app: &AppHandle,
+    state: &AppState,
     device_id: String,
-) -> Result<String, String> {
+) -> Result<(), String> {
     // Task 9.1: Validate and log selected device (STT-REQ-001.2)
     log_info_details!(
         "commands::recording",
@@ -261,16 +275,19 @@ pub async fn start_recording(
 
     // MVP1 TODO: Pass device_id to AudioDeviceAdapter::start_recording(device_id)
 
-    // Check if already recording
+    // Check if already recording (Task 10.4 Phase 2 - Permissive for reconnection)
     {
         let is_recording = state.is_recording.lock().unwrap();
         if *is_recording {
-            log_warn_details!(
+            log_info_details!(
                 "commands::recording",
-                "start_rejected_already_running",
-                json!({ "device_id": device_id })
+                "already_recording",
+                json!({
+                    "device_id": device_id,
+                    "reason": "reconnection_or_manual_restart"
+                })
             );
-            return Err("Already recording".to_string());
+            return Ok(()); // Treat as success (user protection)
         }
     }
 
@@ -892,13 +909,6 @@ pub async fn start_recording(
         return Err(error_msg);
     }
 
-    // Start monitoring audio device events - MVP1 STT-REQ-004.9/10/11
-    // Note: Event monitoring will start when CoreAudioAdapter is used (not FakeAudioDevice)
-    let app_clone = app.clone();
-    tokio::spawn(async move {
-        monitor_audio_events(app_clone).await;
-    });
-
     log_info_details!(
         "commands::recording",
         "started",
@@ -907,18 +917,31 @@ pub async fn start_recording(
             "device_id": device_id
         })
     );
+    Ok(())
+}
+
+/// Start recording command
+/// Starts FakeAudioDevice and processes audio data through Python sidecar
+/// Task 9.1: Accept device_id to honor user's device selection (STT-REQ-001.2)
+#[tauri::command]
+pub async fn start_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<String, String> {
+    start_recording_internal(&app, &state, device_id).await?;
     Ok("Recording started".to_string())
 }
 
-/// Stop recording command
-/// Stops FakeAudioDevice
-#[tauri::command]
-pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String> {
-    // Check if recording
+/// Internal helper for stopping recording
+/// Used by stop_recording command and reconnection logic
+/// Task 10.4 Phase 2: Reusable cleanup for device reconnection
+pub(crate) async fn stop_recording_internal(state: &AppState) -> Result<(), String> {
+    // Check if recording (silent return if already stopped)
     {
         let is_recording = state.is_recording.lock().unwrap();
         if !*is_recording {
-            return Err("Not recording".to_string());
+            return Ok(()); // Already stopped
         }
     }
 
@@ -933,7 +956,7 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
             .ok_or_else(|| "Audio device not initialized".to_string())?
     };
 
-    // Stop audio device
+    // Stop audio device (cleanup resources)
     let mut device = audio_device.lock().await;
     device.stop().map_err(|e| e.to_string())?;
 
@@ -953,7 +976,49 @@ pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String
             "device_id": selected_device
         })
     );
+    Ok(())
+}
+
+/// Stop recording command
+/// Stops FakeAudioDevice
+#[tauri::command]
+pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String> {
+    // Check if recording (return error if not recording)
+    {
+        let is_recording = state.is_recording.lock().unwrap();
+        if !*is_recording {
+            return Err("Not recording".to_string());
+        }
+    }
+
+    stop_recording_internal(&state).await?;
     Ok("Recording stopped".to_string())
+}
+
+/// Cancel ongoing reconnection attempts
+/// Task 10.4 Phase 2: User-initiated cancellation of auto-reconnect
+#[tauri::command]
+pub async fn cancel_reconnection(state: State<'_, AppState>) -> Result<String, String> {
+    let mut reconnection_mgr = state.reconnection_manager.lock().await;
+
+    if !reconnection_mgr.is_reconnecting() {
+        log_info_details!(
+            "commands::reconnection",
+            "cancel_no_job",
+            json!({})
+        );
+        return Ok("No reconnection in progress".to_string());
+    }
+
+    reconnection_mgr.cancel();
+
+    log_info_details!(
+        "commands::reconnection",
+        "cancelled_by_user",
+        json!({})
+    );
+
+    Ok("Reconnection cancelled".to_string())
 }
 
 /// Get available Whisper models and system resources
@@ -1054,7 +1119,6 @@ pub async fn list_audio_devices(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
 
     /// Task 10.3.3: Test model_change event schema validation

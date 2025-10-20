@@ -28,6 +28,7 @@ Kiro-style Spec Driven Development implementation using claude code slash comman
 - `meeting-minutes-ci`: [Infrastructure] GitHub Actions CI/CD - クロスプラットフォームテストマトリックス、コスト最適化戦略、自動リリース、セキュリティ/パフォーマンステスト（🔵 spec初期化完了）
 - `meeting-minutes-dev-quality`: [Infrastructure] Development Quality Assurance - 開発フロー標準化、自動ガード機構、一貫性チェック、ADR/要件ID検証（⚪ spec初期化完了）
 - `meeting-minutes-llm`: [MVP3] LLM要約 + UI - プロダクション準備（予定）
+- `ui-hub`: [Tooling] UI Hub - Penpot設計トークン→Style Dictionary→Storybook→MCPサーバの統合開発環境（⚪ spec初期化完了）
 
 ## Development Guidelines
 
