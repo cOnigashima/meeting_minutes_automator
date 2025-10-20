@@ -72,7 +72,8 @@
       "Bash(TEST_FIXTURE_MODE=1 gtimeout 5 python-stt/.venv/bin/python python-stt/main.py)",
       "Bash(echo:*)",
       "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v)",
-      "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v --tb=short)"
+      "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v --tb=short)",
+      "mcp__serena__check_onboarding_performed"
     ],
     "deny": [],
     "ask": []

@@ -77,10 +77,11 @@ async fn it_audio_to_python_ipc_flow() {
         match result {
             Ok(Ok(response)) => {
                 println!("✅ Received response {}: {:?}", i, response.get("type"));
-                assert_eq!(
-                    response.get("type").and_then(|v| v.as_str()),
-                    Some("transcription_result"),
-                    "Should receive transcription_result"
+                let msg_type = response.get("type").and_then(|v| v.as_str());
+                assert!(
+                    msg_type == Some("response") || msg_type == Some("event"),
+                    "Should receive 'response' or 'event' (ADR-003 new protocol), got {:?}",
+                    msg_type
                 );
             }
             Ok(Err(e)) => {

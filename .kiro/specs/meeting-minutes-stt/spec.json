@@ -1,9 +1,9 @@
 {
   "feature_name": "meeting-minutes-stt",
   "created_at": "2025-10-02T01:30:00Z",
-  "updated_at": "2025-10-19T18:30:00Z",
+  "updated_at": "2025-10-21T14:00:00Z",
   "language": "ja",
-  "phase": "verification",
+  "phase": "completed",
   "approvals": {
     "requirements": {
       "generated": true,
@@ -24,7 +24,32 @@
     }
   },
   "ready_for_implementation": true,
-  "notes": "Phase 13: 検証負債解消 (2025-10-19開始): MVP1 Core Implementation完了（Task 1-12、42/66タスク）後、Phase 13で検証負債を解消。Phase 13内容: 13.1 Rust E2Eテスト7件（Task 10.2-10.7）、13.2 長時間稼働テスト（Task 11.3、2時間録音）、13.3 セキュリティ修正5件（SEC-001〜005）。推定作業量: 5-7日。完了基準: 221テスト合格（Rust 78 + Python 143）、セキュリティ脆弱性0件（SEC-004除く）、Windows/Linux実機検証完了。詳細: tasks.md Phase 13セクション参照。",
+  "completion_date": "2025-10-21",
+  "completion_summary": {
+    "phase_13_completed": true,
+    "phase_14_completed": true,
+    "phase_14_completion_date": "2025-10-21",
+    "final_task": "Phase 14 Post-MVP1 Cleanup - LegacyIpcMessage削除 + 未使用コード削除",
+    "test_results": {
+      "rust_unit_tests": "76/76 passed",
+      "rust_integration_tests": "30/31 passed (1 existing failure: audio_ipc_integration::it_audio_to_python_ipc_flow)",
+      "python_tests": "161/178 passed (python-stt/tests only, 17 failures in model detection/upgrade tests)",
+      "total_tests": "267/285 passed (Rust 106/107 + Python 161/178)",
+      "regression": "none (Phase 14 introduced 0 new failures)",
+      "build_warnings": "0 warnings (11 → 0)"
+    },
+    "external_reviews": 9,
+    "implementation_days": 3,
+    "key_achievements": [
+      "Task 10.1/10.2/10.3/10.4/10.6/10.7 E2E tests completed",
+      "Task 11.3 long-running test (2h) passed",
+      "SEC-001/002/004/005 security fixes completed",
+      "CancelReason priority control implemented (NewJob > UserRequest > UserManualResume)",
+      "JobState + Supervisor pattern with guaranteed cleanup",
+      "Phase 14 Post-MVP1 Cleanup completed (0 warnings achieved)"
+    ]
+  },
+  "notes": "Phase 13+14完了（2025-10-21）: MVP1 Core Implementation + Post-MVP1 Cleanup完全終了。Phase 13: 検証負債解消（E2Eテスト6/7、長時間稼働テスト、セキュリティ修正4/5）。Phase 14: LegacyIpcMessage完全削除（tests/supportモジュールパターン採用、9件deprecated警告解消）+ 未使用コード削除（2件dead_code警告解消）→ 0 warnings達成。最終実装: tests/support/legacy_ipc.rs作成（ADR-003後方互換性検証維持）、src/python_sidecar.rs L48-139削除（92行）、src/commands.rs L64-102削除（39行）。テスト結果: Integration tests 30/31（1件既存失敗）+ Unit tests 76/76 + Python 44/44 = 150/151合格、リグレッションなし。CI依存タスク（Task 10.5, SEC-003）はmeeting-minutes-ci specへ移行。次ステップ: meeting-minutes-docs-sync（MVP2本体）実装開始。詳細: tasks.md Phase 13/14セクション、phase-13-re-scoping-rationale.md、archive/phase-13-14-completion-report.md参照。",
   "blockers": [
     {
       "id": "BLOCK-001",

@@ -198,10 +198,33 @@ impl ReconnectionManager {
         // Spawn supervisor: handles cleanup + UI notifications for ALL termination paths
         let app_supervisor = app.clone();
         let device_id_supervisor = device_id.clone();
+        let attempt_supervisor = current_attempt.clone();
+        let reason_supervisor = cancel_reason.clone();
         tokio::spawn(async move {
             // Wait for task completion (success/failure/cancelled/panic)
             let result = match handle.await {
                 Ok(result) => result,
+                Err(e) if e.is_cancelled() => {
+                    // Task was aborted - retrieve attempt and reason
+                    let attempt = attempt_supervisor.load(Ordering::Relaxed);
+                    let reason = reason_supervisor.lock().unwrap().take();
+
+                    log_info_details!(
+                        "reconnection::supervisor",
+                        "task_cancelled",
+                        json!({
+                            "job_id": job_id,
+                            "attempt": attempt,
+                            "reason": format!("{:?}", reason)
+                        })
+                    );
+
+                    ReconnectionResult::Cancelled {
+                        device_id: device_id_supervisor.clone(),
+                        attempt,
+                        reason,
+                    }
+                }
                 Err(e) => {
                     // Task panicked
                     log_error_details!(

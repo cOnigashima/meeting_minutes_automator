@@ -3,11 +3,14 @@
 // Task 7.2: Version compatibility checking (STT-REQ-007.6)
 // Requirements: STT-REQ-007.1, STT-REQ-007.2, STT-REQ-007.4, STT-REQ-007.6, ADR-003
 
+#[path = "support/mod.rs"]
+mod support;
+
+use support::LegacyIpcMessage;
 use meeting_minutes_automator_lib::ipc_protocol::{
     check_version_compatibility, IpcMessage, TranscriptionResult, VersionCompatibility,
     PROTOCOL_VERSION,
 };
-use meeting_minutes_automator_lib::python_sidecar::LegacyIpcMessage;
 use serde_json::json;
 
 /// Test: New IPC format roundtrip (Rust ↔ JSON ↔ Rust)

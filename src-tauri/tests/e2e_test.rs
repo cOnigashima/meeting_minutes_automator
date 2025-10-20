@@ -1,5 +1,8 @@
 // E2E Integration Tests for Walking Skeleton (MVP0)
 
+#[path = "support/mod.rs"]
+mod support;
+
 #[cfg(test)]
 mod e2e_tests {
 
@@ -212,7 +215,7 @@ mod e2e_tests {
     #[test]
     #[allow(deprecated)]
     fn test_message_type_definitions() {
-        use meeting_minutes_automator_lib::python_sidecar::LegacyIpcMessage;
+        use super::support::LegacyIpcMessage;
         use meeting_minutes_automator_lib::websocket::WebSocketMessage;
         use serde_json;
 

@@ -14,7 +14,6 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::broadcast;
 use uuid::Uuid;
 
 static LOG_MASK_SALT: Lazy<String> = Lazy::new(|| {
@@ -61,44 +60,448 @@ fn extract_extended_fields(
     (confidence, language, processing_time_ms)
 }
 
-/// Global IPC event reader task (spawned once at startup)
-/// Solves deadlock: single reader distributes events to all listeners via broadcast channel
-/// Related: STT-REQ-007 (Event Stream Protocol deadlock fix)
+/// Background IPC event reader task (ADR-013: Full-Duplex IPC)
+/// Requirement: STT-REQ-007 (non-blocking event stream)
+///
+/// This task runs independently from audio chunk submission, preventing deadlock
+/// on long utterances where Python cannot emit speech_end until it receives more audio.
+///
+/// Previous bug (Phase 14 Post-Cleanup): Removed this task, causing Mutex to be held
+/// during receive_message().await, blocking subsequent audio chunk sends.
 async fn start_ipc_reader_task(
     python_sidecar: Arc<tokio::sync::Mutex<crate::python_sidecar::PythonSidecarManager>>,
-    event_tx: broadcast::Sender<serde_json::Value>,
+    _app: tauri::AppHandle,
+    session_id: String,
+    websocket_server: Arc<tokio::sync::Mutex<crate::websocket::WebSocketServer>>,
 ) {
     tokio::spawn(async move {
         loop {
-            // Acquire mutex ONLY for receive, then immediately drop
-            let event_result = {
+            // Narrow mutex scope: acquire only for receive, release immediately
+            let response = {
                 let mut sidecar = python_sidecar.lock().await;
-                sidecar.receive_message().await
-            }; // Mutex dropped here
-
-            match event_result {
-                Ok(event) => {
-                    // Broadcast to all subscribers (non-blocking)
-                    if let Err(e) = event_tx.send(event.clone()) {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    sidecar.receive_message(),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
                         log_warn_details!(
-                            "ipc::reader",
-                            "broadcast_failed",
-                            json!({ "error": format!("{:?}", e) })
+                            "commands::ipc_reader",
+                            "receive_timeout",
+                            json!({
+                                "session": session_id,
+                                "timeout_ms": 5000
+                            })
                         );
+                        break; // Exit task on timeout
+                    }
+                }
+                // Mutex dropped here
+            };
+
+            match response {
+                Ok(response) => {
+                    // Parse IPC message
+                    let msg = match serde_json::from_value::<ProtocolMessage>(response.clone()) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            log_error_details!(
+                                "commands::ipc_reader",
+                                "parse_ipc_failed",
+                                json!({
+                                    "session": session_id,
+                                    "error": format!("{:?}", e)
+                                })
+                            );
+                            break;
+                        }
+                    };
+
+                    // Version compatibility check
+                    match msg.check_version_compatibility() {
+                        VersionCompatibility::MajorMismatch { received, expected } => {
+                            log_error_details!(
+                                "commands::ipc_reader",
+                                "version_major_mismatch",
+                                json!({
+                                    "session": session_id,
+                                    "received": received,
+                                    "expected": expected
+                                })
+                            );
+
+                            // Send error response to Python
+                            let error_response = ProtocolMessage::Error {
+                                id: msg.id().to_string(),
+                                version: PROTOCOL_VERSION.to_string(),
+                                error_code: "VERSION_MISMATCH_MAJOR".to_string(),
+                                error_message: format!(
+                                    "Major version mismatch: received={}, expected={}",
+                                    received, expected
+                                ),
+                                recoverable: false,
+                            };
+
+                            if let Ok(json) = serde_json::to_value(&error_response) {
+                                let mut sidecar = python_sidecar.lock().await;
+                                let _ = sidecar.send_message(json).await;
+                            }
+                            break;
+                        }
+                        VersionCompatibility::MinorMismatch { received, expected } => {
+                            log_warn_details!(
+                                "commands::ipc_reader",
+                                "version_minor_mismatch",
+                                json!({
+                                    "session": session_id,
+                                    "received": received,
+                                    "expected": expected
+                                })
+                            );
+                            // Continue processing
+                        }
+                        VersionCompatibility::Malformed { received } => {
+                            log_error_details!(
+                                "commands::ipc_reader",
+                                "version_malformed",
+                                json!({
+                                    "session": session_id,
+                                    "received": received.clone()
+                                })
+                            );
+
+                            let error_response = ProtocolMessage::Error {
+                                id: msg.id().to_string(),
+                                version: PROTOCOL_VERSION.to_string(),
+                                error_code: "VERSION_MALFORMED".to_string(),
+                                error_message: format!("Malformed version string: {}", received),
+                                recoverable: false,
+                            };
+
+                            if let Ok(json) = serde_json::to_value(&error_response) {
+                                let mut sidecar = python_sidecar.lock().await;
+                                let _ = sidecar.send_message(json).await;
+                            }
+                            break;
+                        }
+                        VersionCompatibility::Compatible => {
+                            // Continue normally
+                        }
+                    }
+
+                    // Handle events (same logic as before, extracted for brevity)
+                    let session_id_ref = session_id.as_str();
+                    match msg {
+                        ProtocolMessage::Event {
+                            event_type, data, ..
+                        } => {
+                            handle_ipc_event(
+                                &event_type,
+                                &data,
+                                session_id_ref,
+                                &websocket_server,
+                            )
+                            .await;
+                        }
+                        ProtocolMessage::Error { error_message, .. } => {
+                            log_error_details!(
+                                "commands::ipc_reader",
+                                "python_sidecar_error",
+                                json!({
+                                    "session": session_id_ref,
+                                    "message": error_message
+                                })
+                            );
+                            break;
+                        }
+                        _ => {
+                            log_warn_details!(
+                                "commands::ipc_reader",
+                                "unexpected_message_type",
+                                json!({
+                                    "session": session_id_ref,
+                                    "message": msg
+                                })
+                            );
+                            break;
+                        }
                     }
                 }
                 Err(e) => {
-                    log_warn_details!(
-                        "ipc::reader",
-                        "receive_error",
-                        json!({ "error": format!("{:?}", e) })
+                    log_error_details!(
+                        "commands::ipc_reader",
+                        "receive_event_failed",
+                        json!({
+                            "session": session_id,
+                            "error": format!("{:?}", e)
+                        })
                     );
-                    // Don't break - Python may recover
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    break;
                 }
             }
         }
     });
+}
+
+/// Helper function to handle IPC events (extracted from inline logic)
+/// Reduces code duplication between old audio callback loop and new background reader
+async fn handle_ipc_event(
+    event_type: &str,
+    data: &serde_json::Value,
+    session_id: &str,
+    websocket_server: &Arc<tokio::sync::Mutex<crate::websocket::WebSocketServer>>,
+) {
+    match event_type {
+        "speech_start" => {
+            let request_id = request_id_from(data).unwrap_or("unknown");
+            log_info_details!(
+                "commands::ipc_events",
+                "speech_start",
+                json!({
+                    "session": session_id,
+                    "request": request_id
+                })
+            );
+        }
+        "partial_text" => {
+            let request_id = request_id_from(data).unwrap_or("unknown");
+            if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                let masked = mask_text(text);
+                log_info_details!(
+                    "commands::ipc_events",
+                    "partial_text",
+                    json!({
+                        "session": session_id,
+                        "request": request_id,
+                        "text_masked": masked
+                    })
+                );
+
+                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object()
+                {
+                    extract_extended_fields(obj)
+                } else {
+                    (None, None, None)
+                };
+
+                let ws_message = WebSocketMessage::Transcription {
+                    message_id: format!(
+                        "ws-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    ),
+                    session_id: session_id.to_string(),
+                    text: text.to_string(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64,
+                    is_partial: Some(true),
+                    confidence,
+                    language,
+                    processing_time_ms,
+                };
+
+                let ws_server = websocket_server.lock().await;
+                if let Err(e) = ws_server.broadcast(ws_message).await {
+                    log_error_details!(
+                        "commands::ipc_events",
+                        "broadcast_partial_failed",
+                        json!({
+                            "session": session_id,
+                            "request": request_id,
+                            "error": format!("{:?}", e)
+                        })
+                    );
+                }
+            }
+        }
+        "final_text" => {
+            let request_id = request_id_from(data).unwrap_or("unknown");
+            if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                let masked = mask_text(text);
+                log_info_details!(
+                    "commands::ipc_events",
+                    "final_text",
+                    json!({
+                        "session": session_id,
+                        "request": request_id,
+                        "text_masked": masked
+                    })
+                );
+
+                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object()
+                {
+                    extract_extended_fields(obj)
+                } else {
+                    (None, None, None)
+                };
+
+                let ws_message = WebSocketMessage::Transcription {
+                    message_id: format!(
+                        "ws-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    ),
+                    session_id: session_id.to_string(),
+                    text: text.to_string(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64,
+                    is_partial: Some(false),
+                    confidence,
+                    language,
+                    processing_time_ms,
+                };
+
+                let ws_server = websocket_server.lock().await;
+                if let Err(e) = ws_server.broadcast(ws_message).await {
+                    log_error_details!(
+                        "commands::ipc_events",
+                        "broadcast_final_failed",
+                        json!({
+                            "session": session_id,
+                            "request": request_id,
+                            "error": format!("{:?}", e)
+                        })
+                    );
+                }
+            }
+        }
+        "speech_end" => {
+            let request_id = request_id_from(data).unwrap_or("unknown");
+            log_info_details!(
+                "commands::ipc_events",
+                "speech_end",
+                json!({
+                    "session": session_id,
+                    "request": request_id
+                })
+            );
+        }
+        "no_speech" => {
+            let request_id = request_id_from(data).unwrap_or("unknown");
+            log_info_details!(
+                "commands::ipc_events",
+                "no_speech",
+                json!({
+                    "session": session_id,
+                    "request": request_id
+                })
+            );
+        }
+        "model_change" => {
+            // Validate required fields
+            let old_model = data.get("old_model").and_then(|v| v.as_str());
+            let new_model = data.get("new_model").and_then(|v| v.as_str());
+            let reason = data.get("reason").and_then(|v| v.as_str());
+
+            if old_model.is_none() || new_model.is_none() || reason.is_none() {
+                log_error_details!(
+                    "commands::ipc_events",
+                    "model_change_invalid_schema",
+                    json!({
+                        "session": session_id,
+                        "data": data,
+                        "missing_fields": {
+                            "old_model": old_model.is_none(),
+                            "new_model": new_model.is_none(),
+                            "reason": reason.is_none()
+                        }
+                    })
+                );
+
+                let ws_server = websocket_server.lock().await;
+                let _ = ws_server
+                    .broadcast(WebSocketMessage::Error {
+                        message_id: format!(
+                            "ws-{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis()
+                        ),
+                        session_id: session_id.to_string(),
+                        message: "モデル変更通知のデータ形式が不正です".to_string(),
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() as u64,
+                    })
+                    .await;
+            } else {
+                let old_model = old_model.unwrap();
+                let new_model = new_model.unwrap();
+                let reason = reason.unwrap();
+
+                log_info_details!(
+                    "commands::ipc_events",
+                    "model_change",
+                    json!({
+                        "session": session_id,
+                        "old_model": old_model,
+                        "new_model": new_model,
+                        "reason": reason
+                    })
+                );
+
+                let notification_msg = format!(
+                    "モデル変更: {} → {} (理由: {})",
+                    old_model,
+                    new_model,
+                    match reason {
+                        "cpu_high" => "CPU負荷",
+                        "memory_high" => "メモリ不足",
+                        "memory_critical" => "メモリ緊急",
+                        "manual_switch" => "手動切り替え",
+                        _ => reason,
+                    }
+                );
+
+                let ws_server = websocket_server.lock().await;
+                let _ = ws_server
+                    .broadcast(WebSocketMessage::Notification {
+                        message_id: format!(
+                            "ws-{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis()
+                        ),
+                        session_id: session_id.to_string(),
+                        notification_type: "model_change".to_string(),
+                        message: notification_msg,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() as u64,
+                        data: Some(json!({
+                            "old_model": old_model,
+                            "new_model": new_model,
+                            "reason": reason
+                        })),
+                    })
+                    .await;
+            }
+        }
+        _ => {
+            log_warn_details!(
+                "commands::ipc_events",
+                "unknown_event_type",
+                json!({
+                    "session": session_id,
+                    "event_type": event_type
+                })
+            );
+        }
+    }
 }
 
 /// Monitor audio device events and notify UI
@@ -327,6 +730,22 @@ pub(crate) async fn start_recording_internal(
         *is_recording = true;
     }
 
+    // Start background IPC reader task (ADR-013: Full-Duplex IPC)
+    // This task runs independently from audio chunk submission, preventing deadlock
+    start_ipc_reader_task(
+        Arc::clone(&python_sidecar),
+        _app.clone(),
+        session_id.clone(),
+        Arc::clone(&websocket_server),
+    )
+    .await;
+
+    log_info_details!(
+        "commands::recording",
+        "ipc_reader_started",
+        json!({ "session": session_id })
+    );
+
     // Clone for callback closure
     let python_sidecar_clone = Arc::clone(&python_sidecar);
     let websocket_server_clone = Arc::clone(&websocket_server);
@@ -342,15 +761,16 @@ pub(crate) async fn start_recording_internal(
 
             // Spawn async task to handle IPC communication
             tokio::spawn(async move {
-                // CRITICAL FIX: Narrow mutex scope to prevent deadlock on long utterances
-                // Previous bug: Held mutex from send_message through entire receive loop,
-                // blocking subsequent audio chunks from being sent. This prevented Python
-                // from receiving later frames needed to detect speech_end, causing permanent deadlock.
-                // Fix: Release mutex immediately after send, re-acquire for each receive.
-                // Requirement: STT-REQ-007 (non-blocking event stream)
+                // ADR-013: Full-Duplex IPC design
+                // Audio callback is responsible ONLY for sending audio data.
+                // All IPC responses are handled by start_ipc_reader_task running in the background.
+                // This prevents deadlock on long utterances where Python waits for more audio
+                // before emitting speech_end.
+
+                // Suppress unused warning: websocket_server is cloned for future use
+                let _ = websocket_server;
 
                 // Task 7.1.6: Use event stream protocol (STT-REQ-007.3)
-                // Python側がprocess_audio_streamに対応済み（2025-10-13）
                 let message = ProtocolMessage::Request {
                     id: format!(
                         "audio-{}",
@@ -380,6 +800,7 @@ pub(crate) async fn start_recording_internal(
                 };
 
                 // Send message with minimal mutex hold time
+                // Responses are handled by the background IPC reader task
                 {
                     let mut sidecar = python_sidecar.lock().await;
                     if let Err(e) = sidecar.send_message(message_json).await {
@@ -394,498 +815,6 @@ pub(crate) async fn start_recording_internal(
                         return;
                     }
                     // Mutex dropped here - other audio chunks can now send frames
-                }
-
-                // Task 7.1.6: Receive multiple events (speech_start, partial_text, final_text, speech_end)
-                // Loop until speech_end or error
-                //
-                // REMAINING ISSUE: MutexGuard is held across .await even within {}
-                // This still blocks other chunks from sending. Proper fix requires
-                // dedicated background receiver task (see ADR-XXX).
-                // Current mitigation: 5-second timeout to prevent permanent deadlock.
-                loop {
-                    // WARNING: This still holds mutex during await, despite {} block
-                    let response = {
-                        let mut sidecar = python_sidecar.lock().await;
-
-                        // Add timeout to prevent permanent deadlock
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(5),
-                            sidecar.receive_message(),
-                        )
-                        .await
-                        {
-                            Ok(result) => result,
-                            Err(_) => {
-                                log_warn_details!(
-                                    "commands::recording",
-                                    "sidecar_receive_timeout",
-                                    json!({
-                                        "session": session_id_handle.as_str(),
-                                        "timeout_ms": 5000
-                                    })
-                                );
-                                break;
-                            }
-                        }
-                        // Mutex dropped here
-                    };
-
-                    match response {
-                        Ok(response) => {
-                            // Parse IPC message
-                            let msg =
-                                match serde_json::from_value::<ProtocolMessage>(response.clone()) {
-                                    Ok(m) => m,
-                                    Err(e) => {
-                                        log_error_details!(
-                                            "commands::recording",
-                                            "parse_ipc_failed",
-                                            json!({
-                                                "session": session_id_handle.as_str(),
-                                                "error": format!("{:?}", e)
-                                            })
-                                        );
-                                        break;
-                                    }
-                                };
-
-                            // Task 7.2: Check version compatibility (STT-REQ-007.6)
-                            match msg.check_version_compatibility() {
-                                VersionCompatibility::MajorMismatch { received, expected } => {
-                                    log_error_details!(
-                                        "commands::recording",
-                                        "ipc_version_major_mismatch",
-                                        json!({
-                                            "session": session_id_handle.as_str(),
-                                            "received": received,
-                                            "expected": expected
-                                        })
-                                    );
-
-                                    // P0 FIX: Send error response to Python before breaking
-                                    // STT-REQ-007.6: "エラー応答を返し、通信を拒否"
-                                    let error_response = ProtocolMessage::Error {
-                                        id: msg.id().to_string(),
-                                        version: PROTOCOL_VERSION.to_string(),
-                                        error_code: "VERSION_MISMATCH_MAJOR".to_string(),
-                                        error_message: format!(
-                                            "Major version mismatch: received={}, expected={}",
-                                            received, expected
-                                        ),
-                                        recoverable: false,
-                                    };
-
-                                    if let Ok(json) = serde_json::to_value(&error_response) {
-                                        let mut sidecar = python_sidecar.lock().await;
-                                        if let Err(e) = sidecar.send_message(json).await {
-                                            log_error_details!(
-                                                "commands::recording",
-                                                "send_version_error_failed",
-                                                json!({
-                                                    "session": session_id_handle.as_str(),
-                                                    "error": format!("{:?}", e)
-                                                })
-                                            );
-                                        }
-                                    }
-
-                                    // Reject communication - exit loop
-                                    break;
-                                }
-                                VersionCompatibility::MinorMismatch { received, expected } => {
-                                    log_warn_details!(
-                                        "commands::recording",
-                                        "ipc_version_minor_mismatch",
-                                        json!({
-                                            "session": session_id_handle.as_str(),
-                                            "received": received,
-                                            "expected": expected
-                                        })
-                                    );
-                                    // Continue processing with backward compatibility
-                                }
-                                VersionCompatibility::Malformed { received } => {
-                                    log_error_details!(
-                                        "commands::recording",
-                                        "ipc_version_malformed",
-                                        json!({
-                                            "session": session_id_handle.as_str(),
-                                            "received": received.clone()
-                                        })
-                                    );
-
-                                    // P0 FIX: Send error response to Python before breaking
-                                    // STT-REQ-007.6: "エラー応答を返し、通信を拒否"
-                                    let error_response = ProtocolMessage::Error {
-                                        id: msg.id().to_string(),
-                                        version: PROTOCOL_VERSION.to_string(),
-                                        error_code: "VERSION_MALFORMED".to_string(),
-                                        error_message: format!(
-                                            "Malformed version string: {}",
-                                            received
-                                        ),
-                                        recoverable: false,
-                                    };
-
-                                    if let Ok(json) = serde_json::to_value(&error_response) {
-                                        let mut sidecar = python_sidecar.lock().await;
-                                        if let Err(e) = sidecar.send_message(json).await {
-                                            log_error_details!(
-                                                "commands::recording",
-                                                "send_malformed_version_error_failed",
-                                                json!({
-                                                    "session": session_id_handle.as_str(),
-                                                    "error": format!("{:?}", e)
-                                                })
-                                            );
-                                        }
-                                    }
-
-                                    // Reject communication - exit loop
-                                    break;
-                                }
-                                VersionCompatibility::Compatible => {
-                                    // Version is compatible - continue normally
-                                }
-                            }
-
-                            let session_id_ref = session_id_handle.as_ref();
-                            match msg {
-                                ProtocolMessage::Event {
-                                    event_type, data, ..
-                                } => {
-                                    match event_type.as_str() {
-                                        "speech_start" => {
-                                            let request_id =
-                                                request_id_from(&data).unwrap_or("unknown");
-                                            log_info_details!(
-                                                "commands::ipc_events",
-                                                "speech_start",
-                                                json!({
-                                                    "session": session_id_ref,
-                                                    "request": request_id
-                                                })
-                                            );
-                                            // TODO: Emit to frontend if needed
-                                        }
-                                        "partial_text" => {
-                                            let request_id =
-                                                request_id_from(&data).unwrap_or("unknown");
-                                            if let Some(text) =
-                                                data.get("text").and_then(|v| v.as_str())
-                                            {
-                                                let masked = mask_text(text);
-                                                log_info_details!(
-                                                    "commands::ipc_events",
-                                                    "partial_text",
-                                                    json!({
-                                                        "session": session_id_ref,
-                                                        "request": request_id,
-                                                        "text_masked": masked
-                                                    })
-                                                );
-
-                                                let (confidence, language, processing_time_ms) =
-                                                    if let Some(obj) = data.as_object() {
-                                                        extract_extended_fields(obj)
-                                                    } else {
-                                                        (None, None, None)
-                                                    };
-
-                                                let ws_message = WebSocketMessage::Transcription {
-                                                    message_id: format!(
-                                                        "ws-{}",
-                                                        std::time::SystemTime::now()
-                                                            .duration_since(std::time::UNIX_EPOCH)
-                                                            .unwrap()
-                                                            .as_millis()
-                                                    ),
-                                                    session_id: session_id_ref.to_string(),
-                                                    text: text.to_string(),
-                                                    timestamp: std::time::SystemTime::now()
-                                                        .duration_since(std::time::UNIX_EPOCH)
-                                                        .unwrap()
-                                                        .as_millis()
-                                                        as u64,
-                                                    is_partial: Some(true),
-                                                    confidence,
-                                                    language,
-                                                    processing_time_ms,
-                                                };
-
-                                                let ws_server = websocket_server.lock().await;
-                                                if let Err(e) =
-                                                    ws_server.broadcast(ws_message).await
-                                                {
-                                                    log_error_details!(
-                                                        "commands::ipc_events",
-                                                        "broadcast_partial_failed",
-                                                        json!({
-                                                            "session": session_id_ref,
-                                                            "request": request_id,
-                                                            "error": format!("{:?}", e)
-                                                        })
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        "final_text" => {
-                                            let request_id =
-                                                request_id_from(&data).unwrap_or("unknown");
-                                            if let Some(text) =
-                                                data.get("text").and_then(|v| v.as_str())
-                                            {
-                                                let masked = mask_text(text);
-                                                log_info_details!(
-                                                    "commands::ipc_events",
-                                                    "final_text",
-                                                    json!({
-                                                        "session": session_id_ref,
-                                                        "request": request_id,
-                                                        "text_masked": masked
-                                                    })
-                                                );
-
-                                                let (confidence, language, processing_time_ms) =
-                                                    if let Some(obj) = data.as_object() {
-                                                        extract_extended_fields(obj)
-                                                    } else {
-                                                        (None, None, None)
-                                                    };
-
-                                                let ws_message = WebSocketMessage::Transcription {
-                                                    message_id: format!(
-                                                        "ws-{}",
-                                                        std::time::SystemTime::now()
-                                                            .duration_since(std::time::UNIX_EPOCH)
-                                                            .unwrap()
-                                                            .as_millis()
-                                                    ),
-                                                    session_id: session_id_ref.to_string(),
-                                                    text: text.to_string(),
-                                                    timestamp: std::time::SystemTime::now()
-                                                        .duration_since(std::time::UNIX_EPOCH)
-                                                        .unwrap()
-                                                        .as_millis()
-                                                        as u64,
-                                                    is_partial: Some(false),
-                                                    confidence,
-                                                    language,
-                                                    processing_time_ms,
-                                                };
-
-                                                let ws_server = websocket_server.lock().await;
-                                                if let Err(e) =
-                                                    ws_server.broadcast(ws_message).await
-                                                {
-                                                    log_error_details!(
-                                                        "commands::ipc_events",
-                                                        "broadcast_final_failed",
-                                                        json!({
-                                                            "session": session_id_ref,
-                                                            "request": request_id,
-                                                            "error": format!("{:?}", e)
-                                                        })
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        "speech_end" => {
-                                            let request_id =
-                                                request_id_from(&data).unwrap_or("unknown");
-                                            log_info_details!(
-                                                "commands::ipc_events",
-                                                "speech_end",
-                                                json!({
-                                                    "session": session_id_ref,
-                                                    "request": request_id
-                                                })
-                                            );
-                                            break;
-                                        }
-                                        "no_speech" => {
-                                            let request_id =
-                                                request_id_from(&data).unwrap_or("unknown");
-                                            log_info_details!(
-                                                "commands::ipc_events",
-                                                "no_speech",
-                                                json!({
-                                                    "session": session_id_ref,
-                                                    "request": request_id
-                                                })
-                                            );
-                                            break;
-                                        }
-                                        "model_change" => {
-                                            // Phase 1.3: Handle model_change event (P13-PREP-001)
-                                            // STT-REQ-006.9: Dynamic model switching notification
-
-                                            // Validate required fields (addressing external review)
-                                            let old_model = data.get("old_model")
-                                                .and_then(|v| v.as_str());
-                                            let new_model = data.get("new_model")
-                                                .and_then(|v| v.as_str());
-                                            let reason = data.get("reason")
-                                                .and_then(|v| v.as_str());
-
-                                            // CRITICAL: Validate schema compliance
-                                            if old_model.is_none() || new_model.is_none() || reason.is_none() {
-                                                log_error_details!(
-                                                    "commands::ipc_events",
-                                                    "model_change_invalid_schema",
-                                                    json!({
-                                                        "session": session_id_ref,
-                                                        "data": data,
-                                                        "missing_fields": {
-                                                            "old_model": old_model.is_none(),
-                                                            "new_model": new_model.is_none(),
-                                                            "reason": reason.is_none()
-                                                        }
-                                                    })
-                                                );
-
-                                                // Emit schema error to UI
-                                                let ws_server = websocket_server.lock().await;
-                                                if let Err(e) = ws_server.broadcast(
-                                                    WebSocketMessage::Error {
-                                                        message_id: format!("ws-{}",
-                                                            std::time::SystemTime::now()
-                                                                .duration_since(std::time::UNIX_EPOCH)
-                                                                .unwrap()
-                                                                .as_millis()),
-                                                        session_id: session_id_ref.to_string(),
-                                                        message: "モデル変更通知のデータ形式が不正です".to_string(),
-                                                        timestamp: std::time::SystemTime::now()
-                                                            .duration_since(std::time::UNIX_EPOCH)
-                                                            .unwrap()
-                                                            .as_millis() as u64,
-                                                    }
-                                                ).await {
-                                                    log_error_details!(
-                                                        "commands::ipc_events",
-                                                        "broadcast_schema_error_failed",
-                                                        json!({
-                                                            "session": session_id_ref,
-                                                            "error": format!("{:?}", e)
-                                                        })
-                                                    );
-                                                }
-                                                // Continue processing despite schema error
-                                            } else {
-                                                // Schema valid - extract values safely
-                                                let old_model = old_model.unwrap();
-                                                let new_model = new_model.unwrap();
-                                                let reason = reason.unwrap();
-
-                                                log_info_details!(
-                                                    "commands::ipc_events",
-                                                    "model_change",
-                                                    json!({
-                                                        "session": session_id_ref,
-                                                        "old_model": old_model,
-                                                        "new_model": new_model,
-                                                        "reason": reason
-                                                    })
-                                                );
-
-                                                // STT-REQ-006.9: UI notification required
-                                                let notification_msg = format!(
-                                                    "モデル変更: {} → {} (理由: {})",
-                                                    old_model,
-                                                    new_model,
-                                                    match reason {
-                                                        "cpu_high" => "CPU負荷",
-                                                        "memory_high" => "メモリ不足",
-                                                        "memory_critical" => "メモリ緊急",
-                                                        "manual_switch" => "手動切り替え",
-                                                        _ => reason
-                                                    }
-                                                );
-
-                                                let ws_server = websocket_server.lock().await;
-                                                if let Err(e) = ws_server.broadcast(
-                                                    WebSocketMessage::Notification {
-                                                        message_id: format!("ws-{}",
-                                                            std::time::SystemTime::now()
-                                                                .duration_since(std::time::UNIX_EPOCH)
-                                                                .unwrap()
-                                                                .as_millis()),
-                                                        session_id: session_id_ref.to_string(),
-                                                        notification_type: "model_change".to_string(),
-                                                        message: notification_msg,
-                                                        timestamp: std::time::SystemTime::now()
-                                                            .duration_since(std::time::UNIX_EPOCH)
-                                                            .unwrap()
-                                                            .as_millis() as u64,
-                                                        data: Some(json!({
-                                                            "old_model": old_model,
-                                                            "new_model": new_model,
-                                                            "reason": reason
-                                                        })),
-                                                    }
-                                                ).await {
-                                                    log_error_details!(
-                                                        "commands::ipc_events",
-                                                        "broadcast_model_change_failed",
-                                                        json!({
-                                                            "session": session_id_ref,
-                                                            "error": format!("{:?}", e)
-                                                        })
-                                                    );
-                                                }
-                                            }
-
-                                            // model_change is non-terminating - continue processing audio
-                                        }
-                                        _ => {
-                                            log_warn_details!(
-                                                "commands::ipc_events",
-                                                "unknown_event_type",
-                                                json!({
-                                                    "session": session_id_ref,
-                                                    "event_type": event_type
-                                                })
-                                            );
-                                        }
-                                    }
-                                }
-                                ProtocolMessage::Error { error_message, .. } => {
-                                    log_error_details!(
-                                        "commands::ipc_events",
-                                        "python_sidecar_error",
-                                        json!({
-                                            "session": session_id_ref,
-                                            "message": error_message
-                                        })
-                                    );
-                                    break;
-                                }
-                                _ => {
-                                    log_warn_details!(
-                                        "commands::ipc_events",
-                                        "unexpected_message_type",
-                                        json!({
-                                            "session": session_id_ref,
-                                            "message": msg
-                                        })
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log_error_details!(
-                                "commands::ipc_events",
-                                "receive_event_failed",
-                                json!({
-                                    "session": session_id_handle.as_str(),
-                                    "error": format!("{:?}", e)
-                                })
-                            );
-                            break;
-                        }
-                    }
                 }
             });
         })

@@ -8,7 +8,6 @@
 //! - **関連ADR**: ADR-003（リソースベースモデル選択とIPC Version Strategy）
 //!
 //! ## 関連要件
-//! - STT-REQ-007.1: 後方互換性維持（LegacyIpcMessage Fallback）
 //! - STT-REQ-007.2: 拡張フィールド（confidence, language, processing_time_ms, model_size）
 //! - STT-REQ-007.4: versionフィールド必須化（PROTOCOL_VERSION = "1.0"）
 //! - STT-REQ-007.5: エラーフォーマット統一（errorCode, errorMessage, recoverable）
