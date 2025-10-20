@@ -45,7 +45,7 @@ class AudioProcessor:
     """
 
     def __init__(self):
-        """Initialize audio processing components."""
+        """Initialize audio processing components (Phase 1.2 updated)."""
         logger.info("Initializing AudioProcessor...")
 
         # Initialize components (STT-REQ-003.1, STT-REQ-002.1)
@@ -54,9 +54,13 @@ class AudioProcessor:
         self.pipeline = AudioPipeline(vad=self.vad, stt_engine=self.stt_engine)
         self.ipc = None
 
-        # Initialize ResourceMonitor (Task 5.2, STT-REQ-006)
+        # Phase 1.2: Initialize ResourceMonitor with dependencies (STT-REQ-006)
+        # Note: ipc will be set later via set_ipc_handler()
         from stt_engine.resource_monitor import ResourceMonitor
-        self.resource_monitor = ResourceMonitor()
+        self.resource_monitor = ResourceMonitor(
+            stt_engine=self.stt_engine,
+            ipc_handler=None  # Will be set in set_ipc_handler()
+        )
         self.resource_monitor.current_model = self.stt_engine.model_size
         self.resource_monitor.initial_model = self.stt_engine.model_size
 
@@ -673,6 +677,9 @@ async def main():
 
         # Initialize IPC handler with message callback
         processor.ipc = IpcHandler(message_handler=processor.handle_message)
+
+        # Phase 1.2: Set IPC handler in ResourceMonitor (for event emission)
+        processor.resource_monitor.ipc = processor.ipc
 
         # CRITICAL: Initialize WhisperSTTEngine before sending ready signal
         # Without this, transcribe() will raise "WhisperSTTEngine not initialized"

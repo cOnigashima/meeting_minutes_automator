@@ -142,13 +142,31 @@ class ResourceMonitor:
     # Model downgrade sequence (STT-REQ-006.6)
     MODEL_SEQUENCE = ['large-v3', 'medium', 'small', 'base', 'tiny']
 
-    def __init__(self):
-        """Initialize ResourceMonitor"""
+    def __init__(self, stt_engine=None, ipc_handler=None):
+        """
+        Initialize ResourceMonitor with dependencies.
+        
+        Args:
+            stt_engine: WhisperSTTEngine instance for model switching
+            ipc_handler: IpcHandler instance for event notifications
+        """
+        # Model tracking
         self.current_model = None
         self.initial_model = None
         self.resources = None
-        self.cpu_high_start_time = None  # Track when CPU went high
-        self.low_resource_start_time = None  # Track when resources went low (for upgrade proposal)
+        
+        # Legacy timer fields (kept for backward compatibility with existing tests)
+        self.cpu_high_start_time = None
+        self.low_resource_start_time = None
+        
+        # Phase 1.1: Hierarchical state management (STT-REQ-006.6-006.12)
+        from collections import deque
+        self.cpu_samples = deque(maxlen=2)  # CPU history (2 samples @ 30s = 60s window)
+        self.recovery_sample_count = 0      # Recovery state counter (need 10 = 5min)
+        self.last_downgrade_timestamp = 0.0 # For debounce (60s minimum)
+        
+        # State machine: "monitoring" | "degraded" | "recovering"
+        self.monitoring_state = "monitoring"
 
         # Monitoring loop state
         self.monitoring_task = None
@@ -157,8 +175,142 @@ class ResourceMonitor:
 
         # Process handle for app-specific memory tracking
         self.process = psutil.Process(os.getpid())
+        
+        # Dependencies (Phase 1.1)
+        self.stt_engine = stt_engine  # For load_model() calls
+        self.ipc = ipc_handler         # For event notifications
 
-        logger.info("ResourceMonitor initialized")
+        logger.info("ResourceMonitor initialized with state machine")
+
+    async def set_model_level(self, level: int) -> str:
+        """
+        Programmatic model switching API (Phase 1.1).
+        
+        Coordinates with WhisperSTTEngine to ensure state consistency.
+        Emits IPC event via proper protocol channel.
+        
+        Args:
+            level: Model level (2=small, 1=base, 0=tiny)
+            
+        Returns:
+            str: Actual model size loaded (may differ due to bundled fallback)
+            
+        Raises:
+            ValueError: If stt_engine or ipc not configured
+            Exception: If model loading fails
+            
+        Example:
+            >>> monitor = ResourceMonitor(stt_engine, ipc_handler)
+            >>> actual_model = await monitor.set_model_level(1)  # Request base
+            >>> print(actual_model)  # "base" or fallback
+        """
+        if self.stt_engine is None:
+            raise ValueError("stt_engine not configured - cannot switch model")
+        if self.ipc is None:
+            raise ValueError("ipc_handler not configured - cannot emit events")
+        
+        # Map level to model size
+        model_map = {2: "small", 1: "base", 0: "tiny"}
+        target_model = model_map.get(level, "tiny")
+        
+        old_model = self.current_model
+        
+        try:
+            # Call WhisperSTTEngine.load_model() to perform actual switch
+            # This ensures monitor state stays in sync with loaded model
+            actual_model = await self.stt_engine.load_model(target_model)
+            
+            # Update monitor state ONLY after successful load
+            self.current_model = actual_model
+            
+            # Emit IPC event via proper protocol (not direct stdout!)
+            await self.ipc.send_message({
+                "type": "event",
+                "eventType": "model_change",
+                "data": {
+                    "old_model": old_model or "unknown",
+                    "new_model": actual_model,
+                    "reason": "manual_switch",
+                    "target_level": level
+                }
+            })
+            
+            logger.info(f"Model switched: {old_model} -> {actual_model} (level={level})")
+            return actual_model
+            
+        except Exception as e:
+            logger.error(f"Model switch failed: {e}")
+            raise
+
+    def _should_debounce_downgrade(self) -> bool:
+        """
+        Check if downgrade should be debounced (Phase 1.1).
+        
+        Implements STT-REQ-006.6 60-second minimum interval between downgrades
+        to prevent chattering when metrics oscillate around threshold.
+        
+        Returns:
+            bool: True if downgrade should be skipped due to debounce
+        """
+        import time
+        elapsed = time.time() - self.last_downgrade_timestamp
+        
+        if elapsed < 60.0:
+            logger.debug(f"Downgrade debounced: {elapsed:.1f}s since last (need 60s)")
+            return True
+        
+        return False
+
+    def _update_state_machine(self, cpu_usage: float, memory_available_gb: float) -> None:
+        """
+        Update hierarchical state machine (Phase 1.1).
+        
+        State transitions:
+        - monitoring: Normal operation, current_model == initial_model
+        - degraded: Downgraded due to high resources, monitoring for recovery
+        - recovering: Low resources sustained, counting samples (need 10 = 5min)
+        
+        Implements STT-REQ-006.6-006.12 recovery logic.
+        
+        Args:
+            cpu_usage: Current CPU usage percentage
+            memory_available_gb: Available memory in GB
+        """
+        # Add current CPU sample to history
+        self.cpu_samples.append(cpu_usage)
+        
+        # Check if resources are low (recovery condition)
+        cpu_low = cpu_usage < 50.0
+        memory_ok = memory_available_gb >= 2.0
+        resources_recovered = cpu_low and memory_ok
+        
+        if self.monitoring_state == "monitoring":
+            # Normal state - check if we need to downgrade
+            if cpu_usage >= 85.0:
+                # High CPU detected - will trigger downgrade in _monitor_cycle
+                logger.debug(f"State: monitoring -> CPU high ({cpu_usage:.1f}%)")
+        
+        elif self.monitoring_state == "degraded":
+            # Degraded state - check for recovery
+            if resources_recovered:
+                # Start recovery counter
+                self.recovery_sample_count += 1
+                logger.debug(f"Recovery sample {self.recovery_sample_count}/10")
+                
+                if self.recovery_sample_count >= 10:
+                    # 10 consecutive low samples (5 minutes @ 30s interval)
+                    self.monitoring_state = "recovering"
+                    logger.info("State: degraded -> recovering (10 samples of low resources)")
+            else:
+                # Resources still high - reset counter
+                if self.recovery_sample_count > 0:
+                    logger.debug(f"Recovery interrupted (CPU={cpu_usage:.1f}%, Mem={memory_available_gb:.2f}GB)")
+                self.recovery_sample_count = 0
+        
+        elif self.monitoring_state == "recovering":
+            # Recovery state - upgrade proposal will be sent in _monitor_cycle
+            # Reset to monitoring after upgrade
+            pass
 
     def detect_resources(self) -> Dict[str, Any]:
         """
@@ -580,9 +732,10 @@ class ResourceMonitor:
         on_pause_recording: Optional[Callable[[], Awaitable[None]]]
     ):
         """
-        Execute one monitoring cycle
+        Execute one monitoring cycle (Phase 1.1 enhanced)
 
-        Checks CPU/memory usage and triggers appropriate actions
+        Checks CPU/memory usage and triggers appropriate actions.
+        Integrates hierarchical state machine and debounce logic.
         """
         # Get current resource usage
         cpu_percent = self.get_current_cpu_usage()
@@ -591,13 +744,17 @@ class ResourceMonitor:
         # System memory for informational logging
         system_memory = psutil.virtual_memory()
         system_memory_percent = system_memory.percent
+        system_memory_available_gb = system_memory.available / (1024 ** 3)
+
+        # Phase 1.1: Update state machine (hierarchical tracking)
+        self._update_state_machine(cpu_percent, system_memory_available_gb)
 
         # Log current status (STT-NFR-005.4)
         logger.debug(
             f"Resource monitoring: CPU={cpu_percent:.1f}%, "
             f"App Memory={app_memory_gb:.2f}GB, "
             f"System Memory={system_memory_percent:.1f}%, "
-            f"Model={self.current_model}"
+            f"Model={self.current_model}, State={self.monitoring_state}"
         )
 
         # Track CPU high duration (STT-REQ-006.7)
@@ -653,18 +810,27 @@ class ResourceMonitor:
                 # Reset CPU timer as we just downgraded
                 self.cpu_high_start_time = None
 
-        # Check for CPU-based downgrade trigger (STT-REQ-006.7)
+        # Check for CPU-based downgrade trigger (STT-REQ-006.7, Phase 1.1 with debounce)
         elif self.cpu_high_start_time is not None:
             cpu_high_duration = current_time - self.cpu_high_start_time
             if cpu_high_duration >= 60:  # 60 seconds sustained
-                logger.warning(f"CPU high for {cpu_high_duration:.1f}s, triggering downgrade")
-                old_model = self.current_model
-                new_model = self.get_downgrade_target(old_model)
-                # Don't update current_model here - let callback handle it after success
-                if new_model and on_downgrade:
-                    await on_downgrade(old_model, new_model)
-                # Reset timer after downgrade
-                self.cpu_high_start_time = None
+                # Phase 1.1: Debounce check (prevent chattering)
+                if self._should_debounce_downgrade():
+                    logger.debug("CPU downgrade skipped due to debounce")
+                    # Don't reset timer - let it accumulate for next cycle
+                else:
+                    logger.warning(f"CPU high for {cpu_high_duration:.1f}s, triggering downgrade")
+                    old_model = self.current_model
+                    new_model = self.get_downgrade_target(old_model)
+                    # Don't update current_model here - let callback handle it after success
+                    if new_model and on_downgrade:
+                        await on_downgrade(old_model, new_model)
+                        # Update debounce timestamp after successful downgrade
+                        self.last_downgrade_timestamp = current_time
+                        # Transition to degraded state
+                        self.monitoring_state = "degraded"
+                    # Reset timer after downgrade
+                    self.cpu_high_start_time = None
 
         # Check for upgrade proposal (STT-REQ-006.10)
         if self.low_resource_start_time is not None:
@@ -690,6 +856,9 @@ class ResourceMonitor:
                 if target and on_upgrade_proposal:
                     logger.info(f"Resource recovered for {low_resource_duration:.1f}s, proposing upgrade to {target}")
                     await on_upgrade_proposal(self.current_model, target)
+                    # Phase 1.1: Reset state machine after upgrade proposal
+                    self.monitoring_state = "monitoring"
+                    self.recovery_sample_count = 0
                 # Reset timer after proposal (only propose once per recovery period)
                 self.low_resource_start_time = None
 
