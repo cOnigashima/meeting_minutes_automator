@@ -166,7 +166,7 @@ tokio-tungstenite = "0.20"
 }
 ```
 
-- **レスポンス互換性**: 旧来の `{"type":"process_audio","audio_data":...}` / `{"type":"transcription_result"}` も受信可能（LegacyIpcMessage → IpcMessage 変換）。新旧クライアント混在を想定し、Rust 側はレガシー形式をログ警告付きで処理する。
+- **レスポンス互換性**: IPCプロトコルはセマンティックバージョニング（ADR-003）により後方互換性を保証。`IpcMessage`でバージョンチェック（major不一致→エラー、minor不一致→警告）を実施。
 
 #### Backpressure & Monitoring（ADR-013）
 - 音声送信用の `tokio::sync::mpsc` と 5 秒リングバッファを採用し、Python 側の処理遅延時に `no_speech` / タイムアウトを Rust 側へ通知。

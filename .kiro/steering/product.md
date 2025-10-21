@@ -135,6 +135,7 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 | meeting-minutes-docs-sync (MVP2) | Design Generated 🔵 | OAuth / Docs API 設計済み、実装は MVP1 安定化待ち |
 | meeting-minutes-ci | Spec Initialized 🔵 | クロスプラットフォームCI と smoke テストの設計を継続 |
 | meeting-minutes-llm (MVP3) | Not Started ⚪ | MVP1/2 完了後に要件定義開始 |
+| ui-hub | Design Generated 🔵 | 既存UI改善のためのトークン駆動開発環境設計完了、tasks生成待ち |
 
 ### Implementation Progress Snapshots
 

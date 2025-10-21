@@ -35,6 +35,11 @@ meeting-minutes-automator/
 │   └── tests/               # pytest ベースの統合テスト群
 ├── chrome-extension/        # Manifest V3 拡張（content-script.js で WebSocket 管理）
 ├── src/                     # Tauri フロントエンド（MVP1 現在は最小 UI）
+├── ui-hub/                  # Meeting Minutes Automator UI改善のためのトークン駆動開発環境
+│   ├── tokens/              # src/App.css から抽出した設計トークン（DTCG形式）
+│   ├── src/components/      # App.tsx から抽出したコンポーネント（Storybookで開発）
+│   ├── .storybook/          # Storybook 設定（React + Vite）
+│   └── scripts/             # MCPサーバ（AI連携：list_stories, get_story_url, get_tokens）
 ├── scripts/                 # 静的解析 / ビルド補助スクリプト
 └── README.md, CLAUDE.md     # ルートのナビゲーションドキュメント
 ```
@@ -82,6 +87,13 @@ meeting-minutes-automator/
 
 ### `src/`
 - 現在は MVP1 の最小 UI（録音開始/停止ボタン）のみ。デバイス選択や履歴 UI は Task 9.x で拡張予定。
+
+### `ui-hub/`
+- **責務**: Meeting Minutes Automator の既存 UI (`src/App.tsx`, `src/App.css`) を改善するためのトークン駆動開発環境。
+- **トークン抽出**: `src/App.css` の8つのCSS変数（`--bg-color`, `--text-color` 等）をDTCG形式のJSONに変換。
+- **コンポーネント開発**: `src/App.tsx` から RecordButton 等のコンポーネントを抽出し、Storybookで分離開発。
+- **AI連携**: MCPサーバ経由でClaude Code等がStorybook情報とトークンを取得可能（list_stories, get_story_url, get_tokens）。
+- **統合フロー**: ui-hubで開発した改善内容は手動またはスクリプトで `../src/` に反映し、Meeting Minutes Automator 全体のテストで検証。
 
 ---
 
