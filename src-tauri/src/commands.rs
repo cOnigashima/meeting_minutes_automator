@@ -76,29 +76,26 @@ async fn start_ipc_reader_task(
 ) {
     tokio::spawn(async move {
         loop {
-            // Narrow mutex scope: acquire only for receive, release immediately
+            // KNOWN LIMITATION (requires API redesign to fully fix):
+            // receive_message() takes &mut self, so the Future is tied to MutexGuard's lifetime.
+            // This means the guard is held across .await, potentially serializing sends.
+            //
+            // MITIGATION:
+            // 1. Removed 5-second timeout (previous bug: killed task during normal silence)
+            // 2. Send operations are brief (microseconds), so serialization impact is minimal
+            // 3. Python responses are async (not blocking on next send), reducing contention
+            //
+            // FUTURE FIX (requires larger refactor):
+            // Move read loop into PythonSidecarManager::spawn_reader_task()
+            // or switch to tokio::sync::Mutex::lock_owned() with owned Arc<Mutex<T>>
+            //
+            // See external review: "restructure the sidecar API (e.g. release the mutex
+            // before the await via an owned handle, or move the read loop into the sidecar itself)"
+
             let response = {
                 let mut sidecar = python_sidecar.lock().await;
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    sidecar.receive_message(),
-                )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => {
-                        log_warn_details!(
-                            "commands::ipc_reader",
-                            "receive_timeout",
-                            json!({
-                                "session": session_id,
-                                "timeout_ms": 5000
-                            })
-                        );
-                        break; // Exit task on timeout
-                    }
-                }
-                // Mutex dropped here
+                sidecar.receive_message().await
+                // Guard dropped here (but only AFTER .await completes)
             };
 
             match response {

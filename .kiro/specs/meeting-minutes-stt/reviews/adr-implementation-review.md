@@ -23,6 +23,7 @@
 | ADR-015 | P0 Bug Fixes | ✅ Adopted | ✅ 実装完了 |
 | ADR-016 | Offline Model Fallback P0 Fix | ✅ Adopted | ✅ 実装完了 |
 | ADR-017 | Latency Requirements Adjustment | ✅ Adopted | ✅ 実装完了 |
+| ADR-018 | Phase 14 Known Limitations | ✅ Adopted | ✅ 文書化完了 |
 
 ---
 

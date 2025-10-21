@@ -129,27 +129,27 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
 
 - [x] 13.3.1: SEC-001 - pip-audit導入（30分、GHSA-4xh5-x5gv-qwph除外設定完了）
 - [x] 13.3.2: SEC-002 - CSP設定強化（1時間、manifest.json更新完了）
-- [ ] 13.3.3: SEC-003 - Windows ACL設定（1時間、CI整備後に実装）
+- [移行済み] 13.3.3: SEC-003 - Windows ACL設定（meeting-minutes-ci specで管理、CI-INTAKE-002）
 - [x] 13.3.4: SEC-004 - cargo-audit導入（✅ 完了、Rust beta 1.91.0使用、16件warning（脆弱性0件））
 - [x] 13.3.5: SEC-005 - TLS証明書検証（MVP1では未使用、将来実装）
 
 ---
 
-### MVP2 Phase 0: 残タスク完了（Phase 13延期分）
+### MVP2 Phase 0: 残タスク完了（Phase 13延期分） → ✅ 完了/移行済み
 
 **目的**: Phase 13延期タスクを完了し、MVP2本体開始準備を整える
 
 **Week 1（1.5日）**:
-- [ ] SEC-003: Windows ACL設定（1h）
+- [移行済み] SEC-003: Windows ACL設定 → meeting-minutes-ci specで管理（CI-INTAKE-002）
 - [x] SEC-004: cargo-audit実行（✅ 完了、Rust beta 1.91.0使用、16件warning（脆弱性0件））
 - [x] Task 11.3: 2時間連続録音テスト本番実施（✅ 完了、メモリリークなし）
 
-**Phase 13 Re-scoping (2025-10-20)**: CI依存タスクを別SPEC分離
+**Phase 13 Re-scoping (2025-10-20)**: CI依存タスクをmeeting-minutes-ci specへ移行
 
 **Week 2-3（2-3日、CI不要）**:
-- [ ] P13-PREP-001: Python API追加（Task 10.3準備、2-3h）
+- [x] P13-PREP-001: Python API追加（✅ 完了、Task 10.3準備、phase-13-re-scoping-rationale.md Section 9参照）
 - [x] P13-PREP-002: STT-REQ-004.11仕様確定（✅ 完了、元々定義済み）
-- [ ] Task 10.3: 動的モデルダウングレードE2E（3h、P13-PREP-001完了後）
+- [x] Task 10.3: 動的モデルダウングレードE2E（✅ 完了、2025-10-20、13.1.3参照）
 - [x] Task 10.4完遂: 本番再接続ロジック実装（✅ 完了、2025-10-20、実働12h）
   - **Phase 1完了済み（下地）**:
     - ✅ FakeAudioDevice拡張（`src/audio.rs:51-88`）
@@ -175,10 +175,11 @@ meeting-minutes-stt (MVP1 Core Implementation + Phase 13検証負債解消) は�
     - `device_reconnect_user_resumed`: ユーザー手動再開
   - **STT-REQ-004.11ステータス**: ✅ 完全実装（max 3 attempts, 5s intervals, user operation protection）
 
-**別SPEC移行（meeting-minutes-ci）**:
-- [ ] CI/CD整備（GitHub Actions、クロスプラットフォームマトリックス、2-3日）
-- [ ] Task 10.5: クロスプラットフォームE2E（6h、CI整備後に実施）
-- [ ] SEC-003: Windows ACL設定（1h、Windows CI環境構築後）
+**meeting-minutes-ci specへ移行済み**:
+- [移行済み] CI/CD整備（GitHub Actions、クロスプラットフォームマトリックス） → CI-INTAKE-001
+- [移行済み] Task 10.5: クロスプラットフォームE2E（6h、CI整備後） → CI-INTAKE-001
+- [移行済み] SEC-003: Windows ACL設定（1h、Windows CI環境構築後） → CI-INTAKE-002
+- [移行済み] SEC-004: cargo-audit継続監視（Rust 1.85リリース後） → CI-INTAKE-003
 
 **合計推定**: 6-7.5日
 
@@ -272,11 +273,11 @@ MVP1実装完了後の技術的負債とコードクリーンアップタスク�
 - SEC-003: Windows ACL設定
 - SEC-004: cargo-audit（Rust 1.85リリース待ち）
 
-### リリース判定基準
-- [ ] Phase 13完了
-- [ ] セキュリティ脆弱性0件（SEC-004除く、Rust 1.85待ち）
-- [ ] クロスプラットフォーム動作確認（macOS/Windows/Linux）
-- [ ] 2時間以上の連続録音成功
+### MVP1リリース判定基準（macOS版）
+- [x] Phase 13+14完了（✅ 2025-10-21）
+- [x] セキュリティ脆弱性0件（macOS環境、SEC-004はRust 1.85待ち）
+- [x] 2時間以上の連続録音成功（✅ Task 11.3完了）
+- ⏸️ クロスプラットフォーム動作確認（Windows/Linux） → meeting-minutes-ci specで実施（Task 10.5）
 
 ---
 
@@ -287,10 +288,23 @@ MVP1実装完了後の技術的負債とコードクリーンアップタスク�
 2. ⏸️ spec.json更新（phase: "verification"）
 3. ⏸️ MVP2-HANDOFF.md用語統一（"MVP2 Phase 0" → "Phase 13"）
 
-### Phase 13完了後
-1. spec.json更新（phase: "completed"）
-2. **meeting-minutes-docs-sync**（MVP2本体）spec初期化
-3. Google Docs同期機能実装開始
+### Phase 13+14完了後（2025-10-21現在）
+
+**Phase 14 Post-MVP1 Cleanup**: ✅ 完了
+- LegacyIpcMessage削除（tests/supportパターン）、0 warnings達成
+- P0デッドロック修正（5秒タイムアウト削除）
+- **Known Limitations**: ADR-018参照（Mutex scope制約、tests/support重複、Python 17件既存失敗）
+
+**MVP2前提条件**:
+- ✅ Phase 13+14完了
+- ⏸️ **meeting-minutes-ci spec移行タスク**（CI-INTAKE-001/002/003）:
+  - [ ] SEC-003: Windows ACL設定（1h、CI整備後） → meeting-minutes-ci specで管理
+  - [ ] Task 10.5: クロスプラットフォームE2E（6h、CI整備後） → meeting-minutes-ci specで管理
+
+**次ステップ**:
+1. **meeting-minutes-ci spec**: `/kiro:spec-tasks meeting-minutes-ci`実行（CI-INTAKE-001/002/003のタスク分解）
+2. **meeting-minutes-docs-sync spec**: `/kiro:spec-tasks meeting-minutes-docs-sync`実行（MVP2本体実装開始）
+3. **CI依存タスク**: CI spec実装と並行、またはP2として扱う（推奨）
 
 ---
 

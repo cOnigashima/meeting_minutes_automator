@@ -25,7 +25,7 @@
 - `PythonSidecarManager` / `PythonSidecarError` / `PythonDetectionError` — Python プロセスの検出・起動・エラーハンドリングを担当。`wait_for_ready`, `send_message`, `receive_message`, `force_close_stdin` を公開。
 - `IpcMessage` / `VersionCompatibility` / `TranscriptionResult` / `as_transcription_result` — Rust から Python へ送受信する JSON スキーマを定義。
 - `WebSocketMessage` / `WebSocketServer` — Chrome 拡張との WebSocket 通信を統括。`broadcast` で複数クライアントに配信する。
-- `to_protocol_message` / `create_audio_adapter` — IPC 経由で Python 側に送る構造体を Rust の `TranscriptionResult` へ変換する。
+- `IpcMessage::deserialize()` / `AudioDeviceAdapter::create()` — IPC プロトコルのデシリアライズと音声デバイスアダプタ生成（ADR-001/003準拠）。
 
 ## テスト支援
 

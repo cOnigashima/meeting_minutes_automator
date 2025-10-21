@@ -1,53 +1,89 @@
 # MVP1 → MVP2 申し送りドキュメント
 
-**作成日**: 2025-10-19  
-**最終更新**: 2025-10-20  
-**作成/更新**: Claude（初稿） / Codex（ドキュメント再編）  
-**ステータス**: 運用中（Phase 13 wrap-up in progress）
+**作成日**: 2025-10-19
+**最終更新**: 2025-10-21
+**作成/更新**: Claude（初稿） / Codex（ドキュメント再編）
+**ステータス**: ✅ Phase 13+14完了、MVP2移行準備完了
 
-**Purpose**: Phase 13で残る検証ワークと、MVP2着手前に引き継ぐToDo・所要時間を整理する。スコープ定義は`./phase-13-re-scoping-rationale.md`（Decision Record）、最新ステータスは`./tasks.md`（運用原本）を参照。
-
----
-
-## 1. Phase 13 Snapshot（2025-10-20）
-
-- **スコープ基準**: [`phase-13-re-scoping-rationale.md`](./phase-13-re-scoping-rationale.md) を公式Decision Recordとして採用。  
-- **完了済み**: Task 10.3 動的モデルダウングレードE2E、13.2 長時間稼働テスト（Task 11.3）、SEC-001/002/005（macOSセキュリティ）。  
-- **継続中**: Task 10.4 デバイス切断/再接続E2E Phase 2（自動再接続の本番検証）。  
-- **CI specへ移行済み**: Task 10.5、SEC-003、SEC-004 → `meeting-minutes-ci`で管理。  
-- **最新タスク原本**: [`tasks.md`](./tasks.md) の「Phase 13: 検証負債解消」節。更新は同ファイルのみで実施。  
-- **MVP2開始判定**: Phase 13完了（Task 10.4達成）とCI側の着手計画を確認後、MVP2 Phase 0（Google Docs連携）へ移行。
+**Purpose**: Phase 13+14完了後の成果物と、meeting-minutes-ci/meeting-minutes-docs-syncへの引き継ぎ事項を整理する。
 
 ---
 
-## 2. MVP2 Handoff Work Queue
+## 1. Phase 13+14 完了サマリー（2025-10-21）
 
-| 区分 | ToDo | 所要時間目安 | 担当/参考 |
-|------|------|--------------|-----------|
-| Phase 13 wrap-up | Task 10.4 Phase 2実装（`commands.rs`再試行ループ、AppState統合テスト）とリグレッション確認 | 3-4h | STTチーム / `./tasks.md` |
-| Phase 13補完 | P13-PREP-001 Python API拡張（必要時のみ再開） | 2-3h | STTチーム / `./tasks.md` |
-| CI連携トラック | GitHub Actionsマトリックス整備 → Task 10.5 / SEC-003 / SEC-004の順で実行 | 6-7.5日 | CIチーム / `../meeting-minutes-ci/spec.json` |
-| MVP2 Kick-off Gate | Phase 13完了レビュー、`./archive/phase-13-completion-report.md`更新、MVP2スプリント計画確定 | 0.5日 | PM / STT + CI合同 |
+### Phase 13: 検証負債解消（✅ 完了）
+- ✅ Task 10.1-10.4: E2Eテスト完全実装（VAD→STT、オフラインフォールバック、動的ダウングレード、デバイス再接続）
+- ✅ Task 11.3: 2時間連続録音テスト（メモリリークなし）
+- ✅ SEC-001/002/005: macOSセキュリティ修正完了
+- ✅ P13-PREP-001: Python API追加（Task 10.3準備）
 
-> メモ: CI連携トラックの詳細タスク分解とスケジュールは`meeting-minutes-ci`側のtasks/requirements生成後に同期する。
+### Phase 14: Post-MVP1 Cleanup（✅ 完了）
+- ✅ LegacyIpcMessage完全削除（tests/supportモジュールパターン採用）
+- ✅ P0バグ修正（5秒タイムアウト削除、unit test更新）
+- ✅ Rust 0 warnings達成
+- ✅ Known Limitations文書化（ADR-018）
+
+### テスト結果
+- Unit: 76/76 ✅
+- Integration: 31/31 ✅
+- Build warnings: 0 ✅
+- Python: 161/178（17件既存失敗、MVP1と無関係）
 
 ---
 
-## 3. Carry-over Risks for MVP2
+## 2. 次工程への引き継ぎ
 
-- **macOS限定リリース**: Phase 13完了後もCI整備完了まではmacOSのみサポート。`phase-13-re-scoping-rationale.md` でリリースノート方針と段階的展開を定義。  
-- **クロススペック追跡性**: Task 10.5 / SEC-003 / SEC-004は`meeting-minutes-ci`タスクとして管理。隔週レビューで双方の進捗をクロスチェック。  
-- **CI整備遅延**: Windows/Linux対応が後ろ倒しになるリスク。MVP2スプリント計画にCIスプリント（MVP1.5）を組み込み、リソース配分をSTT 50% / CI 30% / Docs 20%で運用。  
+### meeting-minutes-ci spec（CI/CD Pipeline）
+
+**引き継ぎ済みタスク**（requirements.md L15-19, CI-INTAKE-001/002/003）:
+- Task 10.5: クロスプラットフォームE2E（Windows/Linux検証、6h）
+- SEC-003: Windows ACL設定（1h）
+- SEC-004: cargo-audit継続監視（Rust 1.85待ち）
+
+**次アクション**:
+1. `/kiro:spec-tasks meeting-minutes-ci` 実行（タスク分解）
+2. GitHub Actions matrix整備（macOS/Windows/Linux）
+3. CI-INTAKE-001/002/003の実装
+
+**参照**: `../meeting-minutes-ci/requirements.md`
+
+### meeting-minutes-docs-sync spec（MVP2本体: Google Docs連携）
+
+**状態**: design-validated（requirements/design承認済み、tasks未生成）
+
+**前提条件**:
+- ✅ meeting-minutes-stt Phase 13+14完了
+- ⏸️ meeting-minutes-ci整備（並行実施、またはP2として扱う）
+
+**次アクション**:
+1. `/kiro:spec-tasks meeting-minutes-docs-sync` 実行（タスク分解）
+2. MVP2 Phase 0実装開始（OAuth 2.0認証、Google Docs API統合）
+
+**参照**: `../meeting-minutes-docs-sync/spec.json`
+
+---
+
+## 3. Known Limitations（ADR-018）
+
+以下の制約は文書化済み、MVP2ブロッカーではない（優先度P2）:
+- LIMIT-001: IPC Reader Mutex scope制約（send操作への影響は最小限）
+- LIMIT-002: tests/support重複インポート（現状2ファイルのみ、管理可能）
+- LIMIT-003: Python 17件既存失敗（model detection/upgrade tests、MVP1と無関係）
+
+**詳細**: `.kiro/specs/meeting-minutes-stt/adrs/ADR-018-phase14-known-limitations.md`
 
 ---
 
 ## 4. Reference Documents
 
-- `./phase-13-re-scoping-rationale.md` — Phase 13再スコープ決定記録  
-- `./tasks.md` — Phase 13残作業・所要時間の運用原本  
-- `./archive/phase-13-completion-report.md` — 完了レポート雛形  
-- `.kiro/specs/meeting-minutes-ci/spec.json` — CIトラックのスコープ定義（tasks生成予定）
+- `./tasks.md` — Phase 13+14完了記録
+- `./phase-13-re-scoping-rationale.md` — Phase 13再スコープ決定記録
+- `./adrs/ADR-018-phase14-known-limitations.md` — Known Limitations詳細
+- `../meeting-minutes-ci/requirements.md` — CI引き継ぎタスク定義
+- `../meeting-minutes-docs-sync/spec.json` — MVP2本体ステータス
 
 ---
 
-**Next milestone**: Phase 13 Task 10.4クローズ → CIスプリント計画承認 → MVP2 Phase 0開始
+**Next milestone**:
+1. `/kiro:spec-tasks meeting-minutes-ci` → CI実装計画確定
+2. `/kiro:spec-tasks meeting-minutes-docs-sync` → MVP2実装開始

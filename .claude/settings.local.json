@@ -73,7 +73,8 @@
       "Bash(echo:*)",
       "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v)",
       "Bash(python-stt/.venv/bin/python -m pytest python-stt/tests/test_resource_monitor.py -v --tb=short)",
-      "mcp__serena__check_onboarding_performed"
+      "mcp__serena__check_onboarding_performed",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

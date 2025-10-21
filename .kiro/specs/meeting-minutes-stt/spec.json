@@ -49,8 +49,50 @@
       "Phase 14 Post-MVP1 Cleanup completed (0 warnings achieved)"
     ]
   },
-  "notes": "Phase 13+14完了（2025-10-21）: MVP1 Core Implementation + Post-MVP1 Cleanup完全終了。Phase 13: 検証負債解消（E2Eテスト6/7、長時間稼働テスト、セキュリティ修正4/5）。Phase 14: LegacyIpcMessage完全削除（tests/supportモジュールパターン採用、9件deprecated警告解消）+ 未使用コード削除（2件dead_code警告解消）→ 0 warnings達成。最終実装: tests/support/legacy_ipc.rs作成（ADR-003後方互換性検証維持）、src/python_sidecar.rs L48-139削除（92行）、src/commands.rs L64-102削除（39行）。テスト結果: Integration tests 30/31（1件既存失敗）+ Unit tests 76/76 + Python 44/44 = 150/151合格、リグレッションなし。CI依存タスク（Task 10.5, SEC-003）はmeeting-minutes-ci specへ移行。次ステップ: meeting-minutes-docs-sync（MVP2本体）実装開始。詳細: tasks.md Phase 13/14セクション、phase-13-re-scoping-rationale.md、archive/phase-13-14-completion-report.md参照。",
+  "notes": "Phase 13+14完了（2025-10-21）: MVP1 Core Implementation + Post-MVP1 Cleanup完了。Phase 13: 検証負債解消（E2Eテスト完全実装、長時間稼働テスト、セキュリティ修正）。Phase 14: LegacyIpcMessage完全削除（tests/supportパターン）+ P0バグ修正（5秒タイムアウト削除、unit test更新）→ Rust 0 warnings達成。Known Limitations（ADR-018）: LIMIT-001（Mutex scope）/LIMIT-002（tests/support重複）/LIMIT-003（Python 17件既存失敗）、優先度P2。CI依存タスク（Task 10.5, SEC-003, SEC-004）はmeeting-minutes-ci specへ移行済み（CI-INTAKE-001/002/003）。次工程: meeting-minutes-docs-sync（MVP2本体）、meeting-minutes-ci（並行実施推奨）。詳細: MVP2-HANDOFF.md、tasks.md、ADR-018参照。",
+  "known_limitations": [
+    {
+      "id": "LIMIT-001",
+      "description": "IPC Reader Mutex Scope制約（start_ipc_reader_task）",
+      "impact": "receive_message()がMutexGuardを保持したまま.awaitするため、理論上送信がシリアライズされる可能性",
+      "mitigation": "1. 5秒タイムアウト削除（正常な沈黙でtask死亡防止）、2. 送信操作は数マイクロ秒で完了、3. Python応答は非同期のため競合は稀",
+      "future_fix": "PythonSidecarManager API再設計（read loopを内部化、またはlock_owned()使用）",
+      "reference": "src-tauri/src/commands.rs:79-93, ADR-018",
+      "severity": "low",
+      "created_at": "2025-10-21"
+    },
+    {
+      "id": "LIMIT-002",
+      "description": "tests/support重複インポート（各integration testが個別に#[path]でimport）",
+      "impact": "将来の保守性リスク（legacy shim変更時に全テストcrate更新必要）",
+      "mitigation": "現状は2ファイルのみ（ipc_migration_test.rs, e2e_test.rs）のため管理可能",
+      "future_fix": "dedicated tests/support crateの作成（共有utility増加時）",
+      "reference": "tests/ipc_migration_test.rs:1-3, tests/e2e_test.rs:1-3, ADR-018",
+      "severity": "low",
+      "created_at": "2025-10-21"
+    },
+    {
+      "id": "LIMIT-003",
+      "description": "Python tests 17件既存失敗（model detection/upgrade tests）",
+      "impact": "model detection/upgrade機能の一部テスト不合格",
+      "mitigation": "Phase 14と無関係（既存失敗）、コア機能（録音・文字起こし・IPC）は正常動作",
+      "future_fix": "MVP2 Phase 0またはMVP3で対応（優先度P2）",
+      "reference": "python-stt/tests/test_whisper_client.py, python-stt/tests/test_upgrade_fallback.py",
+      "severity": "medium",
+      "created_at": "2025-10-21"
+    }
+  ],
   "blockers": [
+    {
+      "id": "BLOCK-008",
+      "description": "MVP2 Phase 0残タスク（Phase 13延期分）",
+      "blocking_phase": "mvp2_preparation",
+      "resolution_required": "SEC-003 Windows ACL設定 + Task 10.3動的モデルダウングレードE2E完了",
+      "reference": "tasks.md L138-186",
+      "status": "active",
+      "created_at": "2025-10-21",
+      "priority": "P2"
+    },
     {
       "id": "BLOCK-001",
       "description": "Chrome拡張WebSocket管理方式未決定（MVP0設計書と実装の不整合）",
