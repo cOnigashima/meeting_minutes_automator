@@ -1,0 +1,707 @@
+# Implementation Tasks - meeting-minutes-docs-sync
+
+**Feature**: OAuth 2.0 + Google Docs API統合でGoogle Meetから議事録を自動同期（MVP2）
+
+**Phase**: tasks-generated
+
+**Language**: ja
+
+---
+
+## Implementation Strategy
+
+本機能は5フェーズに分けて段階的に実装します（[design-migration-appendix.md](design-modules/design-migration-appendix.md)参照）:
+
+1. **Phase 1 (Week 1)**: Chrome拡張への認証レイヤー追加
+2. **Phase 2 (Week 2)**: Google Docs API統合
+3. **Phase 3 (Week 3)**: オフラインキューと自動再同期
+4. **Phase 4 (Week 4)**: WebSocketプロトコル拡張
+5. **Phase 5 (Week 5)**: E2Eテストとユーザー受け入れテスト
+
+---
+
+## Phase 1: Authentication Layer (Week 1)
+
+### 1. OAuth 2.0認証フローの実装
+
+_Requirements: DOCS-REQ-001.1-7, DOCS-NFR-003.1, DOCS-NFR-003.3_
+
+#### 1.1 AuthManagerコンポーネントの実装
+
+Chrome Identity APIを使用したOAuth 2.0認証フローを実装する。
+
+**受け入れ基準**:
+- [ ] `chrome.identity.launchWebAuthFlow()`を使用して認証ダイアログを開く機能
+- [ ] 認証コードをアクセストークン/リフレッシュトークンに交換する機能
+- [ ] OAuth 2.0スコープ: `documents` + `drive.file`の使用
+- [ ] エラーハンドリング（ユーザーキャンセル、ネットワークエラー、Invalid Grant）
+- [ ] ユニットテスト: 正常系/異常系のカバレッジ80%以上
+
+**技術詳細**:
+- ファイル: `extension/src/auth/AuthManager.ts`
+- 依存: Chrome Identity API、Google OAuth 2.0
+- インターフェース: [design-components.md#AuthManager](design-modules/design-components.md) L72-155参照
+
+#### 1.2 TokenStoreコンポーネントの実装
+
+`chrome.storage.local`を使用したトークン永続化機能を実装する。
+
+**受け入れ基準**:
+- [ ] アクセストークン、リフレッシュトークン、有効期限の保存機能
+- [ ] トークン取得/削除機能
+- [ ] MVP2では暗号化なし（セキュリティ警告表示のみ、MVP3で暗号化実装予定）
+- [ ] Service Workerサスペンド時の自動ログアウト機能
+- [ ] ユニットテスト: ストレージ操作のカバレッジ80%以上
+
+**技術詳細**:
+- ファイル: `extension/src/auth/TokenStore.ts`
+- 依存: `chrome.storage.local`
+- セキュリティ: DOCS-NFR-003.1, アクセストークン有効期限30分
+
+#### 1.3 トークンリフレッシュ機能の実装
+
+_Requirements: DOCS-REQ-001.8-9_
+
+アクセストークン期限切れ時の自動リフレッシュ機能を実装する。
+
+**受け入れ基準**:
+- [ ] 有効期限の60秒前に自動リフレッシュ（クロックスキュー対策）
+- [ ] リフレッシュトークン無効時の再認証プロンプト表示
+- [ ] エラーハンドリング（401 Unauthorized、ネットワークエラー）
+- [ ] 統合テスト: 認証 → 期限切れ → 自動リフレッシュ → API呼び出し成功
+
+**技術詳細**:
+- 実装場所: `AuthManager.refreshToken()`
+- タイマー管理: `chrome.alarms` API使用（MV3対応）
+
+#### 1.4 Popup UIへの「Google連携」ボタン追加
+
+_Requirements: DOCS-REQ-001.1-2, DOCS-NFR-005.1_
+
+ユーザーがOAuth 2.0認証を開始できるUI要素を追加する。
+
+**受け入れ基準**:
+- [ ] Popup UIに「Google連携」ボタンを追加
+- [ ] 認証状態の視覚的表示（未認証/認証済み/エラー）
+- [ ] 認証フロー開始時のガイド表示
+- [ ] 認証成功時の成功通知表示
+- [ ] 「Google連携解除」ボタンの追加（トークン無効化 + ローカル削除）
+
+**技術詳細**:
+- ファイル: `extension/popup/popup.html`, `extension/popup/popup.ts`
+- UI: 認証状態バッジ（緑: 認証済み、グレー: 未認証、赤: エラー）
+
+### 2. Phase 1検証とロールバック準備
+
+_Requirements: Phase 1完了基準_
+
+#### 2.1 Phase 1検証チェックリストの実行
+
+**受け入れ基準**:
+- [ ] OAuth 2.0認証フローが正常に動作する
+- [ ] トークンが`chrome.storage.local`に保存される
+- [ ] トークンリフレッシュが正常に動作する
+- [ ] ユニットテストカバレッジ80%以上
+- [ ] セキュリティ警告が表示される
+
+#### 2.2 Phase 1ロールバック戦略の準備
+
+**受け入れ基準**:
+- [ ] 機能フラグ実装（OAuth 2.0機能の有効/無効切り替え）
+- [ ] `chrome.storage.local`からの認証状態リセットスクリプト
+- [ ] ロールバック手順書の作成
+
+---
+
+## Phase 2: Google Docs API Integration (Week 2)
+
+### 3. Google Docs APIクライアントの実装
+
+_Requirements: DOCS-REQ-002.1-9, DOCS-NFR-001.2_
+
+#### 3.1 GoogleDocsClientコンポーネントの実装
+
+Google Docs API v1のラッパークライアントを実装する。
+
+**受け入れ基準**:
+- [ ] `documents.get` API呼び出し機能（ドキュメント取得）
+- [ ] `documents.batchUpdate` API呼び出し機能（テキスト挿入）
+- [ ] Authorization Headerへのアクセストークン設定（`Bearer {token}`）
+- [ ] HTTPS通信の強制（DOCS-NFR-003.2）
+- [ ] エラーハンドリング（401, 403, 404, 429, 500-504）
+- [ ] ユニットテスト: API呼び出しのモック/スタブテスト
+
+**技術詳細**:
+- ファイル: `extension/src/api/GoogleDocsClient.ts`
+- エンドポイント: `https://docs.googleapis.com/v1/documents`
+- インターフェース: [design-components.md#GoogleDocsClient](design-modules/design-components.md) L434-520参照
+
+#### 3.2 Exponential Backoffリトライ戦略の実装
+
+_Requirements: DOCS-REQ-002.7-9, DOCS-NFR-001.2_
+
+APIエラー時の自動リトライ機能を実装する。
+
+**受け入れ基準**:
+- [ ] リトライ可能エラー判定（408, 429, 500, 502, 503, 504）
+- [ ] 指数バックオフ（初回1秒、最大60秒）
+- [ ] Jitter（ランダム遅延）の追加
+- [ ] 最大リトライ回数: 5回
+- [ ] 統合テスト: 429エラー → Exponential Backoff → 成功
+
+**技術詳細**:
+- 実装場所: `GoogleDocsClient.exponentialBackoff()`
+- アルゴリズム: [design-components.md](design-modules/design-components.md) L402-432参照
+
+#### 3.3 楽観ロック（Optimistic Locking）の実装
+
+_Requirements: DOCS-REQ-002.13, Design v1.3 Critical Fix_
+
+複数タブ/共同編集者との競合を防ぐ楽観ロック機能を実装する。
+
+**受け入れ基準**:
+- [ ] `writeControl.requiredRevisionId`を使用した楽観ロック
+- [ ] リビジョンミスマッチ検出（400エラー）
+- [ ] 最大リトライ回数: 3回
+- [ ] カーソル位置再計算（Named Rangeから取得）
+- [ ] 統合テスト: 複数タブからの同時挿入 → 競合検出 → 自動リトライ
+
+**技術詳細**:
+- 実装場所: `GoogleDocsClient.insertTextWithLock()`
+- 詳細: [design-components.md#Optimistic Locking](design-modules/design-components.md) L522-605参照
+
+### 4. Named Range管理機能の実装
+
+_Requirements: DOCS-REQ-003.1-8, DOCS-REQ-006.1-6_
+
+#### 4.1 NamedRangeManagerコンポーネントの実装
+
+Google Docs内の挿入位置を管理する機能を実装する。
+
+**受け入れ基準**:
+- [ ] `transcript_cursor` Named Rangeの作成機能
+- [ ] Named Range位置取得機能
+- [ ] Named Range位置更新機能（テキスト挿入後）
+- [ ] ドキュメント構造管理（見出し、タイムスタンプ、話者名の挿入）
+- [ ] ユニットテスト: Named Range操作のカバレッジ80%以上
+
+**技術詳細**:
+- ファイル: `extension/src/api/NamedRangeManager.ts`
+- Named Range名: `transcript_cursor`
+- インターフェース: [design-components.md#NamedRangeManager](design-modules/design-components.md) L607-699参照
+
+#### 4.2 Named Range自動復旧ロジックの実装
+
+_Requirements: DOCS-REQ-003.7-8_
+
+ユーザーがNamed Rangeを削除した場合の自動復旧機能を実装する。
+
+**受け入れ基準**:
+- [ ] Priority 1: 見出し検索（「## 文字起こし」）→ 見出し直後に再作成
+- [ ] Priority 2: ドキュメント末尾に再作成
+- [ ] Priority 3: ドキュメント先頭（index=1）に再作成
+- [ ] ERRORログ記録 + UI通知（ポップアップ）
+- [ ] 統合テスト: Named Range削除 → 挿入試行 → 自動復旧 → 正常挿入
+
+**技術詳細**:
+- 実装場所: `NamedRangeManager.recoverNamedRange()`
+- フロー: [design-flows.md#Named Range Recovery](design-modules/design-flows.md) L125-166参照
+
+#### 4.3 段落スタイル設定機能の実装
+
+_Requirements: DOCS-REQ-006.3-4_
+
+見出しと本文テキストの段落スタイルを設定する機能を実装する。
+
+**受け入れ基準**:
+- [ ] 見出しスタイル: `HEADING_2`（14pt、太字）
+- [ ] 本文スタイル: `NORMAL_TEXT`（11pt、通常）
+- [ ] タイムスタンプフォーマット: `[HH:MM:SS]`
+- [ ] 話者名フォーマット: `**[話者名]**: `（設定で有効化時）
+
+**技術詳細**:
+- API: `updateParagraphStyle` request
+- スタイル定義: [design-data.md#ParagraphStyle](design-modules/design-data.md) L226-263参照
+
+### 5. Phase 2検証とロールバック準備
+
+#### 5.1 Phase 2検証チェックリストの実行
+
+**受け入れ基準**:
+- [ ] Google Docs APIへのリクエストが成功する
+- [ ] Named Rangeが正しく作成される
+- [ ] テキストが正しい位置に挿入される
+- [ ] エラーハンドリングが正常に動作する
+- [ ] 統合テストカバレッジ80%以上
+
+#### 5.2 Phase 2ロールバック戦略の準備
+
+**受け入れ基準**:
+- [ ] Google Docs API機能の無効化フラグ
+- [ ] オフラインキューモード単独動作確認
+- [ ] Phase 1の状態へのロールバック手順書
+
+---
+
+## Phase 3: Offline Queue & Auto-Resync (Week 3)
+
+### 6. オフラインキュー管理の実装
+
+_Requirements: DOCS-REQ-005.1-12, DOCS-NFR-001.4_
+
+#### 6.1 QueueManagerコンポーネントの実装
+
+オフライン時のメッセージキューイング機能を実装する。
+
+**受け入れ基準**:
+- [ ] `chrome.storage.local`への`offline_queue`保存機能
+- [ ] メッセージのenqueue/dequeue機能（FIFO順序）
+- [ ] タイムスタンプによるメッセージソート機能
+- [ ] ストレージ使用量監視機能（`chrome.storage.local.getBytesInUse()`）
+- [ ] ユニットテスト: キュー操作のカバレッジ80%以上
+
+**技術詳細**:
+- ファイル: `extension/src/sync/QueueManager.ts`
+- ストレージキー: `offline_queue`
+- ストレージ上限: 10 MB（QUOTA_BYTES_PER_ITEM）
+- インターフェース: [design-components.md#QueueManager](design-modules/design-components.md) L274-340参照
+
+#### 6.2 ストレージ使用量監視とアラート機能の実装
+
+_Requirements: DOCS-REQ-005.11-12_
+
+ストレージ使用量を定期監視し、警告を表示する機能を実装する。
+
+**受け入れ基準**:
+- [ ] `chrome.alarms`での定期監視（6秒間隔）
+- [ ] 80%到達時のポップアップ警告表示
+- [ ] 100%到達時の全画面通知（`chrome.notifications`）
+- [ ] 上限到達時のメッセージ受信停止機能
+- [ ] 統合テスト: ストレージ上限到達 → 警告表示 → 受信停止
+
+**技術詳細**:
+- 実装場所: `QueueManager.monitorStorage()`
+- アラーム名: `monitor-storage`
+- 詳細: [design-testing-security.md#Storage Monitoring](design-modules/design-testing-security.md) L307-341参照
+
+### 7. 同期制御機能の実装
+
+_Requirements: DOCS-REQ-004.1-9, DOCS-REQ-005.5-10_
+
+#### 7.1 SyncManagerコンポーネントの実装
+
+オンライン/オフライン状態の管理と同期制御機能を実装する。
+
+**受け入れ基準**:
+- [ ] 同期開始機能（`startSync()`）
+- [ ] 文字起こしメッセージ処理機能（`processTranscription()`）
+- [ ] オンライン/オフライン状態の自動検知（`navigator.onLine`）
+- [ ] 状態遷移管理（Stopped → Starting → OnlineSync ⇄ OfflineQueue → Resyncing）
+- [ ] ユニットテスト: 状態遷移のカバレッジ80%以上
+
+**技術詳細**:
+- ファイル: `extension/src/sync/SyncManager.ts`
+- 状態管理: [design-components.md#SyncManager](design-modules/design-components.md) L158-258参照
+- 状態永続化: `chrome.storage.local` (`sync_status` key)
+
+#### 7.2 バッファリング戦略の実装
+
+_Requirements: DOCS-REQ-004.6-7, Design v1.3 Performance Optimization_
+
+レート制限を遵守するためのバッファリング機能を実装する。
+
+**受け入れ基準**:
+- [ ] 最大バッファ時間: 3秒（`chrome.alarms`使用）
+- [ ] 最大バッファサイズ: 500文字
+- [ ] `chrome.alarms`での自動フラッシュ（MV3対応）
+- [ ] 複数メッセージの1回の`batchUpdate`へのマージ
+- [ ] パフォーマンステスト: API呼び出し回数60%削減確認
+
+**技術詳細**:
+- 実装場所: `SyncManager.addToBuffer()`
+- アラーム名: `flush-buffer`
+- 詳細: [design-testing-security.md#Buffering Strategy](design-modules/design-testing-security.md) L244-302参照
+
+#### 7.3 自動再同期機能の実装
+
+_Requirements: DOCS-REQ-005.5-10, DOCS-NFR-001.3_
+
+ネットワーク復帰時の自動再同期機能を実装する。
+
+**受け入れ基準**:
+- [ ] ネットワーク復帰イベントの検知（`online`イベント）
+- [ ] オフラインキューの取得とタイムスタンプ順ソート
+- [ ] レート制限遵守（60リクエスト/分）
+- [ ] 再同期進捗の表示（ポップアップUI）
+- [ ] 統合テスト: ネットワーク切断 → キュー保存 → 復帰 → 自動再同期
+
+**技術詳細**:
+- 実装場所: `SyncManager.resyncOfflineQueue()`
+- パフォーマンス目標: 100メッセージあたり最大120秒（DOCS-NFR-001.3）
+
+#### 7.4 Token Bucket Rate Limiterの実装
+
+_Requirements: DOCS-NFR-001.1-2, Design v1.3 Rate Limiting_
+
+Google Docs APIレート制限（60リクエスト/分）を遵守するRate Limiterを実装する。
+
+**受け入れ基準**:
+- [ ] Token Bucket アルゴリズム実装
+- [ ] 容量: 60 tokens/min、リフィル: 1 token/sec
+- [ ] API呼び出し前のトークン取得機能（`acquire()`）
+- [ ] トークン不足時の自動待機機能
+- [ ] パフォーマンステスト: 429エラー発生率0%確認
+
+**技術詳細**:
+- ファイル: `extension/src/sync/TokenBucketRateLimiter.ts`
+- 詳細: [design-testing-security.md#Token Bucket RateLimiter](design-modules/design-testing-security.md) L172-241参照
+
+### 8. Phase 3検証とロールバック準備
+
+#### 8.1 Phase 3検証チェックリストの実行
+
+**受け入れ基準**:
+- [ ] オフライン時にメッセージがキューに保存される
+- [ ] ネットワーク復帰時に自動再同期が実行される
+- [ ] ストレージ使用量の警告が表示される
+- [ ] レート制限が遵守される（60リクエスト/分以下）
+- [ ] 統合テストカバレッジ80%以上
+
+#### 8.2 Phase 3ロールバック戦略の準備
+
+**受け入れ基準**:
+- [ ] オフラインキュー機能の無効化フラグ
+- [ ] オンライン同期のみでの動作確認
+- [ ] Phase 2の状態へのロールバック手順書
+
+---
+
+## Phase 4: WebSocket Protocol Extension (Week 4)
+
+### 9. WebSocketメッセージ拡張の実装
+
+_Requirements: DOCS-REQ-007.1-5_
+
+#### 9.1 WebSocketメッセージ形式の拡張
+
+WebSocketメッセージに`docsSync`フィールドを追加する。
+
+**受け入れ基準**:
+- [ ] Chrome拡張側: `docsSync`フィールドを含むメッセージ送信機能
+- [ ] イベントタイプ: `docs_sync_started`, `docs_sync_success`, `docs_sync_error`, `docs_sync_offline`, `docs_sync_online`
+- [ ] メッセージスキーマ検証（TypeScript型定義）
+- [ ] ユニットテスト: メッセージシリアライゼーション/デシリアライゼーション
+
+**技術詳細**:
+- スキーマ: [design-data.md#SyncEvent](design-modules/design-data.md) L436-462参照
+- 送信元: `SyncManager`
+- 送信先: WebSocketサーバー（Tauriアプリ）
+
+#### 9.2 Tauriアプリ側のメッセージ受信ロジック実装
+
+_Requirements: DOCS-REQ-007.3-4_
+
+Tauriアプリ側でWebSocketメッセージを受信し、UIに反映する機能を実装する。
+
+**受け入れ基準**:
+- [ ] WebSocketメッセージ受信ハンドラーの実装
+- [ ] `docsSync`フィールドの存在チェック
+- [ ] 同期ステータスの状態管理（Vuex/Pinia等）
+- [ ] UI更新（同期中/成功/失敗のバッジ表示）
+- [ ] 統合テスト: Chrome拡張 → Tauriアプリへのイベント送信
+
+**技術詳細**:
+- ファイル: `src-tauri/src/websocket/message_handler.rs`
+- UI更新: `SyncStatusStore` (Vuex/Pinia)
+
+#### 9.3 SyncStateStoreの実装（Tauri側）
+
+_Requirements: DOCS-REQ-007.5, Design v1.3 Critical Fix_
+
+Tauri側でChrome拡張の同期状態を管理するストアを実装する。
+
+**受け入れ基準**:
+- [ ] 同期状態管理（オンライン/オフライン、ドキュメントID、キュー数）
+- [ ] `enrich_message()`関数の実装（`docsSync`フィールド合成）
+- [ ] UIコンポーネントとの連携（Vue.js/React）
+- [ ] 統合テスト: WebSocketメッセージ受信 → ストア更新 → UI反映
+
+**技術詳細**:
+- ファイル: `src/store/syncState.ts`
+- 詳細: [design-data.md#SyncStateStore](design-modules/design-data.md) L464-509参照
+
+### 10. Offscreen Document実装（MV3対応）
+
+_Requirements: DOCS-REQ-007.2, Design v1.3 Critical Fix_
+
+#### 10.1 Offscreen Documentライフサイクル管理の実装
+
+WebSocket接続を維持するOffscreen Documentを実装する。
+
+**受け入れ基準**:
+- [ ] `chrome.offscreen.createDocument()`での生成
+- [ ] `ensureOffscreenDocument()`パターンの実装
+- [ ] Chrome再起動時の自動再生成（`chrome.runtime.onStartup`）
+- [ ] 拡張インストール/更新時の自動再生成（`chrome.runtime.onInstalled`）
+- [ ] 統合テスト: Chrome再起動 → Offscreen再生成 → WebSocket再接続
+
+**技術詳細**:
+- ファイル: `extension/background.js`, `extension/offscreen.html`, `extension/offscreen.js`
+- 詳細: [design-architecture.md#Offscreen Document](design-modules/design-architecture.md) L118-163参照
+
+#### 10.2 WebSocketポート動的検出の実装
+
+_Requirements: DOCS-REQ-007.2, Design v1.3 Critical Fix_
+
+meeting-minutes-coreの仕様（9001-9100の動的割り当て）に準拠したポートスキャンを実装する。
+
+**受け入れ基準**:
+- [ ] ポート範囲: 9001-9100（100ポート）
+- [ ] 10ポートずつチャンク実行（CPU配慮）
+- [ ] タイムアウト: 500ms/ポート
+- [ ] 直近の成功ポートの優先試行（再接続最適化）
+- [ ] 統合テスト: Tauriアプリ起動 → ポートスキャン → 接続成功
+
+**技術詳細**:
+- 実装場所: `offscreen.js` `connectToTauriWebSocket()`
+- 詳細: [design-architecture.md#WebSocket Port Discovery](design-modules/design-architecture.md) L172-223参照
+
+### 11. Phase 4検証とロールバック準備
+
+#### 11.1 Phase 4検証チェックリストの実行
+
+**受け入れ基準**:
+- [ ] WebSocketメッセージに`docsSync`フィールドが含まれる
+- [ ] Tauriアプリでイベントが正しく受信される
+- [ ] Offscreen Documentが正常に動作する
+- [ ] WebSocket接続がService Workerタイムアウトに影響されない
+- [ ] 統合テストカバレッジ80%以上
+
+#### 11.2 Phase 4ロールバック戦略の準備
+
+**受け入れ基準**:
+- [ ] WebSocketメッセージ形式の元への復元機能
+- [ ] Offscreen Documentの無効化フラグ
+- [ ] Phase 3の状態へのロールバック手順書
+
+---
+
+## Phase 5: E2E Testing & User Acceptance (Week 5)
+
+### 12. E2Eテストスイートの実装
+
+_Requirements: 全要件の検証_
+
+#### 12.1 E2Eテストシナリオの作成
+
+全機能を統合したE2Eテストシナリオを作成する。
+
+**受け入れ基準**:
+- [ ] シナリオ1: OAuth 2.0認証フロー → ドキュメント選択 → 同期開始
+- [ ] シナリオ2: リアルタイム同期（文字起こし → Google Docs反映）
+- [ ] シナリオ3: オフライン → オンライン復帰 → 自動再同期
+- [ ] シナリオ4: Named Range消失 → 自動復旧
+- [ ] シナリオ5: レート制限エラー → Exponential Backoff
+- [ ] シナリオ6: トークンリフレッシュ → API呼び出し継続
+- [ ] テストカバレッジ: 全要件の90%以上
+
+**技術詳細**:
+- ツール: Playwright（Chrome拡張E2Eテスト）
+- ファイル: `extension/tests/e2e/*.spec.ts`
+
+#### 12.2 パフォーマンステストの実装
+
+_Requirements: DOCS-NFR-001.1-4_
+
+パフォーマンス目標の達成を検証するテストを実装する。
+
+**受け入れ基準**:
+- [ ] 文字起こし受信 → Google Docs挿入完了: 2秒以内（DOCS-NFR-001.1）
+- [ ] Google Docs API応答時間: 95パーセンタイルで3秒以内（DOCS-NFR-001.2）
+- [ ] オフラインキュー再送信: 100メッセージあたり最大120秒（DOCS-NFR-001.3）
+- [ ] ローカルストレージ書き込み: 10ms以内（DOCS-NFR-001.4）
+- [ ] 測定ツール: `performance.now()`、Chrome DevTools Performance API
+
+**技術詳細**:
+- ファイル: `extension/tests/performance/*.spec.ts`
+- 詳細: [design-testing-security.md#Target Metrics](design-modules/design-testing-security.md) L159-165参照
+
+#### 12.3 セキュリティテストの実装
+
+_Requirements: DOCS-NFR-003.1-4_
+
+セキュリティ要件の検証テストを実装する。
+
+**受け入れ基準**:
+- [ ] トークンストレージの検証（暗号化なし警告表示確認）
+- [ ] HTTPS通信の強制検証
+- [ ] Authorization Headerの検証
+- [ ] トークン無効化の検証（Google連携解除時）
+- [ ] CSP（Content Security Policy）の検証
+
+**技術詳細**:
+- ツール: OWASP ZAP、Chrome DevTools Security
+- ファイル: `extension/tests/security/*.spec.ts`
+
+### 13. ユーザー設定機能の実装
+
+_Requirements: DOCS-REQ-008.1-5_
+
+#### 13.1 設定画面UIの実装
+
+ユーザーがGoogle Docs同期の動作をカスタマイズできる設定画面を実装する。
+
+**受け入れ基準**:
+- [ ] Google Docs同期の有効/無効切り替え
+- [ ] タイムスタンプ表示のオン/オフ切り替え
+- [ ] 話者名表示のオン/オフ切り替え
+- [ ] バッファリング時間の調整（1-5秒）
+- [ ] 設定の`chrome.storage.local`への永続化
+
+**技術詳細**:
+- ファイル: `extension/popup/settings.html`, `extension/popup/settings.ts`
+- ストレージキー: `docs_sync_settings`
+
+#### 13.2 デフォルト設定の適用
+
+**受け入れ基準**:
+- [ ] Google Docs同期: 有効（デフォルト）
+- [ ] タイムスタンプ表示: 有効（デフォルト）
+- [ ] 話者名表示: 無効（デフォルト）
+- [ ] バッファリング時間: 3秒（デフォルト）
+
+### 14. ドキュメント作成とリリース準備
+
+#### 14.1 ユーザーマニュアルの作成
+
+エンドユーザー向けのユーザーマニュアルを作成する。
+
+**受け入れ基準**:
+- [ ] Google連携手順（スクリーンショット付き）
+- [ ] ドキュメントID取得方法
+- [ ] トラブルシューティング（認証失敗、同期エラー）
+- [ ] FAQ（よくある質問）
+
+**技術詳細**:
+- ファイル: `docs/user/google-docs-sync-guide.md`
+
+#### 14.2 開発者ドキュメントの更新
+
+開発者向けドキュメントを更新する。
+
+**受け入れ基準**:
+- [ ] API仕様書（AuthManager、SyncManager、GoogleDocsClient）
+- [ ] アーキテクチャ図の更新
+- [ ] セットアップ手順（Google Cloud Project作成、OAuth 2.0設定）
+- [ ] コントリビューションガイド
+
+**技術詳細**:
+- ファイル: `docs/dev/google-docs-api-integration.md`
+
+### 15. ユーザー受け入れテスト（UAT）の実施
+
+#### 15.1 UAT実施計画の作成
+
+**受け入れ基準**:
+- [ ] テスト参加者: 3名以上
+- [ ] テスト期間: 1週間
+- [ ] テストシナリオ: 実際の会議での使用
+- [ ] フィードバック収集方法（アンケート、インタビュー）
+
+#### 15.2 UAT実施とフィードバック収集
+
+**受け入れ基準**:
+- [ ] 全テスト参加者が全シナリオを完了する
+- [ ] クリティカルバグ: 0件
+- [ ] ユーザー満足度: 80%以上
+
+#### 15.3 バグ修正とパフォーマンス最適化
+
+UAT中に発見されたバグを修正し、パフォーマンスを最適化する。
+
+**受け入れ基準**:
+- [ ] 全バグの修正完了
+- [ ] パフォーマンス目標の達成確認
+- [ ] セキュリティ脆弱性スキャンの実施
+
+### 16. Phase 5検証とリリース準備
+
+#### 16.1 Phase 5検証チェックリストの実行
+
+**受け入れ基準**:
+- [ ] 全E2Eテストが成功する
+- [ ] ユーザー受け入れテストが完了する
+- [ ] パフォーマンス目標を達成する
+- [ ] セキュリティテストが成功する
+- [ ] ドキュメントが完成する
+
+#### 16.2 本番リリース準備
+
+**受け入れ基準**:
+- [ ] リリースノートの作成
+- [ ] バージョン番号の決定（Semantic Versioning）
+- [ ] Chrome Web Storeへの申請準備
+- [ ] ロールバック手順書の最終確認
+
+---
+
+## Success Criteria
+
+本MVP2実装は、以下の条件を全て満たした場合に成功とみなされます（[requirements.md#Success Criteria](requirements.md#L351-361)参照）:
+
+1. ✅ **OAuth 2.0認証**: Chrome拡張からGoogleアカウントにログインし、OAuth 2.0トークンを取得できる
+2. ✅ **リアルタイム同期**: 文字起こし結果がリアルタイム（2秒以内）でGoogle Docsに反映される
+3. ✅ **Named Range管理**: 文字起こし結果が構造化されたフォーマットでドキュメントに挿入される
+4. ✅ **オフライン対応**: ネットワーク切断時もローカルキューに保存され、再接続時に自動同期される
+5. ✅ **エラーハンドリング**: トークンリフレッシュ、APIエラー、ネットワークエラーに対して適切に対処する
+6. ✅ **ユーザー設定**: Google Docs同期の有効/無効、タイムスタンプ表示等の設定が可能
+
+---
+
+## Rollback Triggers
+
+以下の条件を満たす場合、ロールバックを実行します（[design-migration-appendix.md#Rollback Triggers](design-modules/design-migration-appendix.md#L113-121)参照）:
+
+1. **認証失敗率が50%以上**: OAuth 2.0認証が頻繁に失敗する
+2. **API呼び出し成功率が80%未満**: Google Docs API呼び出しが頻繁に失敗する
+3. **オフラインキューの保存失敗率が10%以上**: ストレージ書き込みが頻繁に失敗する
+4. **クリティカルなセキュリティ脆弱性の発見**: トークン漏洩やXSS攻撃のリスク
+
+---
+
+## Dependencies
+
+### Upstream Dependencies (Blocking)
+
+本specの実装開始前に、以下の成果物が完了している必要があります:
+
+- **meeting-minutes-core** (phase: design-validated以降):
+  - **CORE-REQ-006**: WebSocketサーバー (ポート9001-9100)
+  - **CORE-REQ-007**: Chrome拡張スケルトン (WebSocket接続機能)
+- **meeting-minutes-stt** (phase: implementation-completed):
+  - **STT-REQ-008**: WebSocketメッセージ拡張 (confidence, language, isPartial フィールド)
+
+### External Dependencies
+
+- **Google Docs API**: v1
+- **Google OAuth 2.0**: Google Identity Services
+- **Chrome Extensions API**: Manifest V3
+- **Chrome Storage API**: chrome.storage.local
+
+---
+
+## Task Status Tracking
+
+- **Phase 1**: 未着手
+- **Phase 2**: 未着手
+- **Phase 3**: 未着手
+- **Phase 4**: 未着手
+- **Phase 5**: 未着手
+
+---
+
+## Revision History
+
+| Date | Version | Author | Changes |
+|------|---------|--------|---------|
+| 2025-10-24 | 1.0 | Claude Code | 初版作成（タスク生成） |

@@ -283,6 +283,9 @@ meeting-minutes-docs-syncは、meeting-minutes-stt（MVP1）で確立した文�
 ### DOCS-NFR-001: Performance
 
 1. **DOCS-NFR-001.1**: WHEN 文字起こしメッセージを受信してからGoogle Docsに挿入完了まで THEN Chrome拡張 SHALL 2秒以内に処理を完了する（ネットワーク遅延を除く）
+
+   **注**: バッファリング時間（デフォルト3秒）は待機時間であり、処理時間に含まれない。実際の挿入完了時間 = バッファリング時間（0-3秒） + 処理時間（<2秒） + ネットワーク遅延。ユーザーはDOCS-REQ-008.4でバッファリング時間を調整可能（1-5秒）。レート制限遵守（60リクエスト/分）を優先する場合は3秒、リアルタイム性を優先する場合は1-2秒に設定可能。
+
 2. **DOCS-NFR-001.2**: WHEN `batchUpdate`リクエストを送信 THEN Google Docs API SHALL 95パーセンタイルで3秒以内に応答する
 3. **DOCS-NFR-001.3**: WHEN オフラインキューから再送信 THEN Chrome拡張 SHALL Google Docs API Rate Limit（60件/分）を遵守し、100メッセージあたり最大120秒（2分）以内に処理する
 4. **DOCS-NFR-001.4**: WHEN ローカルキューにメッセージを保存 THEN Chrome拡張 SHALL 10ms以内に`chrome.storage.local`への書き込みを完了する
