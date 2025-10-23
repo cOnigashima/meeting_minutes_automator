@@ -491,7 +491,9 @@ Test Files  20 passed (20)
 - [design-components.md](../design-modules/design-components.md): 既存コンポーネント設計
 - [design-architecture.md](../design-modules/design-architecture.md): アーキテクチャ概要
 - [design-testing-security.md](../design-modules/design-testing-security.md): テスト戦略
-- [design-artifacts/class-diagrams/](../design-artifacts/class-diagrams/): 完成済みクラス図
+- [Auth Domain Class Diagram](/docs/uml/meeting-minutes-docs-sync/cls/auth-domain.md): 完成済みクラス図（5クラス）
+- [Sync Domain Class Diagram](/docs/uml/meeting-minutes-docs-sync/cls/sync-domain.md): 完成済みクラス図（8クラス）
+- [API Domain Class Diagram](/docs/uml/meeting-minutes-docs-sync/cls/api-domain.md): 完成済みクラス図（6クラス）
 - [design-artifacts/responsibility-matrix.md](../design-artifacts/responsibility-matrix.md): 完成済み責務マトリクス
 - [design-artifacts/interface-contracts.md](../design-artifacts/interface-contracts.md): インターフェース契約（要完成）
 - [SOLID Principles](https://en.wikipedia.org/wiki/SOLID): 単一責務原則等

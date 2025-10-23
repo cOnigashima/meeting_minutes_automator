@@ -1,7 +1,7 @@
 # Sync Domain - Class Diagram
 
-> **親ドキュメント**: [phase-0-design-validation.md](../../task-details/phase-0-design-validation.md)
-> **関連設計**: [design-components.md#Sync Domain](../../design-modules/design-components.md)
+> **親ドキュメント**: [phase-0-design-validation.md](/.kiro/specs/meeting-minutes-docs-sync/task-details/phase-0-design-validation.md)
+> **関連設計**: [design-components.md#Sync Domain](/.kiro/specs/meeting-minutes-docs-sync/design-modules/design-components.md)
 > **Requirements**: DOCS-REQ-004.1-9, DOCS-REQ-005.1-12, DOCS-NFR-001.1-4
 
 ## Class Diagram

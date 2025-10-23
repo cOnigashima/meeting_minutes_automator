@@ -1,7 +1,7 @@
 # API Domain - Class Diagram
 
-> **親ドキュメント**: [phase-0-design-validation.md](../../task-details/phase-0-design-validation.md)
-> **関連設計**: [design-components.md#API Domain](../../design-modules/design-components.md)
+> **親ドキュメント**: [phase-0-design-validation.md](/.kiro/specs/meeting-minutes-docs-sync/task-details/phase-0-design-validation.md)
+> **関連設計**: [design-components.md#API Domain](/.kiro/specs/meeting-minutes-docs-sync/design-modules/design-components.md)
 > **Requirements**: DOCS-REQ-002.1-13, DOCS-REQ-003.1-8, DOCS-REQ-006.1-6
 
 ## Class Diagram

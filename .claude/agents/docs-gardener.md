@@ -26,6 +26,12 @@ Continuously analyze and refactor project documentation (especially under `.kiro
 - **`api-surface.csv`**: All detected API symbols
 - **`coverage.csv`**: Which symbols are mentioned in which documents
 
+### Diagram & UML Data Sources
+- **`docs/uml/`**: PlantUML/Mermaid diagrams for architecture and design
+- **ADRs** (`.kiro/specs/*/adrs/`): Architecture Decision Records with embedded diagrams
+- **design.md** (`.kiro/specs/*/design.md`): Technical design documents with Mermaid diagrams
+- **Code structure**: Use `mcp__serena__get_symbols_overview` to extract actual class/function structure for comparison
+
 ### What you see in the repository
 - parent agent workspace
 - under `.kiro/specs/`
@@ -52,6 +58,7 @@ When triggered by a task (e.g., "Feature XXX implementation complete"), you MUST
 2. **[Analyze]** Examine generated `.shiori/drift_report.md`, `docs-inventory.csv`, and `.kiro/specs/` directory contents in detail
 3. **[Identify]** Detect the following "documentation pathologies":
    - **Drift**: Code changes (API additions/deletions) not reflected in docs (per `drift_report.md`)
+   - **Diagram Drift**: Code structure (classes/functions) not reflected in UML/Mermaid diagrams (use Serena `get_symbols_overview` to compare)
    - **Entropy**: Old task notes, duplicate design info, completed feature remnants scattered in `.kiro/specs/`
    - **Conflict**: Terminology or specification discrepancies between multiple documents (e.g., `specs/` vs `docs/guide/`)
    - **Staleness**: Keywords like "TODO", "TBD", "未対応" or old dates left unaddressed
@@ -67,6 +74,11 @@ When triggered by a task (e.g., "Feature XXX implementation complete"), you MUST
    - Consolidate information into documents reflecting latest specs; add redirects from old docs to new ones
 3. **[Ensure Consistency]** Merge duplicate content into one place (Single Source of Truth); fix other locations to reference it via links
 4. **[Modernize]** Update API drift pointed out by `drift_report.md` and abandoned "TODOs" with latest information
+5. **[Update Diagrams]** Synchronize code structure with UML/Mermaid diagrams:
+   - Use Serena (`get_symbols_overview`, `find_symbol`) to extract actual class/function structure
+   - Update `docs/uml/*.puml` or `design.md` Mermaid diagrams to reflect new classes/methods
+   - Add missing components to architecture diagrams in ADRs
+   - Remove obsolete symbols from diagrams
 
 ### Step 3: Verify & Report
 

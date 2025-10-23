@@ -302,4 +302,47 @@ Managed by `/kiro:steering` command. Updates here reflect command changes.
 - [ ] `git diff`で差分確認
 - [ ] ADR採番の場合は`validate_adrs.sh`実行
 
+### ダイアグラム管理規則
+
+**Single Source of Truth**: すべてのUML/Mermaidダイアグラムは `docs/uml/<spec-name>/<category>/` に集約する。
+
+#### ディレクトリ構造
+
+```
+docs/uml/
+└── <spec-name>/           # 例: meeting-minutes-stt, meeting-minutes-docs-sync
+    ├── cls/               # クラス図 (Class Diagrams)
+    ├── seq/               # シーケンス図 (Sequence Diagrams)
+    ├── cmp/               # コンポーネント図 (Component Diagrams)
+    ├── act/               # アクティビティ図 (Activity Diagrams)
+    └── state/             # 状態図 (State Machine Diagrams)
+```
+
+#### フォーマット
+
+- **PlantUML**: `*.puml` (レガシー、meeting-minutes-sttで使用)
+- **Mermaid**: `*.md` (推奨、Markdown埋め込み形式)
+
+#### 命名規則
+
+- **PlantUML**: `<diagram-name>.puml` (例: `audio-pipeline.puml`)
+- **Mermaid**: `<diagram-name>.md` (例: `sync-domain.md`)
+
+#### ダイアグラム更新ワークフロー
+
+1. **コード変更時**: Serena (`get_symbols_overview`) で実装変更を確認
+2. **ダイアグラム更新**: `docs/uml/<spec>/cls/*.md` or `*.puml` を直接編集
+3. **自動化なし**: スクリプト・ツール不要（LLMエージェントが直接編集）
+
+#### エージェント分担
+
+- **context-scout**: コード変更時に2-4ファイル範囲でダイアグラム整合性チェック（軽量）
+- **docs-gardener**: 5+ファイル変更時にダイアグラム大規模同期（`scripts/docs_crawler.py`使用）
+
+#### 禁止事項
+
+- ❌ `.kiro/specs/<spec>/design-artifacts/class-diagrams/` への新規ダイアグラム作成
+- ❌ `docs/diagrams/` への新規ダイアグラム作成（削除済み）
+- ❌ ダイアグラムの自動生成スクリプト作成（YAGNI原則違反）
+
 ---

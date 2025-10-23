@@ -48,11 +48,15 @@
 **詳細**: [phase-0-design-validation.md](task-details/phase-0-design-validation.md)
 
 **Design Artifacts**:
-- [Auth Domain Class Diagram](design-artifacts/class-diagrams/auth-domain.md)
-- [Sync Domain Class Diagram](design-artifacts/class-diagrams/sync-domain.md)
-- [API Domain Class Diagram](design-artifacts/class-diagrams/api-domain.md)
-- [Responsibility Matrix](design-artifacts/responsibility-matrix.md)
-- [Interface Contracts](design-artifacts/interface-contracts.md)
+
+**Phase 0成果物（`.kiro/specs/meeting-minutes-docs-sync/design-artifacts/`）**:
+- [Responsibility Matrix](design-artifacts/responsibility-matrix.md) - 全19クラスの責務定義（Task 0.9で検証）
+- [Interface Contracts](design-artifacts/interface-contracts.md) - 全19インターフェースの契約定義（Task 0.2で完成）
+
+**プロジェクト共有図版（`docs/uml/`）**:
+- [Auth Domain Class Diagram](/docs/uml/meeting-minutes-docs-sync/cls/auth-domain.md) - 5クラス
+- [Sync Domain Class Diagram](/docs/uml/meeting-minutes-docs-sync/cls/sync-domain.md) - 8クラス
+- [API Domain Class Diagram](/docs/uml/meeting-minutes-docs-sync/cls/api-domain.md) - 6クラス
 
 ---
 

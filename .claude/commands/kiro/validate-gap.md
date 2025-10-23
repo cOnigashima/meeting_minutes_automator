@@ -38,10 +38,17 @@ Analyze implementation requirements and existing codebase for feature: **$1**
 
 **Code Structure Assessment**:
 - Document file organization, naming conventions, and architectural layers
-- Extract import/export patterns and module dependency structures  
+- Extract import/export patterns and module dependency structures
 - Identify existing testing patterns (file placement, frameworks, mocking approaches)
 - Map API client, database, and authentication implementation approaches currently used
 - Note established coding standards and development practices
+
+**Code-Diagram Alignment Check**:
+- Use Serena (`mcp__serena__get_symbols_overview`, `mcp__serena__find_symbol`) to extract actual class/function structure
+- Compare with existing diagrams: `docs/uml/`, ADRs (`.kiro/specs/*/adrs/`), `design.md`
+- Identify implemented classes/functions missing from diagrams
+- Flag obsolete diagram elements no longer in codebase
+- Document diagram drift as implementation gap (affects design phase)
 
 #### 2. Requirements Feasibility Analysis
 **Technical Requirements Extraction**:
@@ -111,6 +118,12 @@ Generate analysis in the language specified in spec.json (check `.kiro/specs/$1/
 - Relevant existing components and their current responsibilities
 - Established patterns and conventions to follow
 - Reusable utilities and services available
+
+#### Code-Diagram Alignment Status
+- **Diagram Drift Detected**: List classes/functions in code but missing from diagrams
+- **Obsolete Diagram Elements**: List diagram components no longer in codebase
+- **Diagram Locations**: `docs/uml/*.puml`, ADRs with embedded diagrams, `design.md` Mermaid blocks
+- **Recommendation**: Flag diagram updates required in design phase
 
 #### Implementation Strategy Options
 For each viable approach:

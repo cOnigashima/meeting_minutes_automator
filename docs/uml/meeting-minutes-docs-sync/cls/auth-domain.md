@@ -1,7 +1,7 @@
 # Auth Domain - Class Diagram
 
-> **親ドキュメント**: [phase-0-design-validation.md](../../task-details/phase-0-design-validation.md)
-> **関連設計**: [design-components.md#Auth Domain](../../design-modules/design-components.md)
+> **親ドキュメント**: [phase-0-design-validation.md](/.kiro/specs/meeting-minutes-docs-sync/task-details/phase-0-design-validation.md)
+> **関連設計**: [design-components.md#Auth Domain](/.kiro/specs/meeting-minutes-docs-sync/design-modules/design-components.md)
 > **Requirements**: DOCS-REQ-001.1-9, DOCS-NFR-003.1, DOCS-NFR-003.3
 
 ## Overview
