@@ -1,0 +1,170 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/spec/packages/format/latest/schema.json",
+  "color": {
+    "bg": {
+      "light": {
+        "$type": "color",
+        "$value": "#f6f6f6",
+        "$description": "Background color (light mode)"
+      },
+      "dark": {
+        "$type": "color",
+        "$value": "#101015",
+        "$description": "Background color (dark mode)"
+      }
+    },
+    "text": {
+      "light": {
+        "$type": "color",
+        "$value": "#0f0f0f",
+        "$description": "Text color (light mode)"
+      },
+      "dark": {
+        "$type": "color",
+        "$value": "#f6f6f6",
+        "$description": "Text color (dark mode)"
+      }
+    },
+    "card": {
+      "bg": {
+        "light": {
+          "$type": "color",
+          "$value": "#ffffff",
+          "$description": "Card background (light mode)"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "rgba(255, 255, 255, 0.05)",
+          "$description": "Card background (dark mode)"
+        }
+      },
+      "border": {
+        "light": {
+          "$type": "color",
+          "$value": "rgba(0, 0, 0, 0.08)",
+          "$description": "Card border (light mode)"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "rgba(255, 255, 255, 0.12)",
+          "$description": "Card border (dark mode)"
+        }
+      }
+    },
+    "input": {
+      "bg": {
+        "light": {
+          "$type": "color",
+          "$value": "#ffffff",
+          "$description": "Input background (light mode)"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "rgba(255, 255, 255, 0.1)",
+          "$description": "Input background (dark mode)"
+        }
+      },
+      "border": {
+        "light": {
+          "$type": "color",
+          "$value": "rgba(0, 0, 0, 0.15)",
+          "$description": "Input border (light mode)"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "rgba(255, 255, 255, 0.25)",
+          "$description": "Input border (dark mode)"
+        }
+      },
+      "text": {
+        "light": {
+          "$type": "color",
+          "$value": "#0f0f0f",
+          "$description": "Input text (light mode)"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "#f6f6f6",
+          "$description": "Input text (dark mode)"
+        }
+      }
+    },
+    "accent": {
+      "primary": {
+        "$type": "color",
+        "$value": "#396cd8",
+        "$description": "Primary accent color (shared across themes)"
+      }
+    },
+    "danger": {
+      "primary": {
+        "$type": "color",
+        "$value": "#f44336",
+        "$description": "Danger color (shared across themes)"
+      }
+    },
+    "warning": {
+      "primary": {
+        "light": {
+          "$type": "color",
+          "$value": "#ff9800",
+          "$description": "Warning color (light mode)"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "#ffc571",
+          "$description": "Warning color (dark mode)"
+        }
+      }
+    }
+  },
+  "space": {
+    "$type": "dimension",
+    "2": {
+      "$value": "0.6em",
+      "$description": "Spacing unit 2 (padding: 0.6em)"
+    },
+    "4": {
+      "$value": "1.2em",
+      "$description": "Spacing unit 4 (padding: 1.2em)"
+    },
+    "6": {
+      "$value": "1.5rem",
+      "$description": "Spacing unit 6 (padding: 1.5rem)"
+    }
+  },
+  "radius": {
+    "$type": "dimension",
+    "sm": {
+      "$value": "8px",
+      "$description": "Small border radius"
+    },
+    "md": {
+      "$value": "12px",
+      "$description": "Medium border radius"
+    }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "card": {
+      "$value": {
+        "offsetX": "0px",
+        "offsetY": "6px",
+        "blur": "18px",
+        "spread": "0px",
+        "color": "rgba(15, 15, 15, 0.08)"
+      },
+      "$description": "Card elevation shadow"
+    },
+    "sm": {
+      "$value": {
+        "offsetX": "0px",
+        "offsetY": "2px",
+        "blur": "2px",
+        "spread": "0px",
+        "color": "rgba(0, 0, 0, 0.2)"
+      },
+      "$description": "Small shadow for buttons"
+    }
+  }
+}

@@ -1,9 +1,10 @@
 {
   "feature_name": "ui-hub",
   "created_at": "2025-10-21T00:00:00Z",
-  "updated_at": "2025-10-24T01:00:00Z",
+  "updated_at": "2025-10-24T08:00:00Z",
   "language": "ja",
-  "phase": "ready-for-implementation",
+  "phase": "implementation-in-progress",
+  "current_phase_detail": "Phase 2完了（トークンパイプライン構築）→ Phase 3準備中（Storybook統合）",
   "approvals": {
     "requirements": {
       "generated": true,
@@ -22,5 +23,11 @@
     }
   },
   "ready_for_implementation": true,
+  "implementation_status": {
+    "completed_phases": ["Phase 0", "Phase 1", "Phase 2"],
+    "current_phase": "Phase 3 (Storybook統合)",
+    "next_phase": "Phase 4 (MCPサーバ実装)",
+    "notes": "Phase 2完了。重要技術判断: (1) transformer使用（実証ベース）、(2) buildPath相対化、(3) shadow/css追加、(4) 単一ファイル構造、(5) size/px問題は誤指摘、(6) TypeScript runtime export不要（設計意図内）"
+  },
   "revision_reason": "Style Dictionary v4完全移行: (1) ESM専用仕様対応（import/export）、(2) v4 API変更対応（transformer→transform）。UIH-REQ-001.3（既存CSS変数互換性）を保証。"
 }

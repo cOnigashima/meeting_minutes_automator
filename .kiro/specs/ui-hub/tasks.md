@@ -240,7 +240,7 @@ _Requirements: REQ-006_
    StyleDictionary.registerTransform({
      name: 'name/css/legacy',
      type: 'name',
-     transform: (token) => {  // v4: transformer → transform
+     transformer: (token) => {  // v4 still expects transformer
        // 8つの既存CSS変数名に明示的マッピング
        // color.bg.light/dark → --bg-color
        // color.text.light/dark → --text-color

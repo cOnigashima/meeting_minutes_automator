@@ -456,7 +456,7 @@ import StyleDictionary from 'style-dictionary';
 StyleDictionary.registerTransform({
   name: 'name/css/legacy',
   type: 'name',
-  transform: (token) => {  // v4: transformer → transform
+  transformer: (token) => {  // v4 still expects transformer
     const path = token.path;
 
     // 既存 src/App.css の8つのCSS変数名にマッピング
