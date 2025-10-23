@@ -99,7 +99,7 @@ _Requirements: REQ-005_
    ```json
    {
      "sb": "storybook dev -p 6006",
-     "tokens:build": "style-dictionary build -c sd.config.json",
+     "tokens:build": "style-dictionary build -c sd.config.js",
      "tokens:watch": "chokidar \"tokens/**/*.json\" -c \"pnpm tokens:build\"",
      "mcp": "tsx scripts/mcp-server.ts",
      "dev": "pnpm tokens:build && run-p sb tokens:watch mcp"
@@ -223,44 +223,49 @@ _Requirements: REQ-006_
 **目的**: トークンJSON → CSS変数への変換ルールを定義
 
 **成果物**:
-- `ui-hub/sd.config.json`
+- `ui-hub/sd.config.js`
 
 **実装内容**:
 1. Style Dictionary設定ファイル作成:
-   ```json
-   {
-     "source": ["tokens/**/*.json"],
-     "platforms": {
-       "css": {
-         "transformGroup": "css",
-         "buildPath": "src/styles/",
-         "files": [
-           {
-             "destination": "tokens.css",
-             "format": "css/variables",
-             "options": {
-               "outputReferences": false
-             }
-           }
-         ]
-       },
-       "ts": {
-         "transformGroup": "js",
-         "buildPath": "src/styles/",
-         "files": [
-           {
-             "destination": "tokens.d.ts",
-             "format": "typescript/es6-declarations"
-           }
-         ]
-       }
+   - **重要**: ESM構文でJavaScriptファイル（`sd.config.js`）として作成（Style Dictionary v4はESM専用）
+   - カスタムtransform `name/css/legacy` を登録（既存8変数への互換性維持）
+   - カスタムformat `css/variables-with-dark-mode` を登録（@media出力）
+   - 完全な実装は `design.md` L452-534 を参照
+
+   **実装の要点（ESM構文 + v4 API）**:
+   ```javascript
+   import StyleDictionary from 'style-dictionary';
+
+   // カスタムtransform登録（既存CSS変数名との互換性）
+   StyleDictionary.registerTransform({
+     name: 'name/css/legacy',
+     type: 'name',
+     transform: (token) => {  // v4: transformer → transform
+       // 8つの既存CSS変数名に明示的マッピング
+       // color.bg.light/dark → --bg-color
+       // color.text.light/dark → --text-color
+       // ... (全8個のマッピング)
      }
-   }
+   });
+
+   // カスタムformat登録（ダークモード対応）
+   StyleDictionary.registerFormat({
+     name: 'css/variables-with-dark-mode',
+     formatter: ({ dictionary }) => {
+       // light値 → :root {}
+       // dark値 → @media (prefers-color-scheme: dark) { :root {} }
+     }
+   });
+
+   export default {
+     source: ['tokens/**/*.tokens.json'],
+     platforms: { /* ... */ }
+   };
    ```
-2. カスタムtransformの追加（既存CSS変数名との互換性維持）:
-   - `color.bg.light` → `--bg-color` (ライトモード)
-   - `color.bg.dark` → `--bg-color` (ダークモード)
-   - `@media (prefers-color-scheme: dark)`での自動切替
+
+2. platforms設定:
+   - css: カスタムtransforms配列 + カスタムformat使用
+   - ts: TypeScript型定義生成
 
 **検証**:
 - `pnpm tokens:build`が成功

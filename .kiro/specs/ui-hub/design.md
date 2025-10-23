@@ -212,21 +212,7 @@ graph TB
 
 **選択したアプローチ**: Style Dictionaryのカスタムtransformで既存変数名を出力
 
-```javascript
-// sd.config.json (概念)
-{
-  transform: {
-    "name/css/legacy": {
-      type: "name",
-      transformer: (token) => {
-        // color.bg.light → --bg-color
-        if (token.path[0] === "color" && token.path[1] === "bg") return "--bg-color";
-        // ...
-      }
-    }
-  }
-}
-```
+**実装**: 上記「トークン変換パイプライン」セクションの`sd.config.js`で完全実装済み。`name/css/legacy`トランスフォームが8つの既存CSS変数名（`--bg-color`, `--text-color`等）に正確にマッピングする。
 
 **理由**:
 - 本体適用コスト: `src/App.tsx`のコード変更不要、`src/App.css`のみ置き換え
@@ -274,19 +260,9 @@ graph TB
 2. **単一モードのみ**: ライトモードのみサポート（既存機能劣化）
 3. **CSS変数の動的書き換え**: `document.documentElement.style.setProperty`（パフォーマンス懸念）
 
-**選択したアプローチ**: トークンJSONで`color.bg.light` / `color.bg.dark`を定義し、Style Dictionaryで以下を生成:
+**選択したアプローチ**: トークンJSONで`color.bg.light` / `color.bg.dark`を定義し、Style Dictionaryのカスタムformat `css/variables-with-dark-mode`で`:root`ブロックと`@media (prefers-color-scheme: dark)`ブロックを分離生成
 
-```css
-:root {
-  --bg-color: #f6f6f6; /* light */
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-color: #101015; /* dark */
-  }
-}
-```
+**実装**: 上記「トークン変換パイプライン」セクションの`sd.config.js`で完全実装済み。`css/variables-with-dark-mode`フォーマットがlight値を`:root`に、dark値を`@media (prefers-color-scheme: dark) { :root {...} }`に出力する。
 
 **理由**:
 - 既存動作維持: `src/App.tsx`のロジック変更不要
@@ -469,43 +445,100 @@ export default preview;
 - **データ所有**: `tokens/base.tokens.json`を入力、`ui-hub/src/styles/tokens.css`を出力
 - **トランザクション境界**: 単一ファイルのビルドはアトミック
 
-#### sd.config.json
+#### sd.config.js
 
-```json
-{
-  "source": ["tokens/**/*.tokens.json"],
-  "platforms": {
-    "css": {
-      "transformGroup": "css",
-      "buildPath": "ui-hub/src/styles/",
-      "files": [
+**重要**: JSONではなくJavaScriptファイルとして実装し、カスタムtransform/formatを登録する
+
+```javascript
+import StyleDictionary from 'style-dictionary';
+
+// カスタムtransform: 既存CSS変数名へのマッピング（決定1の実装）
+StyleDictionary.registerTransform({
+  name: 'name/css/legacy',
+  type: 'name',
+  transform: (token) => {  // v4: transformer → transform
+    const path = token.path;
+
+    // 既存 src/App.css の8つのCSS変数名にマッピング
+    if (path[0] === 'color' && path[1] === 'bg') return '--bg-color';
+    if (path[0] === 'color' && path[1] === 'text') return '--text-color';
+    if (path[0] === 'color' && path[1] === 'card' && path[2] === 'bg') return '--card-bg';
+    if (path[0] === 'color' && path[1] === 'card' && path[2] === 'border') return '--card-border';
+    if (path[0] === 'color' && path[1] === 'input' && path[2] === 'bg') return '--input-bg';
+    if (path[0] === 'color' && path[1] === 'input' && path[2] === 'border') return '--input-border';
+    if (path[0] === 'color' && path[1] === 'input' && path[2] === 'text') return '--input-text';
+    if (path[0] === 'color' && path[1] === 'accent' && path[2] === 'primary') return '--accent-color';
+
+    // その他のトークン（space, radius, shadow等）は標準命名
+    return '--' + path.filter(p => p !== 'light' && p !== 'dark').join('-');
+  }
+});
+
+// カスタムformat: @media (prefers-color-scheme: dark)生成（決定3の実装）
+StyleDictionary.registerFormat({
+  name: 'css/variables-with-dark-mode',
+  formatter: ({ dictionary }) => {
+    const lightVars = [];
+    const darkVars = [];
+
+    dictionary.allTokens.forEach(token => {
+      const name = token.name; // カスタムtransform適用済み
+      const path = token.path;
+      const lastSegment = path[path.length - 1];
+
+      if (lastSegment === 'light') {
+        lightVars.push(`  ${name}: ${token.value};`);
+      } else if (lastSegment === 'dark') {
+        darkVars.push(`  ${name}: ${token.value};`);
+      } else {
+        // light/dark分類なし（accent, space, radius, shadow等）
+        lightVars.push(`  ${name}: ${token.value};`);
+      }
+    });
+
+    let css = ':root {\n' + lightVars.join('\n') + '\n}\n';
+
+    if (darkVars.length > 0) {
+      css += '\n@media (prefers-color-scheme: dark) {\n  :root {\n' + darkVars.join('\n') + '\n  }\n}\n';
+    }
+
+    return css;
+  }
+});
+
+export default {
+  source: ['tokens/**/*.tokens.json'],
+  platforms: {
+    css: {
+      // カスタムtransformを明示的に適用
+      transforms: ['attribute/cti', 'name/css/legacy', 'size/px', 'color/css'],
+      buildPath: 'ui-hub/src/styles/',
+      files: [
         {
-          "destination": "tokens.css",
-          "format": "css/variables",
-          "options": {
-            "outputReferences": true
-          }
+          destination: 'tokens.css',
+          format: 'css/variables-with-dark-mode'
         }
       ]
     },
-    "ts": {
-      "transformGroup": "js",
-      "buildPath": "ui-hub/src/styles/",
-      "files": [
+    ts: {
+      transformGroup: 'js',
+      buildPath: 'ui-hub/src/styles/',
+      files: [
         {
-          "destination": "tokens.d.ts",
-          "format": "typescript/es6-declarations"
+          destination: 'tokens.d.ts',
+          format: 'typescript/es6-declarations'
         }
       ]
     }
   }
-}
+};
 ```
 
 **設計理由**:
-- **css/variables形式**: `--bg-color: #f6f6f6;` 形式で既存CSS変数と互換
+- **カスタムtransform `name/css/legacy`**: 既存CSS変数名（`--bg-color`等）との完全互換性を保証（決定1の実装）
+- **カスタムformat `css/variables-with-dark-mode`**: light/dark両モードの値を`:root`と`@media (prefers-color-scheme: dark)`に分離出力（決定3の実装）
+- **transforms配列の明示**: 標準transformGroupではなく個別transformを列挙し、カスタムtransformを確実に適用
 - **TypeScript型生成**: `tokens.d.ts`で型安全性確保（将来的にReactコンポーネントで使用）
-- **outputReferences**: トークン参照の追跡（例: `accent.primary`が複数箇所で使われる場合）
 
 #### 入力/出力
 

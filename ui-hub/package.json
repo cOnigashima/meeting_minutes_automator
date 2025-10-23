@@ -1,0 +1,36 @@
+{
+  "name": "ui-hub",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Design token-driven development environment for Meeting Minutes Automator UI improvements",
+  "private": true,
+  "scripts": {
+    "sb": "storybook dev -p 6006",
+    "tokens:build": "style-dictionary build -c sd.config.js",
+    "tokens:watch": "chokidar 'tokens/**/*.json' -c 'pnpm tokens:build'",
+    "mcp": "node scripts/mcp-server.js",
+    "dev": "run-p sb tokens:watch mcp",
+    "build-storybook": "storybook build"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@storybook/addon-a11y": "^8.0.0",
+    "@storybook/addon-essentials": "^8.0.0",
+    "@storybook/react": "^8.0.0",
+    "@storybook/react-vite": "^8.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "chokidar-cli": "^3.0.0",
+    "npm-run-all2": "^6.0.0",
+    "storybook": "^8.0.0",
+    "style-dictionary": "^4.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0"
+  }
+}

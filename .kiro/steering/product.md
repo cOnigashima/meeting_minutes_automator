@@ -113,38 +113,41 @@ Meeting Minutes Automator は、会議や打ち合わせの音声をリアルタ
 - **客観性**: 発言者バイアスや記録者の主観を排除
 - **再現性**: 録音データからの正確な振り返りと検証
 
-## Current Implementation Status（2025-10-19）
+## Current Implementation Status（2025-10-21）
 
-- ✅ **MVP0 Walking Skeleton**（完了: 2025-10-10）  
+- ✅ **MVP0 Walking Skeleton**（完了: 2025-10-10）
   Fake 録音により 3 プロセス疎通を確立し、Chrome 拡張スケルトンを動作させる基盤を構築。
-- ✅ **MVP1 Real STT（コア）**（2025-10-14 アップデート）  
-  AudioDeviceAdapter / VAD / Whisper パイプラインとイベントストリーム IPC を実装し、macOS で手動/自動テストを通過。
-- 🔄 **MVP1 Real STT（UI/UX 拡張）**  
-  デバイス選択 UI、セッション管理 UI、Docs 同期前提のストレージ可視化を Task 9.x / 10.x で開発中。
-- 🔵 **MVP2 Google Docs Sync**  
-  要件・設計（Design Generated）までは完了。MVP1 の安定化後に実装開始。
-- ⚪ **MVP3 LLM Summary + Production UI**  
-  要件定義待ち。STT + Docs 同期を前提条件とする。
+- ✅ **MVP1 Real STT**（完了: 2025-10-21、Phase 13+14完了）
+  - Phase 13: 検証負債解消（E2Eテスト、長時間稼働、セキュリティ修正）
+  - Phase 14: Post-MVP1 Cleanup（LegacyIpcMessage削除、0 warnings達成）
+  - テスト: 267/285合格（18件失敗は優先度P2、コア機能動作に影響なし）
+- 📋 **次: MVP2 Google Docs Sync** - OAuth 2.0 + Google Docs API統合
+  - MVP2 Phase 0でテスト修正を検討（優先度P2、18件失敗）
+- 🔵 **並行: meeting-minutes-ci** - クロスプラットフォームCI整備
+- ⚪ **MVP3 LLM Summary + Production UI**
+  MVP2完了後に要件定義開始。STT + Docs 同期を前提条件とする。
 
 ### Sub-Specification Progress
 
 | Spec | 現在のフェーズ | 直近の成果 / 次のステップ |
 |------|---------------|---------------------------|
 | meeting-minutes-core (MVP0) | Implementation Complete ✅ | Walking Skeleton 完了、今後はバグ修正のみ |
-| meeting-minutes-stt (MVP1) | Implementation 🔄 | Task 2〜7 完了、Task 9.x（UI統合）・10.x（E2E自動化）実施中 |
-| meeting-minutes-docs-sync (MVP2) | Design Generated 🔵 | OAuth / Docs API 設計済み、実装は MVP1 安定化待ち |
-| meeting-minutes-ci | Spec Initialized 🔵 | クロスプラットフォームCI と smoke テストの設計を継続 |
-| meeting-minutes-llm (MVP3) | Not Started ⚪ | MVP1/2 完了後に要件定義開始 |
-| ui-hub | Design Generated 🔵 | 既存UI改善のためのトークン駆動開発環境設計完了、tasks生成待ち |
+| meeting-minutes-stt (MVP1) | Completed ✅ | Phase 13+14完了（2025-10-21）、267/285テスト合格、18件失敗はP2で順次対応 |
+| meeting-minutes-docs-sync (MVP2) | Design Generated 🔵 | OAuth/Docs API設計済み、tasks生成待ち、Phase 0でテスト修正検討 |
+| meeting-minutes-ci | Spec Initialized 🔵 | CI依存タスク受入完了（CI-INTAKE-001/002/003）、tasks生成待ち |
+| meeting-minutes-llm (MVP3) | Not Started ⚪ | MVP2完了後に要件定義開始 |
+| ui-hub | Ready for Implementation 🔵 | 全承認完了、22タスク実装準備完了 |
 
 ### Implementation Progress Snapshots
 
-- ✅ **ADR / 仕様更新**: ADR-013/015/016 により IPC デッドロック、モデル切替、オフラインフォールバックの P0 問題を解消。
-- ✅ **テストベッド**:
-  - `cargo test --test stt_e2e_test`（Whisper モデルとフィクスチャ音声を用いた E2E）
-  - `.venv/bin/python -m pytest tests/test_audio_integration.py`（部分/確定イベント、エラー配信を検証）
-- ✅ **ドキュメント**: README / platform-verification.md / meeting-minutes-stt tasks を最新状態へ更新。
-- 🔄 **CI 自動化**: GitHub Actions matrix は設計済み。現状は macOS 手動検証 + ローカルテストで代替（meeting-minutes-ci で追跡）。
+- ✅ **MVP1完了（2025-10-21）**: Phase 13+14完了
+  - Phase 13: Task 10.1/10.2/10.3/10.4/10.6/10.7 E2Eテスト + Task 11.3長時間稼働 + SEC-001/002/005セキュリティ修正
+  - Phase 14: LegacyIpcMessage完全削除、P0バグ修正、Rust 0 warnings達成
+  - テスト: Rust 106/107 + Python 161/178 = 267/285合格
+  - Known Limitations: ADR-018で文書化（LIMIT-001〜003、優先度P2）
+- 🔵 **CI依存タスク移行**: meeting-minutes-ci specへ移管（Task 10.5, SEC-003, SEC-004）
+- 📋 **MVP2 Phase 0検討事項**: Python 17件 + Rust 1件のテスト失敗解消（優先度P2）
+- ✅ **ドキュメント**: README / platform-verification.md / MVP2-HANDOFF.md を最新状態へ更新
 
 ---
 
