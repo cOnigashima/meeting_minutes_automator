@@ -78,7 +78,11 @@
       "Bash(for:*)",
       "Bash(head:*)",
       "Bash(done)",
-      "Bash(while read size path)"
+      "Bash(while read size path)",
+      "Bash(npm --prefix chrome-extension test)",
+      "Bash(npm test)",
+      "Bash(npm install)",
+      "Bash(npm test:*)"
     ],
     "deny": [],
     "ask": []
