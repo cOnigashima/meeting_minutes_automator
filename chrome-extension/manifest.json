@@ -6,7 +6,8 @@
 
   "permissions": [
     "storage",
-    "notifications"
+    "notifications",
+    "identity"
   ],
 
   "host_permissions": [
