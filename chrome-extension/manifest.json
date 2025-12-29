@@ -12,11 +12,14 @@
 
   "host_permissions": [
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "https://accounts.google.com/*",
+    "https://oauth2.googleapis.com/*",
+    "https://docs.googleapis.com/*"
   ],
 
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; connect-src 'self' ws://localhost:* ws://127.0.0.1:*"
+    "extension_pages": "default-src 'self'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* https://oauth2.googleapis.com https://docs.googleapis.com"
   },
 
   "background": {
@@ -33,6 +36,7 @@
   ],
 
   "action": {
-    "default_title": "Meeting Minutes Automator"
+    "default_title": "Meeting Minutes Automator",
+    "default_popup": "dist/popup/popup.html"
   }
 }

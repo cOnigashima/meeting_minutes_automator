@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Chrome extension for Meeting Minutes Automator",
   "scripts": {
-    "build": "tsc && npm run copy-html",
+    "build": "tsc && npm run bundle-spike && npm run copy-html",
+    "bundle-spike": "esbuild src/popup/spike-loader.ts --bundle --outfile=dist/popup/spike-loader.js --format=iife --global-name=SpikeLoader",
     "copy-html": "cp src/popup/popup.html dist/popup/",
     "watch": "tsc --watch",
     "test": "vitest",
@@ -14,6 +15,7 @@
     "@types/chrome": "^0.0.258",
     "@vitest/coverage-v8": "^1.0.0",
     "@vitest/ui": "^1.0.0",
+    "esbuild": "^0.27.2",
     "jsdom": "^24.0.0",
     "typescript": "^5.3.3",
     "vitest": "^1.0.0"

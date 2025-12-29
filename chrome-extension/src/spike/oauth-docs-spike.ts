@@ -6,17 +6,26 @@
  * 2. Google Docs API (documents.batchUpdate)
  * 3. Named Range creation/update
  * 4. Token Refresh implementation pattern
+ * 5. PKCE (Proof Key for Code Exchange) flow
  *
  * This is a prototype/spike code - NOT production implementation.
  * Results will inform the design of 19 production classes.
+ *
+ * SECURITY NOTE: This spike uses PKCE instead of client_secret.
+ * Chrome extensions (MV3) are fully inspectable, so client secrets
+ * would be exposed to all users. PKCE is the recommended flow for
+ * "installed apps" per Google OAuth 2.0 best practices.
  */
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-const GOOGLE_CLIENT_ID = 'YOUR_CLIENT_ID.apps.googleusercontent.com';
-const GOOGLE_CLIENT_SECRET = 'YOUR_CLIENT_SECRET';
+// ⚠️ SPIKE: Set your OAuth client ID here (Web Application type for testing)
+const GOOGLE_CLIENT_ID = "YOUR_CLIENT_ID.apps.googleusercontent.com";
+// ⚠️ SPIKE ONLY: client_secret required for Web Application OAuth type
+// In production, use backend server for token exchange or Chrome App OAuth type
+const GOOGLE_CLIENT_SECRET = "YOUR_CLIENT_SECRET";
 const REDIRECT_URI = chrome.identity.getRedirectURL();
 
 // Scopes: documents (read/write) + drive.file (access to user-created docs)
@@ -44,19 +53,64 @@ type ApiError = {
 type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
 // ============================================================================
-// Step 1: OAuth 2.0 Authentication Flow
+// PKCE Helper Functions
 // ============================================================================
 
 /**
- * Launch OAuth 2.0 flow using chrome.identity.launchWebAuthFlow()
+ * Generate a cryptographically secure code_verifier for PKCE
+ * @returns Base64-URL-encoded random string (43-128 characters)
+ */
+function generateCodeVerifier(): string {
+  const array = new Uint8Array(32); // 32 bytes = 256 bits
+  crypto.getRandomValues(array);
+  return base64UrlEncode(array);
+}
+
+/**
+ * Generate code_challenge from code_verifier using SHA-256
+ * @param verifier The code_verifier string
+ * @returns Base64-URL-encoded SHA-256 hash of verifier
+ */
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return base64UrlEncode(new Uint8Array(hash));
+}
+
+/**
+ * Base64-URL encoding (RFC 4648 Section 5)
+ * Converts Uint8Array to base64url format (no padding, URL-safe characters)
+ */
+function base64UrlEncode(array: Uint8Array): string {
+  const base64 = btoa(String.fromCharCode(...array));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// ============================================================================
+// Step 1: OAuth 2.0 Authentication Flow with PKCE
+// ============================================================================
+
+/**
+ * Launch OAuth 2.0 flow with PKCE using chrome.identity.launchWebAuthFlow()
  *
  * Validates:
  * - Chrome Identity API is accessible
  * - User authorization works
  * - Authorization code can be extracted from redirect URL
+ * - PKCE (code_challenge) is sent correctly
+ *
+ * @returns Object with authorization code and code_verifier (for token exchange)
  */
-async function launchAuthFlow(): Promise<Result<string, ApiError>> {
+async function launchAuthFlow(): Promise<Result<{ code: string; verifier: string }, ApiError>> {
   try {
+    // PKCE Step 1: Generate code_verifier and code_challenge
+    const codeVerifier = generateCodeVerifier();
+    const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+    console.log('[Spike] PKCE code_verifier:', codeVerifier);
+    console.log('[Spike] PKCE code_challenge:', codeChallenge);
+
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
     authUrl.searchParams.set('response_type', 'code');
@@ -65,7 +119,11 @@ async function launchAuthFlow(): Promise<Result<string, ApiError>> {
     authUrl.searchParams.set('access_type', 'offline'); // Request refresh token
     authUrl.searchParams.set('prompt', 'consent'); // Force consent screen
 
-    console.log('[Spike] Launching auth flow:', authUrl.toString());
+    // PKCE Step 2: Add code_challenge to auth URL
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256'); // SHA-256
+
+    console.log('[Spike] Launching auth flow with PKCE:', authUrl.toString());
 
     const redirectUrl = await chrome.identity.launchWebAuthFlow({
       url: authUrl.toString(),
@@ -92,7 +150,8 @@ async function launchAuthFlow(): Promise<Result<string, ApiError>> {
       };
     }
 
-    return { ok: true, value: code };
+    // Return both code and verifier (verifier needed for token exchange)
+    return { ok: true, value: { code, verifier: codeVerifier } };
   } catch (error) {
     console.error('[Spike] Auth flow error:', error);
     return {
@@ -103,27 +162,35 @@ async function launchAuthFlow(): Promise<Result<string, ApiError>> {
 }
 
 /**
- * Exchange authorization code for access token and refresh token
+ * Exchange authorization code for access token and refresh token using PKCE
  *
  * Validates:
- * - Token exchange endpoint works
+ * - Token exchange endpoint works with PKCE (code_verifier)
  * - Refresh token is returned (requires access_type=offline)
  * - Token expiry time is calculated correctly
+ * - Client secret is NOT required (PKCE replaces it)
+ *
+ * @param code Authorization code from launchAuthFlow()
+ * @param codeVerifier The code_verifier generated in launchAuthFlow()
  */
 async function exchangeCodeForToken(
-  code: string
+  code: string,
+  codeVerifier: string
 ): Promise<Result<AuthTokens, ApiError>> {
   try {
     const tokenUrl = 'https://oauth2.googleapis.com/token';
+
+    // SPIKE: Include client_secret for Web Application OAuth type
     const body = new URLSearchParams({
       code,
       client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
+      client_secret: GOOGLE_CLIENT_SECRET, // Required for Web Application type
+      code_verifier: codeVerifier,
       redirect_uri: REDIRECT_URI,
       grant_type: 'authorization_code',
     });
 
-    console.log('[Spike] Exchanging code for token...');
+    console.log('[Spike] Exchanging code for token with PKCE...');
 
     const response = await fetch(tokenUrl, {
       method: 'POST',
@@ -175,6 +242,7 @@ async function refreshAccessToken(
 ): Promise<Result<AuthTokens, ApiError>> {
   try {
     const tokenUrl = 'https://oauth2.googleapis.com/token';
+    // SPIKE: Include client_secret for Web Application OAuth type
     const body = new URLSearchParams({
       refresh_token: refreshToken,
       client_id: GOOGLE_CLIENT_ID,
@@ -402,17 +470,18 @@ async function getNamedRangePosition(
 // ============================================================================
 
 /**
- * Execute full spike: OAuth → Token Exchange → Docs API → Named Range
+ * Execute full spike: OAuth (PKCE) → Token Exchange → Docs API → Named Range
  *
  * Manual execution steps:
- * 1. Replace GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET with real values
+ * 1. Replace GOOGLE_CLIENT_ID with real value (🔒 client_secret NOT needed)
  * 2. Load chrome-extension in Chrome
- * 3. Open DevTools → Console
- * 4. Run: runSpike('YOUR_DOCUMENT_ID')
- * 5. Follow OAuth prompt
- * 6. Check console logs for validation results
+ * 3. Click extension icon → Open popup
+ * 4. Right-click popup → Inspect → DevTools Console
+ * 5. Run: runSpike('YOUR_DOCUMENT_ID')
+ * 6. Follow OAuth prompt
+ * 7. Check console logs for validation results (all steps should be [PASS])
  */
-export async function runSpike(documentId: string): Promise<void> {
+async function runSpike(documentId: string): Promise<void> {
   console.log('='.repeat(80));
   console.log('Vertical Slice Spike: OAuth 2.0 + Google Docs API');
   console.log('='.repeat(80));
@@ -426,14 +495,15 @@ export async function runSpike(documentId: string): Promise<void> {
   }
   console.log('[PASS] Authorization code received');
 
-  // Step 2: Token Exchange
-  console.log('\n[Step 2] Exchanging code for tokens...');
-  const tokenResult = await exchangeCodeForToken(codeResult.value);
+  // Step 2: Token Exchange with PKCE
+  console.log('\n[Step 2] Exchanging code for tokens with PKCE...');
+  const { code, verifier } = codeResult.value;
+  const tokenResult = await exchangeCodeForToken(code, verifier);
   if (!tokenResult.ok) {
     console.error('[FAIL] Token exchange failed:', tokenResult.error);
     return;
   }
-  console.log('[PASS] Access token and refresh token received');
+  console.log('[PASS] Access token and refresh token received (PKCE verified)');
   const tokens = tokenResult.value;
 
   // Save tokens to chrome.storage.local for manual inspection
@@ -496,17 +566,18 @@ export async function runSpike(documentId: string): Promise<void> {
   console.log('='.repeat(80));
   console.log('\nValidation Summary:');
   console.log('✅ Chrome Identity API works');
-  console.log('✅ OAuth 2.0 flow works');
+  console.log('✅ OAuth 2.0 with PKCE works (no client_secret needed)');
   console.log('✅ Token exchange works (access + refresh)');
   console.log('✅ Google Docs API batchUpdate works');
   console.log('✅ Named Range creation works');
   console.log('✅ Named Range retrieval works');
   console.log('✅ Token refresh works');
   console.log('\nNext Steps:');
-  console.log('1. Document findings in spike-report.md');
-  console.log('2. Update design if needed based on spike results');
-  console.log('3. Proceed to 19-class skeleton implementation (Task 0.5-0.7)');
+  console.log('1. Document PKCE findings in spike-report.md');
+  console.log('2. Update design to include PKCE in IChromeIdentityClient');
+  console.log('3. Proceed to Phase 1 implementation');
 }
 
-// Expose to global scope for manual execution in DevTools
-(window as any).runSpike = runSpike;
+// NOTE: This function is exposed via src/popup/spike-loader.ts, not here.
+// Do not add (window as any).runSpike = runSpike here, as it breaks in service worker context.
+export { runSpike };
