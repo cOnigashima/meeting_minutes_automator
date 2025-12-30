@@ -6,6 +6,7 @@ use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::{AppHandle, Manager};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
@@ -128,6 +129,7 @@ pub struct WebSocketServer {
     connections: Arc<Mutex<Vec<Arc<WebSocketConnection>>>>,
     session_id: String,
     message_id_counter: Arc<std::sync::atomic::AtomicU64>,
+    app_handle: Option<AppHandle>,
 }
 
 impl WebSocketServer {
@@ -139,7 +141,14 @@ impl WebSocketServer {
             connections: Arc::new(Mutex::new(Vec::new())),
             session_id: uuid::Uuid::new_v4().to_string(),
             message_id_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            app_handle: None,
         }
+    }
+
+    pub fn new_with_app_handle(app_handle: AppHandle) -> Self {
+        let mut server = Self::new();
+        server.app_handle = Some(app_handle);
+        server
     }
 
     /// Get current timestamp in milliseconds
@@ -176,6 +185,7 @@ impl WebSocketServer {
         let connections = Arc::clone(&self.connections);
         let session_id = self.session_id.clone();
         let message_id_counter = Arc::clone(&self.message_id_counter);
+        let app_handle = self.app_handle.clone();
 
         // Spawn server task
         let handle = tokio::spawn(async move {
@@ -186,8 +196,9 @@ impl WebSocketServer {
                             let conn_list = Arc::clone(&connections);
                             let sess_id = session_id.clone();
                             let msg_counter = Arc::clone(&message_id_counter);
+                            let app_clone = app_handle.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(stream, conn_list, sess_id, msg_counter).await {
+                                if let Err(e) = Self::handle_connection(stream, conn_list, sess_id, msg_counter, app_clone).await {
                                     eprintln!("WebSocket connection error: {:?}", e);
                                 }
                             });
@@ -235,11 +246,24 @@ impl WebSocketServer {
             #[cfg(not(debug_assertions))]
             {
                 // Production: check against configured allowed IDs
-                // TODO: Load from config file
-                let allowed_ids = vec![]; // Empty for now - configure in production
-                allowed_ids
+                // Configure via env: ALLOWED_EXTENSION_IDS="id1,id2"
+                let allowed_ids = std::env::var("ALLOWED_EXTENSION_IDS").unwrap_or_default();
+                let allowed_ids: Vec<String> = allowed_ids
+                    .split(',')
+                    .map(|id| id.trim().to_string())
+                    .filter(|id| !id.is_empty())
+                    .collect();
+
+                if allowed_ids.is_empty() {
+                    eprintln!(
+                        "[WebSocket] WARNING: ALLOWED_EXTENSION_IDS not set; allowing all chrome-extension origins in release"
+                    );
+                    return true;
+                }
+
+                return allowed_ids
                     .iter()
-                    .any(|id| origin.starts_with(&format!("chrome-extension://{}", id)))
+                    .any(|id| origin.starts_with(&format!("chrome-extension://{}", id)));
             }
         }
 
@@ -252,6 +276,7 @@ impl WebSocketServer {
         connections: Arc<Mutex<Vec<Arc<WebSocketConnection>>>>,
         session_id: String,
         message_id_counter: Arc<std::sync::atomic::AtomicU64>,
+        app_handle: Option<AppHandle>,
     ) -> Result<()> {
         // Accept with Origin header validation
         let ws_stream = accept_hdr_async(stream, |req: &Request, response: Response| {
@@ -316,6 +341,20 @@ impl WebSocketServer {
                                 error_message,
                                 timestamp
                             );
+
+                            if let Some(app) = app_handle.as_ref() {
+                                let payload = serde_json::json!({
+                                    "event": event,
+                                    "document_id": document_id,
+                                    "queue_size": queue_size,
+                                    "error_message": error_message,
+                                    "timestamp": timestamp,
+                                });
+
+                                if let Err(e) = app.emit("docs_sync", payload) {
+                                    eprintln!("[WebSocket] Failed to emit docs_sync event: {:?}", e);
+                                }
+                            }
                         }
                         Ok(_) => {
                             // Other message types - log for debugging

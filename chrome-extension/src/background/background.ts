@@ -12,17 +12,49 @@
  */
 
 import { getAuthManager } from '../auth/AuthFactory';
+import { GoogleDocsClient } from '../api/GoogleDocsClient';
+import { NamedRangeManager } from '../api/NamedRangeManager';
+import { NamedRangeRecoveryStrategy } from '../api/NamedRangeRecoveryStrategy';
+import { QueueManager } from '../sync/QueueManager';
+import { TokenBucketRateLimiter } from '../sync/TokenBucketRateLimiter';
+import { NetworkMonitor } from '../sync/NetworkMonitor';
+import { SyncStateMachine } from '../sync/SyncStateMachine';
+import { SyncManager } from '../sync/SyncManager';
+import { getSettingsManager } from '../sync/SettingsManager';
 import type {
   OffscreenResponse,
   WebSocketStatus,
   InboundWebSocketMessage,
+  DocsSyncEventType,
+  DocsSyncEvent,
 } from '../types/WebSocketTypes';
+import type { TranscriptionMessage as SyncTranscriptionMessage } from '../types/SyncTypes';
 
 const TOKEN_EXPIRY_ALARM = 'token_expiry_alarm';
 const OFFSCREEN_DOCUMENT_PATH = 'dist/offscreen/offscreen.html';
 
 // WebSocket connection state (maintained by offscreen document)
 let wsStatus: WebSocketStatus = { state: 'disconnected' };
+
+// Docs sync dependencies (Phase 4 bridge)
+const authManager = getAuthManager();
+const docsClient = new GoogleDocsClient(authManager);
+const recoveryStrategy = new NamedRangeRecoveryStrategy(authManager);
+const namedRangeManager = new NamedRangeManager(docsClient, recoveryStrategy);
+const queueManager = new QueueManager();
+const rateLimiter = new TokenBucketRateLimiter();
+const networkMonitor = new NetworkMonitor();
+const stateMachine = new SyncStateMachine();
+const syncManager = new SyncManager(
+  docsClient,
+  namedRangeManager,
+  queueManager,
+  rateLimiter,
+  networkMonitor,
+  stateMachine
+);
+const settingsManager = getSettingsManager();
+let activeDocumentId: string | null = null;
 
 console.log('Meeting Minutes Automator - Background Service Worker started');
 
@@ -84,6 +116,67 @@ async function sendToOffscreen<T>(message: Record<string, unknown>): Promise<T |
     console.error('[Background] Failed to send to offscreen:', error);
     return null;
   }
+}
+
+async function sendDocsSyncEvent(
+  event: DocsSyncEventType,
+  payload: {
+    documentId?: string;
+    queueSize?: number;
+    errorMessage?: string;
+  } = {}
+): Promise<void> {
+  const message: DocsSyncEvent = {
+    type: 'docsSync',
+    event,
+    documentId: payload.documentId,
+    queueSize: payload.queueSize,
+    errorMessage: payload.errorMessage,
+    timestamp: Date.now(),
+  };
+
+  await sendToOffscreen({ type: 'OFFSCREEN_SEND', payload: message });
+}
+
+async function ensureDocsSyncInitialized(): Promise<boolean> {
+  const settingsResult = await settingsManager.getSettings();
+  if (!settingsResult.ok) {
+    await sendDocsSyncEvent('docs_sync_error', { errorMessage: settingsResult.error.message });
+    return false;
+  }
+
+  const settings = settingsResult.value;
+  if (!settings.enabled) {
+    return false;
+  }
+
+  if (!settings.documentId) {
+    await sendDocsSyncEvent('docs_sync_error', { errorMessage: 'Document ID is not configured' });
+    return false;
+  }
+
+  if (activeDocumentId !== settings.documentId) {
+    const startResult = await syncManager.startSync(settings.documentId);
+    if (!startResult.ok) {
+      await sendDocsSyncEvent('docs_sync_error', { errorMessage: startResult.error.message });
+      return false;
+    }
+    activeDocumentId = settings.documentId;
+    await sendDocsSyncEvent('docs_sync_started', { documentId: settings.documentId });
+  }
+
+  return true;
+}
+
+async function reportQueueSize(documentId?: string): Promise<void> {
+  const sizeResult = await queueManager.size();
+  if (!sizeResult.ok) {
+    return;
+  }
+  await sendDocsSyncEvent('docs_sync_queue_update', {
+    documentId,
+    queueSize: sizeResult.value,
+  });
 }
 
 /**
@@ -159,6 +252,7 @@ function handleWebSocketMessage(message: InboundWebSocketMessage): void {
     case 'transcription':
       // TODO: Phase 5 - Forward to SyncManager for Google Docs sync
       console.log(`[Background] Transcription: ${message.text.substring(0, 50)}...`);
+      void handleTranscriptionMessage(message);
       break;
 
     case 'notification':
@@ -177,6 +271,44 @@ function handleWebSocketMessage(message: InboundWebSocketMessage): void {
       console.error(`[Background] Tauri error: ${message.message}`);
       break;
   }
+}
+
+async function handleTranscriptionMessage(message: Extract<InboundWebSocketMessage, { type: 'transcription' }>): Promise<void> {
+  if (message.isPartial) {
+    return;
+  }
+
+  const initialized = await ensureDocsSyncInitialized();
+  if (!initialized || !activeDocumentId) {
+    return;
+  }
+
+  const syncMessage: SyncTranscriptionMessage = {
+    text: message.text,
+    timestamp: message.timestamp,
+    isPartial: Boolean(message.isPartial),
+    confidence: message.confidence,
+    language: message.language,
+  };
+
+  const result = await syncManager.processTranscription(syncMessage);
+  if (result.ok) {
+    await sendDocsSyncEvent('docs_sync_success', { documentId: activeDocumentId });
+    await reportQueueSize(activeDocumentId);
+    return;
+  }
+
+  if (result.error.type === 'QueueError') {
+    await sendDocsSyncEvent('docs_sync_offline', { documentId: activeDocumentId });
+    await reportQueueSize(activeDocumentId);
+    return;
+  }
+
+  await sendDocsSyncEvent('docs_sync_error', {
+    documentId: activeDocumentId,
+    errorMessage: result.error.message,
+  });
+  await reportQueueSize(activeDocumentId);
 }
 
 /**

@@ -87,7 +87,7 @@ pub fn run() {
                 });
 
                 // 3. Start WebSocket server
-                let mut ws_server = WebSocketServer::new();
+                let mut ws_server = WebSocketServer::new_with_app_handle(app_handle.clone());
                 match ws_server.start().await {
                     Ok(port) => {
                         log_info!(
