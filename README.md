@@ -1,6 +1,6 @@
 # Meeting Minutes Automator
 
-Google Meetの音声をリアルタイムで文字起こしし、Google Docsに自動保存するデスクトップアプリ。
+システムオーディオ/マイクの音声をリアルタイムで文字起こしし、Google Docsに自動保存するデスクトップアプリ。Google Meetなどのオンライン会議で使用可能。
 
 ## Features
 
