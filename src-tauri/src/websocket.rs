@@ -86,6 +86,31 @@ pub enum WebSocketMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<serde_json::Value>,
     },
+
+    /// Google Docs sync status (DOCS-REQ-007: Phase 4)
+    #[serde(rename = "docsSync")]
+    DocsSync {
+        event: DocsSyncEventType,
+        #[serde(rename = "documentId", skip_serializing_if = "Option::is_none")]
+        document_id: Option<String>,
+        #[serde(rename = "queueSize", skip_serializing_if = "Option::is_none")]
+        queue_size: Option<u32>,
+        #[serde(rename = "errorMessage", skip_serializing_if = "Option::is_none")]
+        error_message: Option<String>,
+        timestamp: u64,
+    },
+}
+
+/// Google Docs sync event types (DOCS-REQ-007: Phase 4)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocsSyncEventType {
+    DocsSyncStarted,
+    DocsSyncSuccess,
+    DocsSyncError,
+    DocsSyncOffline,
+    DocsSyncOnline,
+    DocsSyncQueueUpdate,
 }
 
 type WsWriter = SplitSink<WebSocketStream<TcpStream>, Message>;
@@ -275,12 +300,35 @@ impl WebSocketServer {
         writer_guard.send(Message::Text(json)).await?;
         drop(writer_guard);
 
-        // Read messages (for keep-alive)
+        // Read messages (keep-alive + docsSync events from Chrome extension)
         while let Some(msg) = reader.next().await {
             match msg {
+                Ok(Message::Text(text)) => {
+                    // Try to parse as WebSocketMessage
+                    match serde_json::from_str::<WebSocketMessage>(&text) {
+                        Ok(WebSocketMessage::DocsSync { event, document_id, queue_size, error_message, timestamp }) => {
+                            // Log docsSync events for monitoring
+                            println!(
+                                r#"{{"event":"docs_sync","sync_event":"{:?}","document_id":{:?},"queue_size":{:?},"error":{:?},"timestamp":{}}}"#,
+                                event,
+                                document_id,
+                                queue_size,
+                                error_message,
+                                timestamp
+                            );
+                        }
+                        Ok(_) => {
+                            // Other message types - log for debugging
+                            println!("[WebSocket] Received message: {}", text);
+                        }
+                        Err(e) => {
+                            eprintln!("[WebSocket] Failed to parse message: {} - {}", e, text);
+                        }
+                    }
+                }
                 Ok(Message::Close(_)) => break,
                 Err(_) => break,
-                _ => {} // Ignore other messages for now
+                _ => {} // Ignore ping/pong/binary
             }
         }
 

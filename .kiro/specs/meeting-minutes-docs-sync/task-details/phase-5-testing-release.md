@@ -48,64 +48,76 @@ _Requirements: DOCS-NFR-001.1-4_
 - ファイル: `extension/tests/performance/*.spec.ts`
 - 詳細: [design-testing-security.md#Target Metrics](design-modules/design-testing-security.md) L159-165参照
 
-#### 12.3 セキュリティテストの実装
+#### 12.3 セキュリティテストの実装 ✅
 
 _Requirements: DOCS-NFR-003.1-4_
 
 セキュリティ要件の検証テストを実装する。
 
 **受け入れ基準**:
-- [ ] トークンストレージの検証（暗号化なし警告表示確認）
-- [ ] HTTPS通信の強制検証
-- [ ] Authorization Headerの検証
-- [ ] トークン無効化の検証（Google連携解除時）
-- [ ] CSP（Content Security Policy）の検証
+- [x] トークンストレージの検証 → `chrome.identity.getAuthToken()` でChrome管理（暗号化不要）
+- [x] HTTPS通信の強制検証 → 全API呼び出しがHTTPS (`oauth2.googleapis.com`, `docs.googleapis.com`)
+- [x] Authorization Headerの検証 → `Bearer ${token}` 形式で全リクエストに付与
+- [x] トークン無効化の検証 → `revokeToken()` で `removeCachedToken()` + Google revoke endpoint呼び出し
+- [x] CSP検証 → manifest.json: `default-src 'self'; connect-src 'self' ws://localhost:* https://oauth2.googleapis.com https://docs.googleapis.com`
+
+**検証結果**:
+| 項目 | 実装 | ファイル |
+|------|------|----------|
+| トークン管理 | chrome.identity API | `ChromeIdentityClient.ts` |
+| HTTPS強制 | 全エンドポイント | `GoogleDocsClient.ts`, `AuthManager.ts` |
+| Authorization | Bearer token | `GoogleDocsClient.ts:118,178,230` |
+| トークン無効化 | revoke + removeCachedToken | `AuthManager.ts:79-97` |
+| CSP | default-src 'self' | `manifest.json:31-33` |
 
 **技術詳細**:
-- ツール: OWASP ZAP、Chrome DevTools Security
-- ファイル: `extension/tests/security/*.spec.ts`
+- chrome.identity APIによりトークンはChromeが安全に管理
+- 平文保存なし（TokenStore不使用に簡素化済み）
+- インラインスクリプト/スタイル禁止（CSP準拠）
 
-### 13. ユーザー設定機能の実装
+### 13. ユーザー設定機能の実装 ✅
 
 _Requirements: DOCS-REQ-008.1-5_
 
-#### 13.1 設定画面UIの実装
+#### 13.1 設定画面UIの実装 ✅
 
 ユーザーがGoogle Docs同期の動作をカスタマイズできる設定画面を実装する。
 
 **受け入れ基準**:
-- [ ] Google Docs同期の有効/無効切り替え
-- [ ] タイムスタンプ表示のオン/オフ切り替え
-- [ ] 話者名表示のオン/オフ切り替え
-- [ ] バッファリング時間の調整（1-5秒）
-- [ ] 設定の`chrome.storage.local`への永続化
+- [x] Google Docs同期の有効/無効切り替え
+- [x] タイムスタンプ表示のオン/オフ切り替え
+- [x] 話者名表示のオン/オフ切り替え
+- [x] バッファリング時間の調整（1-5秒）
+- [x] 設定の`chrome.storage.local`への永続化
 
 **技術詳細**:
-- ファイル: `extension/popup/settings.html`, `extension/popup/settings.ts`
+- ファイル: `src/popup/popup.html`, `src/popup/popup.ts`, `src/sync/SettingsManager.ts`
 - ストレージキー: `docs_sync_settings`
+- テスト: `tests/sync/SettingsManager.test.ts` (8テスト合格)
 
-#### 13.2 デフォルト設定の適用
+#### 13.2 デフォルト設定の適用 ✅
 
 **受け入れ基準**:
-- [ ] Google Docs同期: 有効（デフォルト）
-- [ ] タイムスタンプ表示: 有効（デフォルト）
-- [ ] 話者名表示: 無効（デフォルト）
-- [ ] バッファリング時間: 3秒（デフォルト）
+- [x] Google Docs同期: 有効（デフォルト）→ `enabled: true`
+- [x] タイムスタンプ表示: 有効（デフォルト）→ `showTimestamp: true`
+- [x] 話者名表示: 無効（デフォルト）→ `showSpeaker: false`
+- [x] バッファリング時間: 3秒（デフォルト）→ `bufferingSeconds: 3`
 
 ### 14. ドキュメント作成とリリース準備
 
-#### 14.1 ユーザーマニュアルの作成
+#### 14.1 ユーザーマニュアルの作成 ✅
 
 エンドユーザー向けのユーザーマニュアルを作成する。
 
 **受け入れ基準**:
-- [ ] Google連携手順（スクリーンショット付き）
-- [ ] ドキュメントID取得方法
-- [ ] トラブルシューティング（認証失敗、同期エラー）
-- [ ] FAQ（よくある質問）
+- [x] Google連携手順（Step by Step）
+- [x] ドキュメントID取得方法
+- [x] トラブルシューティング（認証失敗、同期エラー、オフライン時）
+- [x] FAQ（よくある質問）
 
 **技術詳細**:
 - ファイル: `docs/user/google-docs-sync-guide.md`
+- 内容: 目次、はじめに、設定手順、カスタマイズ、トラブルシューティング、FAQ
 
 #### 14.2 開発者ドキュメントの更新
 

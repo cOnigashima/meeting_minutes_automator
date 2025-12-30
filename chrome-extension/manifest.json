@@ -7,8 +7,18 @@
   "permissions": [
     "storage",
     "notifications",
-    "identity"
+    "identity",
+    "alarms",
+    "offscreen"
   ],
+
+  "oauth2": {
+    "client_id": "242619749099-nr7mgj8ebeem0qccg9do7r11rlmkfqfk.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/drive.file"
+    ]
+  },
 
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -23,8 +33,7 @@
   },
 
   "background": {
-    "service_worker": "service-worker.js",
-    "type": "module"
+    "service_worker": "dist/background/background.js"
   },
 
   "content_scripts": [

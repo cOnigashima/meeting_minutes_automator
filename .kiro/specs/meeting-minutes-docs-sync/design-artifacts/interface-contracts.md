@@ -7,7 +7,7 @@
 
 全19クラスのTypeScriptインターフェース定義。各メソッドに事前条件/事後条件/エラー型を記載。
 
-**注**: 本ドキュメントはスケルトン版です。Phase 0, Task 0.3.1で各インターフェースの完全な契約定義を追加します。
+**注**: 本ドキュメントは完全版です（v1.1: PKCE対応完了、2025-10-30更新）。
 
 ---
 
@@ -19,14 +19,19 @@
 /**
  * Chrome Identity APIの抽象化インターフェース
  *
- * 責務: Chrome Identity APIの低レベル呼び出しをカプセル化
+ * 責務: Chrome Identity APIの低レベル呼び出しをカプセル化 + PKCE実装
  *
  * テスト戦略: モックオブジェクトで完全にスタブ可能
+ *
+ * 🔒 SECURITY NOTE: PKCE (Proof Key for Code Exchange) を使用し、
+ * client_secretをバンドルに含めないことで、Chrome拡張機能（MV3）の
+ * セキュリティベストプラクティスに準拠。
  */
 export interface IChromeIdentityClient {
   /**
-   * OAuth 2.0認証フローを開始する
+   * OAuth 2.0認証フローを開始する（レガシーメソッド）
    *
+   * @deprecated Use launchAuthFlowWithPKCE() instead (PKCE-compliant)
    * @preconditions なし
    * @postconditions 認証コードが返される
    * @throws UserCancelledError ユーザーがキャンセル
@@ -36,15 +41,42 @@ export interface IChromeIdentityClient {
   launchAuthFlow(): Promise<Result<string, AuthFlowError>>;
 
   /**
-   * 認証コードをアクセストークンに交換する
+   * 🔒 PKCE: code_verifierを生成する
    *
-   * @preconditions code が有効な認証コード
-   * @postconditions TokenResponse が返される
-   * @throws InvalidGrantError 認証コードが無効
-   * @throws NetworkError ネットワークエラー
-   * @returns Result<TokenResponse, TokenExchangeError>
+   * @preconditions なし
+   * @postconditions 32バイト乱数のBase64-URL encoding文字列が返される（43-128文字）
+   * @throws なし（同期処理）
+   * @returns Base64-URL encoded code_verifier
    */
-  exchangeCodeForToken(code: string): Promise<Result<TokenResponse, TokenExchangeError>>;
+  generateCodeVerifier(): string;
+
+  /**
+   * 🔒 PKCE: code_challengeを生成する
+   *
+   * @preconditions verifier が有効なcode_verifier文字列
+   * @postconditions SHA-256(verifier)のBase64-URL encoding文字列が返される
+   * @throws なし（crypto.subtle.digestは例外を投げない）
+   * @returns Base64-URL encoded code_challenge
+   */
+  generateCodeChallenge(verifier: string): Promise<string>;
+
+  /**
+   * 🔒 OAuth 2.0認証フローを開始する（PKCE対応版）
+   *
+   * @preconditions なし
+   * @postconditions 認証コードとcode_verifierが返される
+   * @throws UserCancelledError ユーザーがキャンセル
+   * @throws NetworkError ネットワークエラー
+   * @returns Result<{ code: 認証コード, verifier: code_verifier }, AuthFlowError>
+   *
+   * @example
+   * const result = await client.launchAuthFlowWithPKCE();
+   * if (result.ok) {
+   *   const { code, verifier } = result.value;
+   *   // Use code + verifier for token exchange
+   * }
+   */
+  launchAuthFlowWithPKCE(): Promise<Result<{ code: string; verifier: string }, AuthFlowError>>;
 }
 ```
 
@@ -62,11 +94,11 @@ export interface ITokenStore {
   /**
    * トークンを保存する
    *
-   * @preconditions token が有効な AuthToken
+   * @preconditions token が有効な AuthTokens
    * @postconditions chrome.storage.local に保存される
    * @throws StorageFullError ストレージ上限到達
    */
-  save(token: AuthToken): Promise<Result<void, StorageError>>;
+  save(token: AuthTokens): Promise<Result<void, StorageError>>;
 
   /**
    * トークンを読み込む
@@ -74,7 +106,7 @@ export interface ITokenStore {
    * @preconditions なし
    * @postconditions トークンが存在すれば返される
    */
-  load(): Promise<AuthToken | null>;
+  load(): Promise<AuthTokens | null>;
 
   /**
    * トークンを削除する

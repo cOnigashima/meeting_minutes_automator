@@ -1,6 +1,18 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+
+// Phase 4: Google Docs sync status types
+type DocsSyncStatus = "idle" | "syncing" | "success" | "error" | "offline";
+
+interface DocsSyncState {
+  status: DocsSyncStatus;
+  documentId?: string;
+  queueSize?: number;
+  lastError?: string;
+  lastUpdated?: number;
+}
 
 interface AudioDeviceInfo {
   id: string;
@@ -31,6 +43,9 @@ function App() {
   const [whisperModels, setWhisperModels] = useState<WhisperModelsInfo | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [useAutoSelect, setUseAutoSelect] = useState<boolean>(true);
+
+  // Phase 4: Google Docs sync state
+  const [docsSync, setDocsSync] = useState<DocsSyncState>({ status: "idle" });
 
   // Task 9.2: Model size ranking for STT-REQ-006.5 validation
   const modelRanking = ["tiny", "base", "small", "medium", "large-v3"];
@@ -159,6 +174,71 @@ function App() {
     }
   }, [useAutoSelect, whisperModels]);
 
+  // Phase 4: Listen for Google Docs sync events from WebSocket
+  useEffect(() => {
+    const unlistenPromise = listen<{
+      event: string;
+      document_id?: string;
+      queue_size?: number;
+      error_message?: string;
+      timestamp: number;
+    }>("docs_sync", (event) => {
+      const payload = event.payload;
+      console.log("[Meeting Minutes] Docs sync event:", payload);
+
+      switch (payload.event) {
+        case "docs_sync_started":
+          setDocsSync({
+            status: "syncing",
+            documentId: payload.document_id,
+            lastUpdated: payload.timestamp,
+          });
+          break;
+        case "docs_sync_success":
+          setDocsSync({
+            status: "success",
+            documentId: payload.document_id,
+            lastUpdated: payload.timestamp,
+          });
+          break;
+        case "docs_sync_error":
+          setDocsSync({
+            status: "error",
+            documentId: payload.document_id,
+            lastError: payload.error_message,
+            lastUpdated: payload.timestamp,
+          });
+          break;
+        case "docs_sync_offline":
+          setDocsSync((prev) => ({
+            ...prev,
+            status: "offline",
+            queueSize: payload.queue_size,
+            lastUpdated: payload.timestamp,
+          }));
+          break;
+        case "docs_sync_online":
+          setDocsSync((prev) => ({
+            ...prev,
+            status: "syncing",
+            lastUpdated: payload.timestamp,
+          }));
+          break;
+        case "docs_sync_queue_update":
+          setDocsSync((prev) => ({
+            ...prev,
+            queueSize: payload.queue_size,
+            lastUpdated: payload.timestamp,
+          }));
+          break;
+      }
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
   return (
     <main className="container">
       <h1>Meeting Minutes Automator</h1>
@@ -244,6 +324,38 @@ function App() {
           </button>
         </div>
         <div className="status-message">{statusMsg}</div>
+      </section>
+
+      {/* Phase 4: Google Docs Sync Status */}
+      <section className="card">
+        <h3>Google Docs Sync</h3>
+        <div className="sync-status">
+          <span
+            className={`sync-badge sync-${docsSync.status}`}
+          >
+            {docsSync.status === "idle" && "Idle"}
+            {docsSync.status === "syncing" && "Syncing..."}
+            {docsSync.status === "success" && "Synced"}
+            {docsSync.status === "error" && "Error"}
+            {docsSync.status === "offline" && "Offline"}
+          </span>
+          {docsSync.queueSize !== undefined && docsSync.queueSize > 0 && (
+            <span className="queue-badge">{docsSync.queueSize} queued</span>
+          )}
+        </div>
+        {docsSync.documentId && (
+          <div className="helper-text">
+            Document: {docsSync.documentId.substring(0, 16)}...
+          </div>
+        )}
+        {docsSync.lastError && (
+          <div className="warning-text">{docsSync.lastError}</div>
+        )}
+        {docsSync.status === "idle" && (
+          <div className="helper-text">
+            Connect Chrome extension to start syncing transcriptions to Google Docs.
+          </div>
+        )}
       </section>
 
       <section className="card card-muted">

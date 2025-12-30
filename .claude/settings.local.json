@@ -83,7 +83,8 @@
       "Bash(npm test)",
       "Bash(npm install)",
       "Bash(npm test:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(xargs ls:*)"
     ],
     "deny": [],
     "ask": []

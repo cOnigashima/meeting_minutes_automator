@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "description": "Chrome extension for Meeting Minutes Automator",
   "scripts": {
-    "build": "tsc && npm run bundle-spike && npm run copy-html",
+    "build": "tsc && npm run bundle-popup && npm run bundle-background && npm run bundle-offscreen && npm run copy-html && npm run copy-offscreen-html",
+    "bundle-popup": "esbuild src/popup/popup.ts --bundle --outfile=dist/popup/popup.js --format=iife --alias:@=./src",
+    "bundle-background": "esbuild src/background/background.ts --bundle --outfile=dist/background/background.js --format=iife --alias:@=./src",
+    "bundle-offscreen": "esbuild src/offscreen/offscreen.ts --bundle --outfile=dist/offscreen/offscreen.js --format=iife --alias:@=./src",
     "bundle-spike": "esbuild src/popup/spike-loader.ts --bundle --outfile=dist/popup/spike-loader.js --format=iife --global-name=SpikeLoader",
     "copy-html": "cp src/popup/popup.html dist/popup/",
-    "watch": "tsc --watch",
+    "copy-offscreen-html": "mkdir -p dist/offscreen && cp src/offscreen/offscreen.html dist/offscreen/",
+    "watch": "tsc && npm run bundle-popup && npm run bundle-background && npm run bundle-offscreen && npm run copy-html && npm run copy-offscreen-html && tsc --watch",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"
