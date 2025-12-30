@@ -13,15 +13,22 @@
     "watch": "tsc && npm run bundle-popup && npm run bundle-background && npm run bundle-offscreen && npm run copy-html && npm run copy-offscreen-html && tsc --watch",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage"
+    "test:coverage": "vitest --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug"
   },
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
     "@types/chrome": "^0.0.258",
+    "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.10",
     "@vitest/coverage-v8": "^1.0.0",
     "@vitest/ui": "^1.0.0",
     "esbuild": "^0.27.2",
     "jsdom": "^24.0.0",
     "typescript": "^5.3.3",
-    "vitest": "^1.0.0"
+    "vitest": "^1.0.0",
+    "ws": "^8.16.0"
   }
 }

@@ -353,7 +353,7 @@ function App() {
         )}
         {docsSync.status === "idle" && (
           <div className="helper-text">
-            Connect Chrome extension to start syncing transcriptions to Google Docs.
+            Waiting for the first transcription. Ensure the Chrome extension is connected and Docs Sync is enabled.
           </div>
         )}
       </section>
@@ -365,12 +365,12 @@ function App() {
             Open Chrome and load the extension from <code>chrome-extension/</code>
           </li>
           <li>
-            Navigate to <a href="https://meet.google.com" target="_blank">Google Meet</a>
+            In the extension popup, authenticate Google Docs, set the Document ID, and enable Docs Sync
           </li>
-          <li>Open Chrome DevTools Console (F12)</li>
+          <li>Select your loopback device (e.g., BlackHole) in the audio input list above</li>
           <li>Click "Start Recording" button above</li>
           <li>
-            Watch Console for: <code>[Meeting Minutes] 📝 Transcription: This is a fake transcription result</code>
+            Speak audio and confirm Google Docs updates plus the sync badge changes
           </li>
           <li>Click "Stop Recording" when done</li>
         </ol>

@@ -36,14 +36,6 @@
     "service_worker": "dist/background/background.js"
   },
 
-  "content_scripts": [
-    {
-      "matches": ["https://meet.google.com/*"],
-      "js": ["content-script.js"],
-      "run_at": "document_end"
-    }
-  ],
-
   "action": {
     "default_title": "Meeting Minutes Automator",
     "default_popup": "dist/popup/popup.html"

@@ -6,6 +6,11 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: [],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/e2e/**', // E2E tests are run with Playwright
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
