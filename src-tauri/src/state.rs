@@ -3,13 +3,19 @@
 // MVP1 - Audio Device Event Management
 // Task 10.4 Phase 2 - Device Reconnection Management
 
-use crate::audio::FakeAudioDevice;
-use crate::audio_device_adapter::{AudioEventReceiver, AudioEventSender};
+use crate::audio_device_adapter::{AudioDeviceAdapter, AudioEventReceiver, AudioEventSender};
 use crate::python_sidecar::PythonSidecarManager;
 use crate::reconnection_manager::ReconnectionManager;
 use crate::websocket::WebSocketServer;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+
+/// Type alias for Python sidecar stdin handle
+pub type SidecarStdin = Arc<tokio::sync::Mutex<tokio::process::ChildStdin>>;
+/// Type alias for Python sidecar stdout handle
+pub type SidecarStdout =
+    Arc<tokio::sync::Mutex<tokio::io::BufReader<tokio::process::ChildStdout>>>;
 
 /// Application state shared across Tauri commands
 pub struct AppState {
@@ -28,9 +34,9 @@ pub struct AppState {
     /// Initialized during Tauri setup, None before initialization
     pub python_sidecar: Mutex<Option<Arc<tokio::sync::Mutex<PythonSidecarManager>>>>,
 
-    /// Fake audio device for testing
+    /// Audio device adapter for real/fake audio capture
     /// Initialized during Tauri setup, None before initialization
-    pub audio_device: Mutex<Option<Arc<tokio::sync::Mutex<FakeAudioDevice>>>>,
+    pub audio_device: Mutex<Option<Arc<tokio::sync::Mutex<Box<dyn AudioDeviceAdapter>>>>>,
 
     /// Audio device event sender for monitoring device health
     /// MVP1 - STT-REQ-004.9/10/11
@@ -52,6 +58,18 @@ pub struct AppState {
     /// Task 10.4 Phase 2 - STT-REQ-004.11
     /// Using tokio::sync::Mutex to allow .await across lock (Send requirement)
     pub reconnection_manager: tokio::sync::Mutex<ReconnectionManager>,
+
+    /// Python sidecar stdin handle (extracted for concurrent access)
+    /// Allows audio sender task to write without blocking IPC reader
+    pub sidecar_stdin: Mutex<Option<SidecarStdin>>,
+
+    /// Python sidecar stdout handle (extracted for concurrent access)
+    /// Allows IPC reader task to read without blocking audio sender
+    pub sidecar_stdout: Mutex<Option<SidecarStdout>>,
+
+    /// Cancellation token for recording tasks (IPC reader, audio sender)
+    /// Used to gracefully stop tasks when recording ends
+    pub recording_cancel_token: Mutex<Option<CancellationToken>>,
 }
 
 impl AppState {
@@ -67,7 +85,41 @@ impl AppState {
             ipc_event_tx: Mutex::new(None),
             session_id: Mutex::new(None),
             reconnection_manager: tokio::sync::Mutex::new(ReconnectionManager::new()),
+            sidecar_stdin: Mutex::new(None),
+            sidecar_stdout: Mutex::new(None),
+            recording_cancel_token: Mutex::new(None),
         }
+    }
+
+    /// Create and store a new cancellation token for recording tasks
+    /// Returns a clone of the token for use by tasks
+    pub fn create_recording_cancel_token(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        *self.recording_cancel_token.lock().unwrap() = Some(token.clone());
+        token
+    }
+
+    /// Cancel the current recording tasks
+    pub fn cancel_recording_tasks(&self) {
+        if let Some(token) = self.recording_cancel_token.lock().unwrap().take() {
+            token.cancel();
+        }
+    }
+
+    /// Set sidecar stdin/stdout handles after extraction
+    pub fn set_sidecar_handles(&self, stdin: SidecarStdin, stdout: SidecarStdout) {
+        *self.sidecar_stdin.lock().unwrap() = Some(stdin);
+        *self.sidecar_stdout.lock().unwrap() = Some(stdout);
+    }
+
+    /// Get sidecar stdin handle
+    pub fn get_sidecar_stdin(&self) -> Option<SidecarStdin> {
+        self.sidecar_stdin.lock().unwrap().clone()
+    }
+
+    /// Get sidecar stdout handle
+    pub fn get_sidecar_stdout(&self) -> Option<SidecarStdout> {
+        self.sidecar_stdout.lock().unwrap().clone()
     }
 
     /// Set WebSocket server after initialization
@@ -83,7 +135,7 @@ impl AppState {
     }
 
     /// Set audio device after initialization
-    pub fn set_audio_device(&self, device: Arc<tokio::sync::Mutex<FakeAudioDevice>>) {
+    pub fn set_audio_device(&self, device: Arc<tokio::sync::Mutex<Box<dyn AudioDeviceAdapter>>>) {
         let mut audio = self.audio_device.lock().unwrap();
         *audio = Some(device);
     }

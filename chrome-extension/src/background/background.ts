@@ -200,6 +200,25 @@ export function getWebSocketStatus(): WebSocketStatus {
   return { ...wsStatus };
 }
 
+async function refreshWebSocketStatus(): Promise<WebSocketStatus> {
+  const offscreenStatus = await sendToOffscreen<{
+    state: WebSocketStatus['state'];
+    port?: number;
+    sessionId?: string;
+  } | null>({ type: 'OFFSCREEN_STATUS' });
+
+  if (offscreenStatus) {
+    wsStatus = {
+      ...wsStatus,
+      ...offscreenStatus,
+      lastConnectedAt:
+        offscreenStatus.state === 'connected' ? Date.now() : wsStatus.lastConnectedAt,
+    };
+  }
+
+  return { ...wsStatus };
+}
+
 /**
  * Handle messages from offscreen document
  */
@@ -385,8 +404,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Get WebSocket status
   if (message.type === 'GET_WS_STATUS') {
-    sendResponse(getWebSocketStatus());
-    return false;
+    refreshWebSocketStatus().then(sendResponse);
+    return true;
   }
 
   // Connect WebSocket

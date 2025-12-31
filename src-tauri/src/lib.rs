@@ -17,7 +17,7 @@ pub mod state;
 pub mod storage;
 pub mod websocket;
 
-use audio::FakeAudioDevice;
+use audio_device_adapter::create_audio_adapter;
 use python_sidecar::PythonSidecarManager;
 use state::AppState;
 use std::sync::Arc;
@@ -70,11 +70,21 @@ pub fn run() {
                     }
                 }
 
-                // 2. Initialize FakeAudioDevice
-                let audio_device = FakeAudioDevice::new();
-                log_info!("bootstrap::audio", "fake_device_initialized", "");
-                let device_arc = Arc::new(tokio::sync::Mutex::new(audio_device));
-                app_state.set_audio_device(device_arc);
+                // 2. Initialize real audio device adapter
+                match create_audio_adapter() {
+                    Ok(audio_device) => {
+                        log_info!("bootstrap::audio", "real_device_initialized", "");
+                        let device_arc = Arc::new(tokio::sync::Mutex::new(audio_device));
+                        app_state.set_audio_device(device_arc);
+                    }
+                    Err(e) => {
+                        log_error!(
+                            "bootstrap::audio",
+                            "device_init_failed",
+                            format!("{:?}", e)
+                        );
+                    }
+                }
 
                 // 2.5. Initialize audio event channel (MVP1 - STT-REQ-004.9/10/11)
                 let (audio_event_tx, audio_event_rx) = std::sync::mpsc::channel();

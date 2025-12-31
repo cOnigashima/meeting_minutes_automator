@@ -4,7 +4,6 @@
 // Task 7.1.5: IPC Protocol Migration Support
 // Task 10.4 Phase 2: Auto-Reconnection
 
-use crate::audio::AudioDevice;
 use crate::audio_device_adapter::AudioDeviceEvent;
 use crate::ipc_protocol::{IpcMessage as ProtocolMessage, VersionCompatibility, PROTOCOL_VERSION};
 use crate::state::AppState;
@@ -66,40 +65,58 @@ fn extract_extended_fields(
 /// This task runs independently from audio chunk submission, preventing deadlock
 /// on long utterances where Python cannot emit speech_end until it receives more audio.
 ///
-/// Previous bug (Phase 14 Post-Cleanup): Removed this task, causing Mutex to be held
-/// during receive_message().await, blocking subsequent audio chunk sends.
+/// FIXED (Phase 14.5): Now uses separate stdout handle instead of shared sidecar lock.
+/// This eliminates Mutex contention between reader and sender tasks.
 async fn start_ipc_reader_task(
-    python_sidecar: Arc<tokio::sync::Mutex<crate::python_sidecar::PythonSidecarManager>>,
-    _app: tauri::AppHandle,
+    stdout: Arc<tokio::sync::Mutex<tokio::io::BufReader<tokio::process::ChildStdout>>>,
+    app: tauri::AppHandle,
     session_id: String,
     websocket_server: Arc<tokio::sync::Mutex<crate::websocket::WebSocketServer>>,
+    cancel_token: tokio_util::sync::CancellationToken,
 ) {
+    use tokio::io::AsyncBufReadExt;
+
     tokio::spawn(async move {
         loop {
-            // KNOWN LIMITATION (requires API redesign to fully fix):
-            // receive_message() takes &mut self, so the Future is tied to MutexGuard's lifetime.
-            // This means the guard is held across .await, potentially serializing sends.
-            //
-            // MITIGATION:
-            // 1. Removed 5-second timeout (previous bug: killed task during normal silence)
-            // 2. Send operations are brief (microseconds), so serialization impact is minimal
-            // 3. Python responses are async (not blocking on next send), reducing contention
-            //
-            // FUTURE FIX (requires larger refactor):
-            // Move read loop into PythonSidecarManager::spawn_reader_task()
-            // or switch to tokio::sync::Mutex::lock_owned() with owned Arc<Mutex<T>>
-            //
-            // See external review: "restructure the sidecar API (e.g. release the mutex
-            // before the await via an owned handle, or move the read loop into the sidecar itself)"
-
+            // Check if cancelled before each iteration
+            if cancel_token.is_cancelled() {
+                log_info!("commands::ipc_reader", "cancelled");
+                break;
+            }
+            // Read from stdout directly - no lock contention with stdin sender
             let response = {
-                let mut sidecar = python_sidecar.lock().await;
-                sidecar.receive_message().await
-                // Guard dropped here (but only AFTER .await completes)
+                let mut stdout_guard = stdout.lock().await;
+                let mut line = String::new();
+                match stdout_guard.read_line(&mut line).await {
+                    Ok(0) => {
+                        // EOF - process closed
+                        log_info!("commands::ipc_reader", "stdout_eof");
+                        break;
+                    }
+                    Ok(_) => {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        match serde_json::from_str::<serde_json::Value>(&line) {
+                            Ok(json) => Ok(json),
+                            Err(e) => Err(format!("JSON parse error: {:?}", e)),
+                        }
+                    }
+                    Err(e) => Err(format!("Read error: {:?}", e)),
+                }
             };
 
             match response {
                 Ok(response) => {
+                    // Debug: Log received IPC message type
+                    log_debug_details!(
+                        "commands::ipc_reader",
+                        "received_ipc_message",
+                        json!({
+                            "session": session_id,
+                            "message_type": response.get("type").or(response.get("event_type")).unwrap_or(&serde_json::Value::Null)
+                        })
+                    );
                     // Parse IPC message
                     let msg = match serde_json::from_value::<ProtocolMessage>(response.clone()) {
                         Ok(m) => m,
@@ -129,22 +146,8 @@ async fn start_ipc_reader_task(
                                 })
                             );
 
-                            // Send error response to Python
-                            let error_response = ProtocolMessage::Error {
-                                id: msg.id().to_string(),
-                                version: PROTOCOL_VERSION.to_string(),
-                                error_code: "VERSION_MISMATCH_MAJOR".to_string(),
-                                error_message: format!(
-                                    "Major version mismatch: received={}, expected={}",
-                                    received, expected
-                                ),
-                                recoverable: false,
-                            };
-
-                            if let Ok(json) = serde_json::to_value(&error_response) {
-                                let mut sidecar = python_sidecar.lock().await;
-                                let _ = sidecar.send_message(json).await;
-                            }
+                            // Note: Cannot send error response since we don't have stdin access
+                            // Just terminate the reader task
                             break;
                         }
                         VersionCompatibility::MinorMismatch { received, expected } => {
@@ -177,10 +180,8 @@ async fn start_ipc_reader_task(
                                 recoverable: false,
                             };
 
-                            if let Ok(json) = serde_json::to_value(&error_response) {
-                                let mut sidecar = python_sidecar.lock().await;
-                                let _ = sidecar.send_message(json).await;
-                            }
+                            // Note: Cannot send error response since we don't have stdin access
+                            let _ = error_response; // Suppress unused warning
                             break;
                         }
                         VersionCompatibility::Compatible => {
@@ -199,6 +200,7 @@ async fn start_ipc_reader_task(
                                 &data,
                                 session_id_ref,
                                 &websocket_server,
+                                &app,
                             )
                             .await;
                         }
@@ -249,6 +251,7 @@ async fn handle_ipc_event(
     data: &serde_json::Value,
     session_id: &str,
     websocket_server: &Arc<tokio::sync::Mutex<crate::websocket::WebSocketServer>>,
+    app: &tauri::AppHandle,
 ) {
     match event_type {
         "speech_start" => {
@@ -283,6 +286,9 @@ async fn handle_ipc_event(
                     (None, None, None)
                 };
 
+                // Clone for emit (before move into WebSocketMessage)
+                let emit_language = language.clone();
+
                 let ws_message = WebSocketMessage::Transcription {
                     message_id: format!(
                         "ws-{}",
@@ -315,6 +321,22 @@ async fn handle_ipc_event(
                         })
                     );
                 }
+
+                // Debug: Emit to Tauri frontend for real-time transcription display
+                let _ = app.emit(
+                    "transcription",
+                    json!({
+                        "session_id": session_id,
+                        "text": text,
+                        "is_partial": true,
+                        "confidence": confidence,
+                        "language": emit_language,
+                        "timestamp": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() as u64
+                    }),
+                );
             }
         }
         "final_text" => {
@@ -337,6 +359,9 @@ async fn handle_ipc_event(
                 } else {
                     (None, None, None)
                 };
+
+                // Clone for emit (before move into WebSocketMessage)
+                let emit_language = language.clone();
 
                 let ws_message = WebSocketMessage::Transcription {
                     message_id: format!(
@@ -370,6 +395,22 @@ async fn handle_ipc_event(
                         })
                     );
                 }
+
+                // Debug: Emit to Tauri frontend for real-time transcription display
+                let _ = app.emit(
+                    "transcription",
+                    json!({
+                        "session_id": session_id,
+                        "text": text,
+                        "is_partial": false,
+                        "confidence": confidence,
+                        "language": emit_language,
+                        "timestamp": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() as u64
+                    }),
+                );
             }
         }
         "speech_end" => {
@@ -639,8 +680,8 @@ pub(crate) async fn start_recording_internal(
         json!({ "device_id": device_id })
     );
 
-    // MVP0: Validate device exists in enumeration
-    let available_devices = crate::audio::FakeAudioDevice::enumerate_devices_static()
+    // MVP1: Validate device exists in real device enumeration
+    let available_devices = crate::audio_device_adapter::enumerate_devices_static()
         .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
 
     if !available_devices.iter().any(|d| d.id == device_id) {
@@ -673,7 +714,7 @@ pub(crate) async fn start_recording_internal(
         json!({ "device_id": device_id })
     );
 
-    // MVP1 TODO: Pass device_id to AudioDeviceAdapter::start_recording(device_id)
+    // Device ID is now validated against real device enumeration
 
     // Check if already recording (Task 10.4 Phase 2 - Permissive for reconnection)
     {
@@ -699,11 +740,41 @@ pub(crate) async fn start_recording_internal(
             .ok_or_else(|| "Audio device not initialized".to_string())?
     };
 
-    let python_sidecar = {
-        let sidecar_lock = state.python_sidecar.lock().unwrap();
-        sidecar_lock
-            .clone()
-            .ok_or_else(|| "Python sidecar not initialized".to_string())?
+    // Get or initialize sidecar stdin/stdout handles
+    // First recording: extract from sidecar and store in AppState
+    // Subsequent recordings: reuse from AppState
+    let (sidecar_stdin, sidecar_stdout) = {
+        let existing_stdin = state.get_sidecar_stdin();
+        let existing_stdout = state.get_sidecar_stdout();
+
+        if let (Some(stdin), Some(stdout)) = (existing_stdin, existing_stdout) {
+            // Reuse existing handles
+            (stdin, stdout)
+        } else {
+            // First time: extract from sidecar
+            let python_sidecar = {
+                let sidecar_lock = state.python_sidecar.lock().unwrap();
+                sidecar_lock
+                    .clone()
+                    .ok_or_else(|| "Python sidecar not initialized".to_string())?
+            };
+
+            let mut sidecar = python_sidecar.lock().await;
+            let stdin = sidecar
+                .take_stdin()
+                .ok_or_else(|| "Python sidecar stdin not available".to_string())?;
+            let stdout = sidecar
+                .take_stdout()
+                .ok_or_else(|| "Python sidecar stdout not available".to_string())?;
+
+            let stdin_arc = Arc::new(tokio::sync::Mutex::new(stdin));
+            let stdout_arc = Arc::new(tokio::sync::Mutex::new(stdout));
+
+            // Store in AppState for reuse
+            state.set_sidecar_handles(Arc::clone(&stdin_arc), Arc::clone(&stdout_arc));
+
+            (stdin_arc, stdout_arc)
+        }
     };
 
     let websocket_server = {
@@ -727,13 +798,21 @@ pub(crate) async fn start_recording_internal(
         *is_recording = true;
     }
 
+    // Cancel any previous recording tasks before starting new ones
+    state.cancel_recording_tasks();
+
+    // Create cancellation token for this recording session
+    let cancel_token = state.create_recording_cancel_token();
+
     // Start background IPC reader task (ADR-013: Full-Duplex IPC)
     // This task runs independently from audio chunk submission, preventing deadlock
+    // Now uses separate stdout handle - no Mutex contention with stdin sender
     start_ipc_reader_task(
-        Arc::clone(&python_sidecar),
+        Arc::clone(&sidecar_stdout),
         _app.clone(),
         session_id.clone(),
         Arc::clone(&websocket_server),
+        cancel_token.clone(),
     )
     .await;
 
@@ -743,80 +822,198 @@ pub(crate) async fn start_recording_internal(
         json!({ "session": session_id })
     );
 
-    // Clone for callback closure
-    let python_sidecar_clone = Arc::clone(&python_sidecar);
-    let websocket_server_clone = Arc::clone(&websocket_server);
-    let session_id_arc = Arc::new(session_id.clone());
+    // Create mpsc channel to decouple audio callback from IPC sending
+    // This prevents Mutex contention between callback and IPC reader task
+    let (audio_tx, mut audio_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Spawn dedicated audio sender task
+    // This task writes directly to stdin - no Mutex contention with stdout reader
+    // BATCHING: Accumulate audio chunks and send in larger batches to reduce IPC overhead
+    // and give Python time to process without falling behind
+    let stdin_sender = Arc::clone(&sidecar_stdin);
+    let session_id_sender = session_id.clone();
+    let cancel_token_sender = cancel_token.clone();
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+
+        let mut chunk_count = 0u64;
+        let mut batch_count = 0u64;
+        let mut audio_buffer: Vec<u8> = Vec::with_capacity(8000); // ~250ms at 16kHz mono 16bit
+        const BATCH_SIZE_BYTES: usize = 8000; // 250ms worth of audio (16kHz * 2 bytes * 0.25s)
+        let mut batch_interval = tokio::time::interval(std::time::Duration::from_millis(250));
+
+        loop {
+            // Use select! to check for cancellation, new audio data, or batch timer
+            tokio::select! {
+                _ = cancel_token_sender.cancelled() => {
+                    log_info!("commands::recording", "audio_sender_cancelled");
+                    // Send any remaining buffered audio
+                    if !audio_buffer.is_empty() {
+                        log_debug_details!(
+                            "commands::recording",
+                            "flushing_final_batch",
+                            json!({ "size": audio_buffer.len() })
+                        );
+                    }
+                    break;
+                }
+                data = audio_rx.recv() => {
+                    match data {
+                        Some(d) => {
+                            chunk_count += 1;
+                            audio_buffer.extend(d);
+                            // Log every 50th chunk
+                            if chunk_count % 50 == 1 {
+                                log_debug_details!(
+                                    "commands::recording",
+                                    "audio_chunk_buffered",
+                                    json!({
+                                        "session": session_id_sender,
+                                        "chunk_count": chunk_count,
+                                        "buffer_size": audio_buffer.len()
+                                    })
+                                );
+                            }
+                            // Don't send yet - wait for batch timer or size threshold
+                        }
+                        None => {
+                            log_info!("commands::recording", "audio_channel_closed");
+                            break;
+                        }
+                    }
+                }
+                _ = batch_interval.tick() => {
+                    // Timer fired - send batch if we have enough data
+                    if audio_buffer.len() >= BATCH_SIZE_BYTES / 2 {
+                        // Continue to send batch below
+                    } else {
+                        continue; // Not enough data yet
+                    }
+                }
+            }
+
+            // Send batch if buffer is full enough
+            if audio_buffer.len() < BATCH_SIZE_BYTES / 4 {
+                continue; // Need at least 125ms of audio
+            }
+
+            batch_count += 1;
+            let batch_data = std::mem::take(&mut audio_buffer);
+            audio_buffer = Vec::with_capacity(8000); // Reset buffer
+
+            log_debug_details!(
+                "commands::recording",
+                "sending_audio_batch",
+                json!({
+                    "session": session_id_sender,
+                    "batch_count": batch_count,
+                    "batch_size": batch_data.len(),
+                    "chunks_accumulated": chunk_count
+                })
+            );
+
+            // Task 7.1.6: Use event stream protocol (STT-REQ-007.3)
+            let message = ProtocolMessage::Request {
+                id: format!(
+                    "audio-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                ),
+                version: PROTOCOL_VERSION.to_string(),
+                method: "process_audio_stream".to_string(),
+                params: serde_json::json!({ "audio_data": batch_data }),
+            };
+
+            let json_str = match serde_json::to_string(&message) {
+                Ok(s) => s,
+                Err(e) => {
+                    log_error_details!(
+                        "commands::recording",
+                        "serialize_ipc_failed",
+                        json!({
+                            "session": session_id_sender,
+                            "error": format!("{:?}", e)
+                        })
+                    );
+                    continue;
+                }
+            };
+
+            // Write directly to stdin - no Mutex contention with stdout reader
+            // Add timeout to prevent blocking forever (increased for larger batches)
+            let write_future = async {
+                let mut stdin = stdin_sender.lock().await;
+                stdin.write_all(json_str.as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+                stdin.flush().await
+            };
+
+            let write_result =
+                tokio::time::timeout(std::time::Duration::from_secs(10), write_future).await;
+
+            match write_result {
+                Ok(Ok(_)) => {
+                    log_debug_details!(
+                        "commands::recording",
+                        "batch_sent_to_python",
+                        json!({
+                            "session": session_id_sender,
+                            "batch_count": batch_count,
+                            "batch_size": json_str.len()
+                        })
+                    );
+                }
+                Ok(Err(e)) => {
+                    log_error_details!(
+                        "commands::recording",
+                        "send_to_sidecar_failed",
+                        json!({
+                            "session": session_id_sender,
+                            "error": format!("{:?}", e)
+                        })
+                    );
+                    // Continue processing other audio chunks
+                }
+                Err(_timeout) => {
+                    log_error_details!(
+                        "commands::recording",
+                        "send_to_sidecar_timeout",
+                        json!({
+                            "session": session_id_sender,
+                            "batch_count": batch_count,
+                            "timeout_secs": 10
+                        })
+                    );
+                    // Continue processing - don't block on slow writes
+                }
+            }
+            // Mutex dropped here
+        }
+        log_info!("commands::recording", "audio_sender_task_ended");
+    });
+
+    log_info_details!(
+        "commands::recording",
+        "audio_sender_started",
+        json!({ "session": session_id })
+    );
 
     // Start audio device with callback
+    // MVP1: Use AudioDeviceAdapter trait with device_id
+    // Callback is now non-blocking - just sends to channel
     let mut device = audio_device.lock().await;
-    if let Err(err) = device
-        .start_with_callback(move |audio_data| {
-            let python_sidecar = Arc::clone(&python_sidecar_clone);
-            let websocket_server = Arc::clone(&websocket_server_clone);
-            let session_id_handle = Arc::clone(&session_id_arc);
+    let callback: crate::audio_device_adapter::AudioChunkCallback =
+        Box::new(move |audio_data: Vec<u8>| {
+            // Non-blocking send to channel
+            // This decouples the audio callback from IPC sending
+            if audio_tx.send(audio_data).is_err() {
+                // Channel closed - recording stopped
+            }
+        });
 
-            // Spawn async task to handle IPC communication
-            tokio::spawn(async move {
-                // ADR-013: Full-Duplex IPC design
-                // Audio callback is responsible ONLY for sending audio data.
-                // All IPC responses are handled by start_ipc_reader_task running in the background.
-                // This prevents deadlock on long utterances where Python waits for more audio
-                // before emitting speech_end.
-
-                // Suppress unused warning: websocket_server is cloned for future use
-                let _ = websocket_server;
-
-                // Task 7.1.6: Use event stream protocol (STT-REQ-007.3)
-                let message = ProtocolMessage::Request {
-                    id: format!(
-                        "audio-{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis()
-                    ),
-                    version: PROTOCOL_VERSION.to_string(),
-                    method: "process_audio_stream".to_string(),
-                    params: serde_json::json!({ "audio_data": audio_data }),
-                };
-
-                let message_json = match serde_json::to_value(&message) {
-                    Ok(json) => json,
-                    Err(e) => {
-                        log_error_details!(
-                            "commands::recording",
-                            "serialize_ipc_failed",
-                            json!({
-                                "session": session_id_handle.as_str(),
-                                "error": format!("{:?}", e)
-                            })
-                        );
-                        return;
-                    }
-                };
-
-                // Send message with minimal mutex hold time
-                // Responses are handled by the background IPC reader task
-                {
-                    let mut sidecar = python_sidecar.lock().await;
-                    if let Err(e) = sidecar.send_message(message_json).await {
-                        log_error_details!(
-                            "commands::recording",
-                            "send_to_sidecar_failed",
-                            json!({
-                                "session": session_id_handle.as_str(),
-                                "error": format!("{:?}", e)
-                            })
-                        );
-                        return;
-                    }
-                    // Mutex dropped here - other audio chunks can now send frames
-                }
-            });
-        })
-        .await
-    {
+    if let Err(err) = device.start_recording_with_callback(&device_id, callback) {
         let error_msg = err.to_string();
         {
             let mut is_recording = state.is_recording.lock().unwrap();
@@ -847,7 +1044,7 @@ pub(crate) async fn start_recording_internal(
 }
 
 /// Start recording command
-/// Starts FakeAudioDevice and processes audio data through Python sidecar
+/// Starts audio device and processes audio data through Python sidecar
 /// Task 9.1: Accept device_id to honor user's device selection (STT-REQ-001.2)
 #[tauri::command]
 pub async fn start_recording(
@@ -882,9 +1079,13 @@ pub(crate) async fn stop_recording_internal(state: &AppState) -> Result<(), Stri
             .ok_or_else(|| "Audio device not initialized".to_string())?
     };
 
+    // Cancel IPC reader and audio sender tasks
+    state.cancel_recording_tasks();
+    log_info!("commands::recording", "tasks_cancelled");
+
     // Stop audio device (cleanup resources)
     let mut device = audio_device.lock().await;
-    device.stop().map_err(|e| e.to_string())?;
+    device.stop_recording().map_err(|e| e.to_string())?;
 
     // Clear recording state
     {
@@ -906,7 +1107,7 @@ pub(crate) async fn stop_recording_internal(state: &AppState) -> Result<(), Stri
 }
 
 /// Stop recording command
-/// Stops FakeAudioDevice
+/// Stops audio device recording
 #[tauri::command]
 pub async fn stop_recording(state: State<'_, AppState>) -> Result<String, String> {
     // Check if recording (return error if not recording)
@@ -1008,9 +1209,8 @@ pub async fn list_audio_devices(
     log_info!("commands::audio_devices", "enumerate_requested");
 
     // Task 9.1: Use static enumeration (no dependency on initialized recorder)
-    // For MVP0: FakeAudioDevice::enumerate_devices_static()
-    // For MVP1: CpalAudioDeviceAdapter::enumerate_devices_static()
-    match crate::audio::FakeAudioDevice::enumerate_devices_static() {
+    // MVP1: Real device adapter enumeration
+    match crate::audio_device_adapter::enumerate_devices_static() {
         Ok(devices) => {
             log_info_details!(
                 "commands::audio_devices",

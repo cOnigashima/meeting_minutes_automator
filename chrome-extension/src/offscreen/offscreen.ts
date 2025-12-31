@@ -46,23 +46,24 @@ let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
  * Try to connect to a specific port
  * Returns the WebSocket if successful, null otherwise
  */
-async function tryConnectPort(port: number): Promise<WebSocket | null> {
+async function tryConnectPort(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const testWs = new WebSocket(`ws://127.0.0.1:${port}`);
     const timeout = setTimeout(() => {
       testWs.close();
-      resolve(null);
+      resolve(false);
     }, PORT_SCAN_TIMEOUT_MS);
 
     testWs.onopen = () => {
       clearTimeout(timeout);
-      resolve(testWs);
+      testWs.close();
+      resolve(true);
     };
 
     testWs.onerror = () => {
       clearTimeout(timeout);
       testWs.close();
-      resolve(null);
+      resolve(false);
     };
   });
 }
@@ -70,15 +71,15 @@ async function tryConnectPort(port: number): Promise<WebSocket | null> {
 /**
  * Scan ports in chunks to find the Tauri WebSocket server
  */
-async function scanPorts(): Promise<{ ws: WebSocket; port: number } | null> {
+async function scanPorts(): Promise<number | null> {
   // First, try cached port
   const cached = await getCachedPort();
   if (cached) {
     console.log(`[Offscreen] Trying cached port ${cached}...`);
-    const cachedWs = await tryConnectPort(cached);
-    if (cachedWs) {
+    const cachedOk = await tryConnectPort(cached);
+    if (cachedOk) {
       console.log(`[Offscreen] Connected to cached port ${cached}`);
-      return { ws: cachedWs, port: cached };
+      return cached;
     }
   }
 
@@ -90,14 +91,14 @@ async function scanPorts(): Promise<{ ws: WebSocket; port: number } | null> {
     const ports = Array.from({ length: end - start + 1 }, (_, i) => start + i);
 
     // Try all ports in chunk concurrently
-    const results = await Promise.all(ports.map((port) => tryConnectPort(port).then((ws) => ({ ws, port }))));
+    const results = await Promise.all(ports.map(async (port) => ({ ok: await tryConnectPort(port), port })));
 
     // Find first successful connection
-    const success = results.find((r) => r.ws !== null);
-    if (success && success.ws) {
+    const success = results.find((r) => r.ok);
+    if (success && success.ok) {
       console.log(`[Offscreen] Found server on port ${success.port}`);
       await setCachedPort(success.port);
-      return { ws: success.ws, port: success.port };
+      return success.port;
     }
   }
 
@@ -110,6 +111,9 @@ async function scanPorts(): Promise<{ ws: WebSocket; port: number } | null> {
 // =========================================================================
 
 async function getCachedPort(): Promise<number | null> {
+  if (!chrome.storage?.local) {
+    return null;
+  }
   return new Promise((resolve) => {
     chrome.storage.local.get(CACHED_PORT_KEY, (result) => {
       resolve(result[CACHED_PORT_KEY] ?? null);
@@ -118,12 +122,18 @@ async function getCachedPort(): Promise<number | null> {
 }
 
 async function setCachedPort(port: number): Promise<void> {
+  if (!chrome.storage?.local) {
+    return;
+  }
   return new Promise((resolve) => {
     chrome.storage.local.set({ [CACHED_PORT_KEY]: port }, resolve);
   });
 }
 
 async function clearCachedPort(): Promise<void> {
+  if (!chrome.storage?.local) {
+    return;
+  }
   return new Promise((resolve) => {
     chrome.storage.local.remove(CACHED_PORT_KEY, resolve);
   });
@@ -166,8 +176,8 @@ async function connect(): Promise<void> {
 
   updateState('scanning');
 
-  const result = await scanPorts();
-  if (!result) {
+  const port = await scanPorts();
+  if (!port) {
     updateState('error');
     sendToBackground({
       type: 'OFFSCREEN_ERROR',
@@ -178,14 +188,19 @@ async function connect(): Promise<void> {
   }
 
   updateState('connecting');
-  ws = result.ws;
-  currentPort = result.port;
+  ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  currentPort = port;
   startHandshakeTimer();
 
   ws.onopen = () => {
     console.log(`[Offscreen] WebSocket connected to port ${currentPort}`);
-    // Wait for 'connected' message to get sessionId
-    startHandshakeTimer();
+    clearHandshakeTimer();
+    updateState('connected');
+    sendToBackground({
+      type: 'OFFSCREEN_CONNECTED',
+      port: currentPort!,
+      sessionId: sessionId ?? 'pending',
+    });
   };
 
   ws.onmessage = (event) => {
@@ -298,8 +313,9 @@ chrome.runtime.onMessage.addListener((message: OffscreenRequest, _sender, sendRe
 
   switch (message.type) {
     case 'OFFSCREEN_CONNECT':
-      connect().then(() => sendResponse({ success: true }));
-      return true; // Async response
+      void connect();
+      sendResponse({ success: true });
+      break;
 
     case 'OFFSCREEN_DISCONNECT':
       disconnect();

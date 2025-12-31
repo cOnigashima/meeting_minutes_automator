@@ -309,6 +309,16 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 
         let config = device.default_input_config()?;
 
+        // Extract sample rate for resampling calculation
+        let native_sample_rate = config.sample_rate().0 as usize;
+        const TARGET_SAMPLE_RATE: usize = 16000;
+        let downsample_ratio = native_sample_rate / TARGET_SAMPLE_RATE;
+
+        eprintln!(
+            "📊 Audio config: {}Hz -> {}Hz (ratio: {})",
+            native_sample_rate, TARGET_SAMPLE_RATE, downsample_ratio
+        );
+
         // Liveness tracking (Task 2.5)
         let last_cb = Arc::clone(&self.last_callback);
         *last_cb.lock().unwrap() = Instant::now();
@@ -319,20 +329,40 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
         // Create shutdown channel for stream thread
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
+        // Debug: Track callback invocations
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let callback_count = Arc::new(AtomicU64::new(0));
+        let callback_count_clone = Arc::clone(&callback_count);
+
         // Spawn stream thread (Task 2.5: reliable cleanup)
         let stream_thread = std::thread::spawn(move || {
             let stream = device.build_input_stream(
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let count = callback_count_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                    // Debug: Log every 50th callback (approx every second)
+                    if count % 50 == 1 {
+                        eprintln!(
+                            "🎤 Audio callback #{}: {} samples -> {} samples",
+                            count,
+                            data.len(),
+                            data.len() / downsample_ratio
+                        );
+                    }
+
                     // Update liveness timestamp (Task 2.5)
                     *last_cb.lock().unwrap() = Instant::now();
 
-                    // Convert f32 samples to 16kHz mono PCM
-                    // For now, just pass through (full resampling in later task)
+                    // Downsample from native rate to 16kHz and convert f32 to i16 PCM
+                    // Use averaging instead of simple decimation to reduce aliasing
+                    // Average each group of N samples (N = downsample_ratio)
                     let pcm_data: Vec<u8> = data
-                        .iter()
-                        .map(|&sample| {
-                            let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                        .chunks(downsample_ratio.max(1))
+                        .map(|chunk| {
+                            // Average the samples in this chunk (simple low-pass filter)
+                            let sum: f32 = chunk.iter().sum();
+                            let avg = sum / chunk.len() as f32;
+                            let scaled = (avg * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             scaled.to_le_bytes()
                         })
                         .flatten()
@@ -350,12 +380,24 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
                 },
             );
 
-            if let Ok(stream) = stream {
-                use cpal::traits::StreamTrait;
-                if stream.play().is_ok() {
-                    // Wait for shutdown signal
-                    shutdown_rx.recv().ok();
-                    // Stream will be dropped here (reliable cleanup)
+            match stream {
+                Ok(stream) => {
+                    use cpal::traits::StreamTrait;
+                    eprintln!("✅ Audio stream created successfully");
+                    match stream.play() {
+                        Ok(_) => {
+                            eprintln!("✅ Audio stream started playing");
+                            // Wait for shutdown signal
+                            shutdown_rx.recv().ok();
+                            // Stream will be dropped here (reliable cleanup)
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Failed to play audio stream: {:?}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to build audio stream: {:?}", e);
                 }
             }
         });
@@ -981,6 +1023,14 @@ impl AudioDeviceAdapter for AlsaAdapter {
 // ============================================================================
 // OS Detection and Adapter Selection
 // ============================================================================
+
+/// Static device enumeration without requiring an adapter instance
+/// This creates a temporary adapter, enumerates devices, and discards it.
+/// Requirement: STT-REQ-001.1, STT-REQ-001.2
+pub fn enumerate_devices_static() -> Result<Vec<AudioDeviceInfo>> {
+    let adapter = create_audio_adapter()?;
+    adapter.enumerate_devices()
+}
 
 /// Create the appropriate audio device adapter for the current OS
 /// Requirement: STT-REQ-004.3, STT-REQ-004.4, STT-REQ-004.5

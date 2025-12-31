@@ -33,6 +33,16 @@ interface WhisperModelsInfo {
   recommended_model: string;
 }
 
+// Debug: Real-time transcription display
+interface TranscriptionEntry {
+  id: string;
+  text: string;
+  is_partial: boolean;
+  confidence?: number;
+  language?: string;
+  timestamp: number;
+}
+
 function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
@@ -46,6 +56,9 @@ function App() {
 
   // Phase 4: Google Docs sync state
   const [docsSync, setDocsSync] = useState<DocsSyncState>({ status: "idle" });
+
+  // Debug: Real-time transcription display
+  const [transcriptions, setTranscriptions] = useState<TranscriptionEntry[]>([]);
 
   // Task 9.2: Model size ranking for STT-REQ-006.5 validation
   const modelRanking = ["tiny", "base", "small", "medium", "large-v3"];
@@ -173,6 +186,53 @@ function App() {
       setSelectedModel(whisperModels.recommended_model);
     }
   }, [useAutoSelect, whisperModels]);
+
+  // Debug: Listen for real-time transcription events
+  useEffect(() => {
+    const unlistenPromise = listen<{
+      session_id: string;
+      text: string;
+      is_partial: boolean;
+      confidence?: number;
+      language?: string;
+      timestamp: number;
+    }>("transcription", (event) => {
+      const payload = event.payload;
+      console.log("[Meeting Minutes] Transcription:", payload);
+
+      const entry: TranscriptionEntry = {
+        id: `${payload.timestamp}-${payload.is_partial ? "partial" : "final"}`,
+        text: payload.text,
+        is_partial: payload.is_partial,
+        confidence: payload.confidence,
+        language: payload.language,
+        timestamp: payload.timestamp,
+      };
+
+      setTranscriptions((prev) => {
+        // Replace partial with final, or add new entry
+        if (!payload.is_partial) {
+          // Final text: remove partial entries with similar text
+          const filtered = prev.filter((t) => t.is_partial === false || t.text !== payload.text);
+          return [...filtered.slice(-49), entry]; // Keep last 50
+        }
+        // Partial text: just append (will be replaced by final)
+        return [...prev.slice(-49), entry];
+      });
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  // Clear transcriptions when recording stops
+  useEffect(() => {
+    if (!isRecording) {
+      // Keep transcriptions for review after stop
+      // setTranscriptions([]);
+    }
+  }, [isRecording]);
 
   // Phase 4: Listen for Google Docs sync events from WebSocket
   useEffect(() => {
@@ -324,6 +384,60 @@ function App() {
           </button>
         </div>
         <div className="status-message">{statusMsg}</div>
+      </section>
+
+      {/* Debug: Real-time Transcription Display */}
+      <section className="card">
+        <h3>
+          Transcription
+          {transcriptions.length > 0 && (
+            <button
+              className="clear-btn"
+              onClick={() => setTranscriptions([])}
+              style={{ marginLeft: "8px", fontSize: "12px", padding: "2px 8px" }}
+            >
+              Clear
+            </button>
+          )}
+        </h3>
+        <div
+          className="transcription-box"
+          style={{
+            maxHeight: "200px",
+            overflowY: "auto",
+            padding: "8px",
+            backgroundColor: "#1a1a2e",
+            borderRadius: "4px",
+            fontFamily: "monospace",
+            fontSize: "13px",
+          }}
+        >
+          {transcriptions.length === 0 ? (
+            <div style={{ color: "#666" }}>No transcriptions yet. Start recording to see real-time text.</div>
+          ) : (
+            transcriptions.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  marginBottom: "4px",
+                  color: t.is_partial ? "#888" : "#fff",
+                  fontStyle: t.is_partial ? "italic" : "normal",
+                }}
+              >
+                <span style={{ color: "#666", marginRight: "8px" }}>
+                  {new Date(t.timestamp).toLocaleTimeString()}
+                </span>
+                {t.is_partial && <span style={{ color: "#f39c12" }}>[partial] </span>}
+                {t.text}
+                {t.confidence !== undefined && (
+                  <span style={{ color: "#27ae60", marginLeft: "8px" }}>
+                    ({(t.confidence * 100).toFixed(0)}%)
+                  </span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </section>
 
       {/* Phase 4: Google Docs Sync Status */}

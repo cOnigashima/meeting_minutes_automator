@@ -22,7 +22,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::audio_device_adapter::AudioDeviceAdapter;
 
 /// Cancellation reason with priority control
 ///

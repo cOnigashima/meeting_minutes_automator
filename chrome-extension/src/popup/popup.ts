@@ -12,6 +12,7 @@ import type { IAuthManager } from '../auth/IAuthManager';
 import { runIntegrationTest } from './integration-test';
 import { getSettingsManager } from '../sync/SettingsManager';
 import type { DocsSyncSettings } from '../types/SyncTypes';
+import type { WebSocketStatus } from '../types/WebSocketTypes';
 
 // =========================================================================
 // DOM Elements
@@ -30,6 +31,8 @@ interface PopupElements {
   testButton: HTMLButtonElement;
   // Settings elements (Phase 5)
   settingsSection: HTMLElement;
+  settingDocumentId: HTMLInputElement;
+  saveDocumentId: HTMLButtonElement;
   settingEnabled: HTMLInputElement;
   settingTimestamp: HTMLInputElement;
   settingSpeaker: HTMLInputElement;
@@ -51,6 +54,8 @@ function getElements(): PopupElements {
     testButton: document.getElementById('testButton') as HTMLButtonElement,
     // Settings elements (Phase 5)
     settingsSection: document.getElementById('settingsSection')!,
+    settingDocumentId: document.getElementById('settingDocumentId') as HTMLInputElement,
+    saveDocumentId: document.getElementById('saveDocumentId') as HTMLButtonElement,
     settingEnabled: document.getElementById('settingEnabled') as HTMLInputElement,
     settingTimestamp: document.getElementById('settingTimestamp') as HTMLInputElement,
     settingSpeaker: document.getElementById('settingSpeaker') as HTMLInputElement,
@@ -135,6 +140,48 @@ function showNotification(
 }
 
 // =========================================================================
+// Connection Status (Tauri WebSocket)
+// =========================================================================
+
+function formatConnectionStatus(status: WebSocketStatus | null): string {
+  if (!status) {
+    return '確認中...';
+  }
+
+  switch (status.state) {
+    case 'connected':
+      return `接続済み${status.port ? ` (port ${status.port})` : ''}`;
+    case 'error':
+      return `エラー${status.lastError ? `: ${status.lastError}` : ''}`;
+    case 'scanning':
+    case 'connecting':
+      return '接続中...';
+    case 'disconnected':
+    default:
+      return '未接続';
+  }
+}
+
+function fetchWebSocketStatus(): Promise<WebSocketStatus | null> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'GET_WS_STATUS' }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Popup] Failed to get WS status:', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+      resolve((response ?? null) as WebSocketStatus | null);
+    });
+  });
+}
+
+async function refreshConnectionStatus(elements: PopupElements): Promise<void> {
+  const status = await fetchWebSocketStatus();
+  elements.status.textContent = formatConnectionStatus(status);
+  elements.status.title = status?.lastError ?? '';
+}
+
+// =========================================================================
 // Auth Handlers
 // =========================================================================
 
@@ -211,6 +258,7 @@ function updateSettingsUI(elements: PopupElements, settings: DocsSyncSettings): 
   elements.settingSpeaker.checked = settings.showSpeaker;
   elements.settingBuffering.value = settings.bufferingSeconds.toString();
   elements.bufferingValue.textContent = `${settings.bufferingSeconds}秒`;
+  elements.settingDocumentId.value = settings.documentId ?? '';
 }
 
 /**
@@ -218,7 +266,7 @@ function updateSettingsUI(elements: PopupElements, settings: DocsSyncSettings): 
  */
 async function handleSettingChange(
   key: keyof DocsSyncSettings,
-  value: boolean | number,
+  value: boolean | number | string | undefined,
   elements: PopupElements
 ): Promise<void> {
   const settingsManager = getSettingsManager();
@@ -238,6 +286,27 @@ async function handleSettingChange(
  * Setup settings event listeners
  */
 function setupSettingsListeners(elements: PopupElements): void {
+  // Document ID save button
+  elements.saveDocumentId.addEventListener('click', async () => {
+    const value = elements.settingDocumentId.value.trim();
+    const settingsManager = getSettingsManager();
+    const result = await settingsManager.updateSettings({
+      documentId: value === '' ? undefined : value,
+    });
+
+    if (result.ok) {
+      showNotification(
+        elements,
+        'success',
+        value === '' ? 'Document IDをクリアしました' : 'Document IDを保存しました'
+      );
+    } else {
+      console.error('[Settings] Failed to update documentId:', result.error);
+      showNotification(elements, 'error', 'Document IDの保存に失敗しました');
+      await loadSettings(elements);
+    }
+  });
+
   // Enable/Disable sync
   elements.settingEnabled.addEventListener('change', () => {
     handleSettingChange('enabled', elements.settingEnabled.checked, elements);
@@ -315,8 +384,14 @@ async function initPopup(): Promise<void> {
   // Settings event listeners (Phase 5)
   setupSettingsListeners(elements);
 
-  // MVP0: Tauri connection status (placeholder)
-  elements.status.textContent = 'Skeleton Ready';
+  // Connect WebSocket when popup opens and show status
+  chrome.runtime.sendMessage({ type: 'CONNECT_WS' }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn('[Popup] CONNECT_WS failed:', chrome.runtime.lastError.message);
+    }
+  });
+  await refreshConnectionStatus(elements);
+  setInterval(() => refreshConnectionStatus(elements), 1000);
 }
 
 // Run on DOM ready

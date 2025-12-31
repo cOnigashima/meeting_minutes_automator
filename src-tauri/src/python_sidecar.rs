@@ -472,6 +472,22 @@ impl PythonSidecarManager {
         self.stdin.take();
     }
 
+    /// Take ownership of stdin for separate writer task
+    /// This enables concurrent read/write without holding the manager lock
+    /// Used by: audio sender task in commands.rs
+    pub fn take_stdin(&mut self) -> Option<tokio::process::ChildStdin> {
+        self.stdin.take()
+    }
+
+    /// Take ownership of stdout for separate reader task
+    /// This enables concurrent read/write without holding the manager lock
+    /// Used by: IPC reader task in commands.rs
+    pub fn take_stdout(
+        &mut self,
+    ) -> Option<tokio::io::BufReader<tokio::process::ChildStdout>> {
+        self.stdout.take()
+    }
+
     /// Get process ID (for testing)
     pub fn get_process_id(&self) -> Option<u32> {
         self.process.as_ref().and_then(|p| p.id())
