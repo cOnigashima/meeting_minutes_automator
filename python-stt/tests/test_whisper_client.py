@@ -55,41 +55,41 @@ class TestWhisperSTTEngineInitialization:
         """WHEN user config doesn't exist but HuggingFace cache exists
         THEN WhisperSTTEngine should use HF cache (STT-REQ-002.1 priority 2)."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Create actual directory structure including snapshots
             hf_cache_path = Path(tmpdir) / ".cache" / "huggingface" / "hub" / "models--Systran--faster-whisper-small"
-            hf_cache_path.mkdir(parents=True)
+            snapshots_dir = hf_cache_path / "snapshots"
+            snapshots_dir.mkdir(parents=True)
+            # Create a dummy snapshot directory (iterdir() needs at least one entry)
+            (snapshots_dir / "abc123def456").mkdir()
 
             engine = WhisperSTTEngine(model_size="small")
 
-            # Create a custom Path subclass that overrides exists()
-            original_exists = Path.exists
+            with patch.object(Path, 'home', return_value=Path(tmpdir)):
+                detected_path = engine._detect_model_path()
 
-            def custom_exists(self):
-                path_str = str(self)
-                if "whisper_model_path" in path_str:
-                    return False  # User config doesn't exist
-                elif "huggingface" in path_str and "faster-whisper-small" in path_str:
-                    return True  # HF cache exists
-                return original_exists(self)
-
-            with patch.object(Path, 'exists', custom_exists):
-                with patch.object(Path, 'home', return_value=Path(tmpdir)):
-                    detected_path = engine._detect_model_path()
-
-                    assert "huggingface" in detected_path
-                    assert "faster-whisper-small" in detected_path
+                assert "huggingface" in detected_path
+                assert "faster-whisper-small" in detected_path
 
     @pytest.mark.asyncio
     async def test_model_detection_priority_bundled_fallback(self):
         """WHEN neither user config nor HF cache exists
         THEN WhisperSTTEngine should fallback to bundled model (STT-REQ-002.1 priority 3)."""
-        engine = WhisperSTTEngine(model_size="base")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create bundled model directory structure
+            bundled_model_dir = Path(tmpdir) / "models" / "faster-whisper" / "base"
+            bundled_model_dir.mkdir(parents=True)
+            (bundled_model_dir / "model.bin").touch()
 
-        # Mock all paths to not exist (will fallback to bundled model)
-        with patch.object(Path, 'exists', return_value=False):
-            detected_path = engine._detect_model_path()
+            # offline_mode=True prevents falling back to HuggingFace Hub model ID
+            engine = WhisperSTTEngine(model_size="base", offline_mode=True)
 
-            assert "[app_resources]" in detected_path
-            assert "models/faster-whisper/base" in detected_path
+            # Mock Path.home() to use temp dir (so HF cache won't be found)
+            # and mock _detect_bundled_model_path to return our temp bundled path
+            with patch.object(Path, 'home', return_value=Path(tmpdir)):
+                with patch.object(engine, '_detect_bundled_model_path', return_value=str(bundled_model_dir)):
+                    detected_path = engine._detect_model_path()
+
+                    assert "models/faster-whisper/base" in detected_path
 
     @pytest.mark.asyncio
     async def test_initialize_outputs_ready_message(self):

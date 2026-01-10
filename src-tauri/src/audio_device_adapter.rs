@@ -113,6 +113,13 @@ pub trait AudioDeviceAdapter: Send + Sync {
     /// Requirement: STT-REQ-004.1, STT-REQ-004.2
     /// Returns Ok(()) if permission is granted, Err with user-friendly message if denied
     fn check_permission(&self) -> Result<()>;
+
+    /// Set event sender for device monitoring (STTMIX-REQ-006)
+    ///
+    /// When set, the adapter will send AudioDeviceEvent::StreamError,
+    /// Stalled, or DeviceGone events through this channel.
+    /// This enables MultiInputManager to detect input loss.
+    fn set_event_sender(&mut self, tx: AudioEventSender);
 }
 
 // ============================================================================
@@ -309,14 +316,22 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
 
         let config = device.default_input_config()?;
 
-        // Extract sample rate for resampling calculation
-        let native_sample_rate = config.sample_rate().0 as usize;
-        const TARGET_SAMPLE_RATE: usize = 16000;
-        let downsample_ratio = native_sample_rate / TARGET_SAMPLE_RATE;
+        // Extract sample rate and channels for resampling (STTMIX-REQ-003)
+        let native_sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+
+        // Validate sample rate supports accurate 16kHz downsampling
+        crate::resampler::validate_sample_rate(native_sample_rate).map_err(|e| {
+            anyhow!(
+                "Unsupported audio device '{}': {}",
+                device_id,
+                e
+            )
+        })?;
 
         eprintln!(
-            "📊 Audio config: {}Hz -> {}Hz (ratio: {})",
-            native_sample_rate, TARGET_SAMPLE_RATE, downsample_ratio
+            "📊 Audio config: {}Hz, {} channel(s) -> 16kHz mono",
+            native_sample_rate, channels
         );
 
         // Liveness tracking (Task 2.5)
@@ -343,30 +358,22 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
                     // Debug: Log every 50th callback (approx every second)
                     if count % 50 == 1 {
                         eprintln!(
-                            "🎤 Audio callback #{}: {} samples -> {} samples",
+                            "🎤 Audio callback #{}: {} samples",
                             count,
-                            data.len(),
-                            data.len() / downsample_ratio
+                            data.len()
                         );
                     }
 
                     // Update liveness timestamp (Task 2.5)
                     *last_cb.lock().unwrap() = Instant::now();
 
-                    // Downsample from native rate to 16kHz and convert f32 to i16 PCM
-                    // Use averaging instead of simple decimation to reduce aliasing
-                    // Average each group of N samples (N = downsample_ratio)
-                    let pcm_data: Vec<u8> = data
-                        .chunks(downsample_ratio.max(1))
-                        .map(|chunk| {
-                            // Average the samples in this chunk (simple low-pass filter)
-                            let sum: f32 = chunk.iter().sum();
-                            let avg = sum / chunk.len() as f32;
-                            let scaled = (avg * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                            scaled.to_le_bytes()
-                        })
-                        .flatten()
-                        .collect();
+                    // STTMIX-REQ-003: Normalize to 16kHz mono using resampler module
+                    // Handles stereo-to-mono downmix and averaging downsampling
+                    let pcm_data = crate::resampler::process_audio_to_16khz_mono(
+                        data,
+                        channels,
+                        native_sample_rate,
+                    );
 
                     callback(pcm_data);
                 },
@@ -487,6 +494,10 @@ impl AudioDeviceAdapter for CoreAudioAdapter {
                 ))
             }
         }
+    }
+
+    fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
     }
 }
 
@@ -640,6 +651,19 @@ impl AudioDeviceAdapter for WasapiAdapter {
 
         let config = device.default_input_config()?;
 
+        // Extract sample rate and channels for resampling (STTMIX-REQ-003)
+        let native_sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+
+        // Validate sample rate supports accurate 16kHz downsampling
+        crate::resampler::validate_sample_rate(native_sample_rate).map_err(|e| {
+            anyhow!(
+                "Unsupported audio device '{}': {}",
+                device_id,
+                e
+            )
+        })?;
+
         // Initialize liveness timestamp
         let last_cb = Arc::clone(&self.last_callback);
         *last_cb.lock().unwrap() = Instant::now();
@@ -654,14 +678,12 @@ impl AudioDeviceAdapter for WasapiAdapter {
                     // Update liveness timestamp
                     *last_cb.lock().unwrap() = Instant::now();
 
-                    let pcm_data: Vec<u8> = data
-                        .iter()
-                        .map(|&sample| {
-                            let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                            scaled.to_le_bytes()
-                        })
-                        .flatten()
-                        .collect();
+                    // STTMIX-REQ-003: Normalize to 16kHz mono using resampler module
+                    let pcm_data = crate::resampler::process_audio_to_16khz_mono(
+                        data,
+                        channels,
+                        native_sample_rate,
+                    );
 
                     callback(pcm_data);
                 },
@@ -752,6 +774,10 @@ impl AudioDeviceAdapter for WasapiAdapter {
                 ))
             }
         }
+    }
+
+    fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
     }
 }
 
@@ -905,6 +931,19 @@ impl AudioDeviceAdapter for AlsaAdapter {
 
         let config = device.default_input_config()?;
 
+        // Extract sample rate and channels for resampling (STTMIX-REQ-003)
+        let native_sample_rate = config.sample_rate().0;
+        let channels = config.channels();
+
+        // Validate sample rate supports accurate 16kHz downsampling
+        crate::resampler::validate_sample_rate(native_sample_rate).map_err(|e| {
+            anyhow!(
+                "Unsupported audio device '{}': {}",
+                device_id,
+                e
+            )
+        })?;
+
         // Initialize liveness timestamp
         let last_cb = Arc::clone(&self.last_callback);
         *last_cb.lock().unwrap() = Instant::now();
@@ -919,14 +958,12 @@ impl AudioDeviceAdapter for AlsaAdapter {
                     // Update liveness timestamp
                     *last_cb.lock().unwrap() = Instant::now();
 
-                    let pcm_data: Vec<u8> = data
-                        .iter()
-                        .map(|&sample| {
-                            let scaled = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                            scaled.to_le_bytes()
-                        })
-                        .flatten()
-                        .collect();
+                    // STTMIX-REQ-003: Normalize to 16kHz mono using resampler module
+                    let pcm_data = crate::resampler::process_audio_to_16khz_mono(
+                        data,
+                        channels,
+                        native_sample_rate,
+                    );
 
                     callback(pcm_data);
                 },
@@ -1017,6 +1054,10 @@ impl AudioDeviceAdapter for AlsaAdapter {
                 ))
             }
         }
+    }
+
+    fn set_event_sender(&mut self, tx: AudioEventSender) {
+        self.event_tx = Some(tx);
     }
 }
 
@@ -1141,6 +1182,10 @@ mod tests {
         fn check_permission(&self) -> Result<()> {
             // Mock always returns Ok (permission granted)
             Ok(())
+        }
+
+        fn set_event_sender(&mut self, _tx: AudioEventSender) {
+            // Mock: no-op (no event handling in mock)
         }
     }
 

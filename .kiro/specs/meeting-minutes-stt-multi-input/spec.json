@@ -1,0 +1,23 @@
+{
+  "feature_name": "meeting-minutes-stt-multi-input",
+  "created_at": "2026-01-09T00:00:00Z",
+  "updated_at": "2026-01-09T12:30:00Z",
+  "language": "ja",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true,
+  "notes": "Multi-input audio mixing extension for STT (microphone + loopback). All phases generated; awaiting task approval."
+}

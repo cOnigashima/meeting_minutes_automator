@@ -300,11 +300,13 @@ MVP1実装完了後の技術的負債とコードクリーンアップタスク�
 - ⏸️ **meeting-minutes-ci spec移行タスク**（CI-INTAKE-001/002/003）:
   - [ ] SEC-003: Windows ACL設定（1h、CI整備後） → meeting-minutes-ci specで管理
   - [ ] Task 10.5: クロスプラットフォームE2E（6h、CI整備後） → meeting-minutes-ci specで管理
+- ✅ **複数入力ミックス**: 新spec `meeting-minutes-stt-multi-input` に移管（要件・設計作成済み）
 
 **次ステップ**:
 1. **meeting-minutes-ci spec**: `/kiro:spec-tasks meeting-minutes-ci`実行（CI-INTAKE-001/002/003のタスク分解）
 2. **meeting-minutes-docs-sync spec**: `/kiro:spec-tasks meeting-minutes-docs-sync`実行（MVP2本体実装開始）
-3. **CI依存タスク**: CI spec実装と並行、またはP2として扱う（推奨）
+3. **meeting-minutes-stt-multi-input spec**: `/kiro:spec-tasks meeting-minutes-stt-multi-input`実行（複数入力ミックスのタスク分解）
+4. **CI依存タスク**: CI spec実装と並行、またはP2として扱う（推奨）
 
 ---
 

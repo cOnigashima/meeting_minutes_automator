@@ -14,6 +14,7 @@ import type {
   OffscreenResponse,
   WebSocketConnectionState,
 } from '../types/WebSocketTypes';
+import { ReconnectionManager } from './ReconnectionManager';
 
 // =========================================================================
 // Constants
@@ -23,8 +24,9 @@ const PORT_RANGE_START = 9001;
 const PORT_RANGE_END = 9100;
 const PORT_SCAN_CHUNK_SIZE = 10;
 const PORT_SCAN_TIMEOUT_MS = 500;
-const RECONNECT_DELAY_MS = 3000;
 const CACHED_PORT_KEY = 'ws_cached_port';
+const CACHED_PORT_TIMESTAMP_KEY = 'ws_cached_port_timestamp';
+const CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const HANDSHAKE_TIMEOUT_MS = 1500;
 
 // =========================================================================
@@ -35,8 +37,10 @@ let ws: WebSocket | null = null;
 let currentPort: number | null = null;
 let sessionId: string | null = null;
 let connectionState: WebSocketConnectionState = 'disconnected';
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Reconnection manager with exponential backoff
+const reconnectionManager = new ReconnectionManager();
 
 // =========================================================================
 // Port Scanning
@@ -94,10 +98,11 @@ async function scanPorts(): Promise<number | null> {
     const results = await Promise.all(ports.map(async (port) => ({ ok: await tryConnectPort(port), port })));
 
     // Find first successful connection
+    // Note: Do NOT cache here - cache only after receiving 'connected' message
+    // to verify it's actually the Tauri server (not another WebSocket service)
     const success = results.find((r) => r.ok);
     if (success && success.ok) {
       console.log(`[Offscreen] Found server on port ${success.port}`);
-      await setCachedPort(success.port);
       return success.port;
     }
   }
@@ -115,8 +120,16 @@ async function getCachedPort(): Promise<number | null> {
     return null;
   }
   return new Promise((resolve) => {
-    chrome.storage.local.get(CACHED_PORT_KEY, (result) => {
-      resolve(result[CACHED_PORT_KEY] ?? null);
+    chrome.storage.local.get([CACHED_PORT_KEY, CACHED_PORT_TIMESTAMP_KEY], (result) => {
+      const port = result[CACHED_PORT_KEY];
+      const timestamp = result[CACHED_PORT_TIMESTAMP_KEY];
+
+      // Validate cache: must have port, timestamp, and not expired (24h)
+      if (port && timestamp && Date.now() - timestamp < CACHE_EXPIRY_MS) {
+        resolve(port);
+      } else {
+        resolve(null);
+      }
     });
   });
 }
@@ -126,7 +139,13 @@ async function setCachedPort(port: number): Promise<void> {
     return;
   }
   return new Promise((resolve) => {
-    chrome.storage.local.set({ [CACHED_PORT_KEY]: port }, resolve);
+    chrome.storage.local.set(
+      {
+        [CACHED_PORT_KEY]: port,
+        [CACHED_PORT_TIMESTAMP_KEY]: Date.now(),
+      },
+      resolve
+    );
   });
 }
 
@@ -135,7 +154,7 @@ async function clearCachedPort(): Promise<void> {
     return;
   }
   return new Promise((resolve) => {
-    chrome.storage.local.remove(CACHED_PORT_KEY, resolve);
+    chrome.storage.local.remove([CACHED_PORT_KEY, CACHED_PORT_TIMESTAMP_KEY], resolve);
   });
 }
 
@@ -169,6 +188,9 @@ function clearHandshakeTimer(): void {
 }
 
 async function connect(): Promise<void> {
+  // Cancel any pending reconnect timer to prevent duplicate connections
+  reconnectionManager.cancelReconnect();
+
   if (ws && ws.readyState === WebSocket.OPEN) {
     console.log('[Offscreen] Already connected');
     return;
@@ -178,10 +200,10 @@ async function connect(): Promise<void> {
 
   const port = await scanPorts();
   if (!port) {
-    updateState('error');
+    updateState('disconnected');
     sendToBackground({
-      type: 'OFFSCREEN_ERROR',
-      message: 'No Tauri server found',
+      type: 'OFFSCREEN_DISCONNECTED',
+      reason: 'No Tauri server found',
     });
     scheduleReconnect();
     return;
@@ -241,6 +263,13 @@ function handleInboundMessage(message: InboundWebSocketMessage): void {
     sessionId = message.sessionId;
     clearHandshakeTimer();
     updateState('connected');
+    // Reset backoff on successful connection
+    reconnectionManager.resetAttemptCount();
+    // Cache port only after receiving 'connected' message from Tauri server
+    // This prevents caching ports of non-Tauri WebSocket services
+    if (currentPort) {
+      void setCachedPort(currentPort);
+    }
     sendToBackground({
       type: 'OFFSCREEN_CONNECTED',
       port: currentPort!,
@@ -256,10 +285,7 @@ function handleInboundMessage(message: InboundWebSocketMessage): void {
 }
 
 function disconnect(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+  reconnectionManager.cancelReconnect();
   clearHandshakeTimer();
 
   if (ws) {
@@ -286,15 +312,7 @@ function send(message: OutboundWebSocketMessage): void {
 }
 
 function scheduleReconnect(): void {
-  if (reconnectTimer) {
-    return;
-  }
-
-  console.log(`[Offscreen] Scheduling reconnect in ${RECONNECT_DELAY_MS}ms`);
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connect();
-  }, RECONNECT_DELAY_MS);
+  reconnectionManager.scheduleReconnect(() => connect());
 }
 
 // =========================================================================

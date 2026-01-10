@@ -351,30 +351,35 @@ git commit -m "message"  # pre-commitフックが自動起動
 
 ### Development Phase Status
 
-**現在の開発フェーズ**: 実装フェーズ開始（Implementation Phase - 2025-10-05〜）
+**現在の開発フェーズ**: MVP2 実装中（2025-10-21〜）
 
-**完了した活動**:
-- ✅ 3プロセスアーキテクチャの詳細設計完了
-- ✅ IPC通信プロトコル（stdin/stdout JSON）の確定
-- ✅ WebSocketメッセージ型設計（Tagged Union）
-- ✅ Pythonサイドカーライフサイクル管理仕様の策定
-- ✅ 静的解析基盤の整備（pre-commit hooks、forbidden imports check）
-- ✅ 主要な技術的意思決定のADR文書化
-- ✅ Task 1.1: プロジェクト基盤セットアップ完了（2025-10-05）
-  - Tauri 2.0プロジェクト初期化（React + TypeScript）
-  - Pythonプロジェクト構造作成
-  - Chrome拡張プロジェクト構造作成
-  - ビルド動作確認（cargo build成功: 55秒）
+**完了したマイルストーン**:
 
-**実装済み**:
-- ✅ 実装コードベース（`src-tauri/`, `src/`, `chrome-extension/`, `python-stt/`）
-- ✅ 依存関係ファイル（`Cargo.toml`, `package.json`, `requirements.txt`）
-- ✅ ビルド設定（`tauri.conf.json`, `vite.config.ts`）
+- ✅ **MVP0 (meeting-minutes-core)**: 2025-10-10 完了
+  - Walking Skeleton: Tauri + Python + Chrome拡張の最小疎通確認
+  - Fake実装による3プロセスアーキテクチャ検証
+
+- ✅ **MVP1 (meeting-minutes-stt)**: 2025-10-21 完了
+  - Real STT: faster-whisper統合、webrtcvad統合
+  - リソースベースモデル選択、音声デバイス管理
+  - Ring Buffer drop-oldest戦略（2025-01-09追加: バッファオーバーフロー対策）
+  - 267/285テスト合格（18件失敗はP2扱い）
 
 **進行中**:
-- 🔵 Task 1.2: 全コンポーネントの空実装作成（スケルトン構造）
 
-**次のステップ**: Task 1.2でRust/Python/Chrome拡張の全traitとクラスのスケルトン実装を作成
+- 🔵 **MVP2 (meeting-minutes-docs-sync)**: Phase 5開始（2025-12-29〜）
+  - Phase 0-4: 完了（OAuth 2.0認証、Google Docs API統合、SyncManager統合）
+  - Phase 5: UAT実施 → フィードバック回収 → バグ修正/最適化
+
+- 🔵 **meeting-minutes-ci**: 低優先度（requirements生成待ち）
+  - GitHub Actions CI/CD、クロスプラットフォームテストマトリックス
+
+**既知の課題（P2）**:
+- テスト失敗: Python 17件 + Rust 1件（MVP2 Phase 0で対応検討）
+
+**次のステップ**:
+- docs-sync Phase 5 UAT完了
+- テスト失敗対応（P2）
 
 ---
 

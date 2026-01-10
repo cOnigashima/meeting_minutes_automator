@@ -241,4 +241,8 @@ impl AudioDeviceAdapter for FakeAudioDevice {
         // Always return Ok for fake device
         Ok(())
     }
+
+    fn set_event_sender(&mut self, _tx: crate::audio_device_adapter::AudioEventSender) {
+        // Fake device: no-op (no real device monitoring)
+    }
 }

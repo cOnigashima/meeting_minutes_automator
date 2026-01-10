@@ -645,21 +645,20 @@ async fn test_ipc_latency() {
 /// Requirements: ADR-013 (Lock-free Ring Buffer Performance)
 #[tokio::test]
 async fn test_audio_callback_latency() {
-    use meeting_minutes_automator_lib::ring_buffer::AudioRingBuffer;
-    use ringbuf::traits::*;
+    use meeting_minutes_automator_lib::ring_buffer::{new_shared_ring_buffer, push_audio_drop_oldest};
     use std::time::Instant;
 
     println!("==> Task 10.6b: Audio Callback Latency Measurement (ADR-013)");
 
     // Create ring buffer (5-second capacity at 16kHz)
-    let ring_buffer = AudioRingBuffer::new();
-    let (mut producer, _consumer) = ring_buffer.split();
+    let ring_buffer = new_shared_ring_buffer();
 
     let audio_frame = vec![0u8; 320]; // 10ms frame @ 16kHz (160 samples * 2 bytes)
 
     // Warm-up: Fill buffer partially
     for _ in 0..100 {
-        producer.push_slice(&audio_frame);
+        let mut rb = ring_buffer.lock().unwrap();
+        push_audio_drop_oldest(&mut rb, &audio_frame);
     }
 
     println!("  ✓ Ring buffer initialized");
@@ -670,7 +669,10 @@ async fn test_audio_callback_latency() {
 
     for _ in 0..ITERATIONS {
         let start = Instant::now();
-        producer.push_slice(&audio_frame);
+        {
+            let mut rb = ring_buffer.lock().unwrap();
+            push_audio_drop_oldest(&mut rb, &audio_frame);
+        }
         let latency = start.elapsed();
         latencies.push(latency);
     }

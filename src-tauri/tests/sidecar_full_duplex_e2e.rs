@@ -1,8 +1,11 @@
 // ADR-013: Sidecar Full-Duplex IPC E2E Tests
 // Phase 4: Integration tests for Success Criteria validation
 
-use meeting_minutes_automator_lib::ring_buffer::{AudioRingBuffer, BufferLevel, BUFFER_CAPACITY};
+use meeting_minutes_automator_lib::ring_buffer::{
+    new_shared_ring_buffer, push_audio_drop_oldest, BufferLevel, BUFFER_CAPACITY,
+};
 use meeting_minutes_automator_lib::sidecar::{Event, Sidecar, SidecarCmd};
+use ringbuf::traits::Observer;
 use std::io::Write;
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -49,25 +52,32 @@ time.sleep(10)
     assert!(matches!(ready, Event::Ready));
 
     // Create ring buffer and simulate audio callback pushing data
-    let ring_buffer = AudioRingBuffer::new();
-    let (mut producer, _consumer) = ring_buffer.split();
+    let ring_buffer = new_shared_ring_buffer();
 
     // Push audio frames at 100 fps (10ms per frame = 320 bytes)
     // 5 seconds = 500 frames = 160,000 bytes
     let frame_size = 320;
     let mut frames_pushed = 0;
+    let mut total_dropped = 0;
     let start = std::time::Instant::now();
 
     loop {
         let frame = vec![42u8; frame_size];
-        let (pushed, level) = AudioRingBuffer::push_from_callback(&mut producer, &frame);
+        let (pushed, dropped, level) = {
+            let mut rb = ring_buffer.lock().unwrap();
+            push_audio_drop_oldest(&mut rb, &frame)
+        };
 
-        if pushed < frame_size {
-            // Buffer full - verify timing
+        total_dropped += dropped;
+        frames_pushed += 1;
+
+        // With drop-oldest, detect "overflow" when old data starts being dropped
+        if dropped > 0 {
+            // Buffer reached capacity - old data is being dropped
             let elapsed = start.elapsed();
             println!(
-                "Buffer full after {:?}, pushed {} frames",
-                elapsed, frames_pushed
+                "Buffer full after {:?}, pushed {} frames, dropped {} bytes",
+                elapsed, frames_pushed, total_dropped
             );
 
             // Should reach capacity around 5 seconds (±1s tolerance for CI/test overhead)
@@ -77,24 +87,23 @@ time.sleep(10)
                 elapsed
             );
 
-            // Verify buffer level is Critical or Overflow
+            // Verify buffer level is Critical (with drop-oldest, we keep buffer at capacity)
             assert!(
-                matches!(level, BufferLevel::Critical | BufferLevel::Overflow),
-                "Buffer level should be Critical/Overflow, got {:?}",
+                matches!(level, BufferLevel::Critical),
+                "Buffer level should be Critical, got {:?}",
                 level
             );
 
             // Verify total capacity reached
+            let rb = ring_buffer.lock().unwrap();
             assert!(
-                frames_pushed * frame_size >= BUFFER_CAPACITY - frame_size,
-                "Should push ~160KB, pushed {}",
-                frames_pushed * frame_size
+                rb.occupied_len() >= BUFFER_CAPACITY - frame_size,
+                "Should have ~160KB in buffer, have {}",
+                rb.occupied_len()
             );
 
             break;
         }
-
-        frames_pushed += 1;
 
         // Simulate 10ms delay between frames
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -138,7 +147,7 @@ frames_received = 0
 for line in sys.stdin:
     try:
         msg = json.loads(line)
-        if msg["type"] == "audio_frame":
+        if msg["type"] == "request":
             frames_received += 1
 
             # Echo every 100 frames (1 second)
@@ -274,7 +283,7 @@ frame_count = 0
 for line in sys.stdin:
     try:
         msg = json.loads(line)
-        if msg["type"] == "audio_frame":
+        if msg["type"] == "request":
             frame_count += 1
 
             # Every 50 frames, emit partial_text (simulating continuous speech)
@@ -392,7 +401,7 @@ frame_count = 0
 for line in sys.stdin:
     try:
         msg = json.loads(line)
-        if msg["type"] == "audio_frame":
+        if msg["type"] == "request":
             frame_count += 1
 
             # Immediately echo an event for every frame

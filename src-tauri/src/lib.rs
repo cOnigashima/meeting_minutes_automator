@@ -7,6 +7,11 @@
 pub mod logger;
 pub mod audio;
 pub mod audio_device_adapter;
+pub mod audio_device_recorder; // STTMIX Task 1.1 - Facade for single/multi-input
+pub mod multi_input_manager; // STTMIX Task 2.1 - Parallel capture manager
+pub mod multi_input_settings; // STTMIX Task 7.1 - Settings persistence
+pub mod input_mixer; // STTMIX Task 4 - Time alignment and mixing
+pub mod resampler; // STTMIX Task 3.1 - Audio resampling and downmix
 pub mod commands;
 pub mod ipc_protocol;
 pub mod python_sidecar;
@@ -18,6 +23,7 @@ pub mod storage;
 pub mod websocket;
 
 use audio_device_adapter::create_audio_adapter;
+use audio_device_recorder::AudioDeviceRecorder;
 use python_sidecar::PythonSidecarManager;
 use state::AppState;
 use std::sync::Arc;
@@ -86,6 +92,12 @@ pub fn run() {
                     }
                 }
 
+                // 2.2. Initialize audio device recorder (single/multi-input facade)
+                let recorder_factory = Arc::new(|| create_audio_adapter());
+                let recorder = AudioDeviceRecorder::new(recorder_factory);
+                let recorder_arc = Arc::new(tokio::sync::Mutex::new(recorder));
+                app_state.set_audio_recorder(recorder_arc);
+
                 // 2.5. Initialize audio event channel (MVP1 - STT-REQ-004.9/10/11)
                 let (audio_event_tx, audio_event_rx) = std::sync::mpsc::channel();
                 app_state.set_audio_event_channel(audio_event_tx, audio_event_rx);
@@ -122,10 +134,19 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::start_recording,
+            commands::start_recording_multi, // STTMIX Task 1.3: Multi-input support
             commands::stop_recording,
             commands::list_audio_devices,
             commands::get_whisper_models,
             commands::cancel_reconnection,
+            // STTMIX Task 7: Settings persistence
+            commands::save_multi_input_settings,
+            commands::load_multi_input_settings,
+            commands::validate_multi_input_devices,
+            // STTMIX Task 8: Platform info for feature gating
+            commands::get_platform_info,
+            // STTMIX Task 8.3: Multi-input status for UI display
+            commands::get_multi_input_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

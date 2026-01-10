@@ -137,7 +137,8 @@ export const test = base.extend<ExtensionFixtures>({
   // Open the popup page
   popupPage: async ({ context, extensionId }, use) => {
     const popupPage = await context.newPage();
-    await popupPage.goto(`chrome-extension://${extensionId}/dist/popup/popup.html`);
+    // Note: Extension is loaded from dist/ folder, so paths don't include dist/ prefix
+    await popupPage.goto(`chrome-extension://${extensionId}/popup/popup.html`);
     await use(popupPage);
     await popupPage.close();
   },

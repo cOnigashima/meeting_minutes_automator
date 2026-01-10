@@ -29,7 +29,8 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use meeting_minutes_automator_lib::python_sidecar::PythonSidecarManager;
 use meeting_minutes_automator_lib::ring_buffer::{
-    AudioRingBuffer, BufferLevel, BUFFER_CAPACITY, BYTES_PER_SAMPLE, SAMPLE_RATE,
+    new_shared_ring_buffer, pop_audio, push_audio_drop_oldest, BUFFER_CAPACITY, BYTES_PER_SAMPLE,
+    SAMPLE_RATE,
 };
 use meeting_minutes_automator_lib::sidecar::{Event, Sidecar, SidecarCmd, SidecarError};
 use ringbuf::traits::Observer;
@@ -432,7 +433,7 @@ async fn main() -> Result<()> {
     let total_frames = (config.duration_secs * 1000) / config.frame_interval_ms;
     let mut frame_stats = FrameStats::default();
     let mut last_log = Instant::now();
-    let (mut producer, mut consumer) = AudioRingBuffer::new().split();
+    let ring_buffer = new_shared_ring_buffer();
     let mut stop_due_to_overflow = false;
     let start_time = Instant::now();
 
@@ -444,20 +445,27 @@ async fn main() -> Result<()> {
     for frame_index in 0..total_frames {
         let frame = generate_frame(frame_index, samples_per_frame);
 
-        let (pushed, level) = AudioRingBuffer::push_from_callback(&mut producer, &frame);
-        if pushed == 0 || level == BufferLevel::Overflow {
+        let (pushed, dropped, _level) = {
+            let mut rb = ring_buffer.lock().unwrap();
+            push_audio_drop_oldest(&mut rb, &frame)
+        };
+        if dropped > 0 {
             frame_stats.ring_overflows += 1;
-            logger.log("Ring buffer overflow detected – stopping test");
-            stop_due_to_overflow = true;
-            break;
+            // With drop-oldest, we continue (old data dropped for new)
         }
 
         frame_stats.frames_generated += 1;
-        let occupancy = producer.occupied_len() as f32 / BUFFER_CAPACITY as f32;
+        let occupancy = {
+            let rb = ring_buffer.lock().unwrap();
+            rb.occupied_len() as f32 / BUFFER_CAPACITY as f32
+        };
         frame_stats.max_occupancy = frame_stats.max_occupancy.max(occupancy);
 
         let mut transfer = vec![0u8; pushed];
-        let read = AudioRingBuffer::pop_for_writer(&mut consumer, &mut transfer);
+        let read = {
+            let mut rb = ring_buffer.lock().unwrap();
+            pop_audio(&mut rb, &mut transfer)
+        };
         if read > 0 {
             frame_stats.frames_sent += 1;
             let bytes = Bytes::from(transfer);
@@ -486,10 +494,19 @@ async fn main() -> Result<()> {
     }
 
     // Flush remaining frames if any
-    while producer.occupied_len() > 0 {
-        let remaining = producer.occupied_len();
+    loop {
+        let remaining = {
+            let rb = ring_buffer.lock().unwrap();
+            rb.occupied_len()
+        };
+        if remaining == 0 {
+            break;
+        }
         let mut transfer = vec![0u8; remaining];
-        let read = AudioRingBuffer::pop_for_writer(&mut consumer, &mut transfer);
+        let read = {
+            let mut rb = ring_buffer.lock().unwrap();
+            pop_audio(&mut rb, &mut transfer)
+        };
         if read == 0 {
             break;
         }

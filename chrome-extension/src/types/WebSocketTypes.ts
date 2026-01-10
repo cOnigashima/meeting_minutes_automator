@@ -156,3 +156,16 @@ export interface WebSocketStatus {
   lastError?: string;
   lastConnectedAt?: number;
 }
+
+// =========================================================================
+// Reconnection Management
+// =========================================================================
+
+/**
+ * Cached port information for faster reconnection
+ */
+export interface CachedPortInfo {
+  port: number;
+  timestamp: number;
+  lastConnectedAt: number;
+}

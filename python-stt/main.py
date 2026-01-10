@@ -51,7 +51,8 @@ class AudioProcessor:
 
         # Initialize components (STT-REQ-003.1, STT-REQ-002.1)
         self.vad = VoiceActivityDetector(sample_rate=16000, aggressiveness=2)
-        self.stt_engine = WhisperSTTEngine(auto_select_model=True)
+        # TEMPORARY: Force tiny model for multi-input testing
+        self.stt_engine = WhisperSTTEngine(model_size="tiny", auto_select_model=False)
         self.pipeline = AudioPipeline(vad=self.vad, stt_engine=self.stt_engine)
         self.ipc = None
 
@@ -282,6 +283,9 @@ class AudioProcessor:
         Args:
             msg: IPC message with audio_data field
         """
+        import time
+        t_start = time.perf_counter()
+
         msg_id = msg.get('id', 'unknown')
         audio_data = msg.get('audio_data', [])
 
@@ -291,12 +295,23 @@ class AudioProcessor:
 
         # Convert audio data (u8 array from Rust) to bytes
         audio_bytes = bytes(audio_data)
+        t_convert = time.perf_counter()
 
         # Split into 10ms frames (STT-REQ-003.2)
         frames = self.vad.split_into_frames(audio_bytes)
+        t_split = time.perf_counter()
+
+        # DIAGNOSTIC: Log pipeline timing (also to file for easier analysis)
+        diag_msg = f"📊 DIAG: received {len(audio_bytes)} bytes, {len(frames)} frames, convert={int((t_convert-t_start)*1000)}ms, split={int((t_split-t_convert)*1000)}ms"
+        logger.info(diag_msg)
+        with open("/tmp/stt_diag.log", "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {diag_msg}\n")
 
         # Track whether any speech was detected in this request
         speech_detected = False
+        vad_speech_count = 0
+        whisper_count = 0
+        t_loop_start = time.perf_counter()
 
         # P1 FIX: Process frames WITHOUT artificial sleep
         # AudioPipeline now uses frame-count based partial timing (100 frames = 1 second)
@@ -305,6 +320,8 @@ class AudioProcessor:
         for frame in frames:
             # Use process_audio_frame_with_partial for partial text support
             result = await self.pipeline.process_audio_frame_with_partial(frame)
+            if self.pipeline.vad and self.pipeline.vad.is_in_speech:
+                vad_speech_count += 1
 
             if result:
                 speech_detected = True  # Mark that speech was detected
@@ -421,6 +438,15 @@ class AudioProcessor:
                 else:
                     # Unknown event type - log and continue
                     logger.warning(f"Unknown event type: {event_type}")
+
+        # DIAGNOSTIC: Log loop timing summary
+        t_loop_end = time.perf_counter()
+        loop_ms = int((t_loop_end - t_loop_start) * 1000)
+        total_ms = int((t_loop_end - t_start) * 1000)
+        diag_summary = f"📊 DIAG: loop={loop_ms}ms, total={total_ms}ms, vad_speech_frames={vad_speech_count}/{len(frames)}, events_emitted={speech_detected}"
+        logger.info(diag_summary)
+        with open("/tmp/stt_diag.log", "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {diag_summary}\n")
 
         # CRITICAL FIX: VAD-based no_speech detection (ADR-009)
         # Check VAD state instead of just event emission to prevent false positives.

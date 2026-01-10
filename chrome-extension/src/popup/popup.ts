@@ -26,6 +26,9 @@ interface PopupElements {
   authGuide: HTMLElement;
   notification: HTMLElement;
   status: HTMLElement;
+  connectionDot: HTMLElement;
+  wsConnectButton: HTMLButtonElement;
+  wsDisconnectButton: HTMLButtonElement;
   testSection: HTMLElement;
   documentIdInput: HTMLInputElement;
   testButton: HTMLButtonElement;
@@ -49,6 +52,9 @@ function getElements(): PopupElements {
     authGuide: document.getElementById('authGuide')!,
     notification: document.getElementById('notification')!,
     status: document.getElementById('status')!,
+    connectionDot: document.getElementById('connectionDot')!,
+    wsConnectButton: document.getElementById('wsConnectButton') as HTMLButtonElement,
+    wsDisconnectButton: document.getElementById('wsDisconnectButton') as HTMLButtonElement,
     testSection: document.getElementById('testSection')!,
     documentIdInput: document.getElementById('documentIdInput') as HTMLInputElement,
     testButton: document.getElementById('testButton') as HTMLButtonElement,
@@ -158,6 +164,9 @@ function formatConnectionStatus(status: WebSocketStatus | null): string {
       return '接続中...';
     case 'disconnected':
     default:
+      if (status.lastError?.includes('No Tauri server found')) {
+        return '未接続 (Tauri未起動)';
+      }
       return '未接続';
   }
 }
@@ -175,10 +184,36 @@ function fetchWebSocketStatus(): Promise<WebSocketStatus | null> {
   });
 }
 
+function updateConnectionButtons(elements: PopupElements, status: WebSocketStatus | null): void {
+  const state = status?.state ?? 'disconnected';
+  const connected = state === 'connected';
+  const connecting = state === 'scanning' || state === 'connecting';
+  elements.wsConnectButton.disabled = connected || connecting;
+  elements.wsDisconnectButton.disabled = !connected;
+}
+
+function updateConnectionDot(elements: PopupElements, status: WebSocketStatus | null): void {
+  const dot = elements.connectionDot;
+  dot.className = 'connection-dot';
+
+  const state = status?.state ?? 'disconnected';
+  if (state === 'connected') {
+    dot.classList.add('connected');
+  } else if (state === 'scanning' || state === 'connecting') {
+    dot.classList.add('connecting');
+  } else if (state === 'error') {
+    dot.classList.add('error');
+  } else {
+    dot.classList.add('disconnected');
+  }
+}
+
 async function refreshConnectionStatus(elements: PopupElements): Promise<void> {
   const status = await fetchWebSocketStatus();
   elements.status.textContent = formatConnectionStatus(status);
   elements.status.title = status?.lastError ?? '';
+  updateConnectionButtons(elements, status);
+  updateConnectionDot(elements, status);
 }
 
 // =========================================================================
@@ -385,13 +420,24 @@ async function initPopup(): Promise<void> {
   setupSettingsListeners(elements);
 
   // Connect WebSocket when popup opens and show status
-  chrome.runtime.sendMessage({ type: 'CONNECT_WS' }, () => {
-    if (chrome.runtime.lastError) {
-      console.warn('[Popup] CONNECT_WS failed:', chrome.runtime.lastError.message);
-    }
-  });
   await refreshConnectionStatus(elements);
-  setInterval(() => refreshConnectionStatus(elements), 1000);
+  setInterval(() => refreshConnectionStatus(elements), 3000);
+
+  elements.wsConnectButton.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'CONNECT_WS' }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Popup] CONNECT_WS failed:', chrome.runtime.lastError.message);
+      }
+    });
+  });
+
+  elements.wsDisconnectButton.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'DISCONNECT_WS' }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Popup] DISCONNECT_WS failed:', chrome.runtime.lastError.message);
+      }
+    });
+  });
 }
 
 // Run on DOM ready

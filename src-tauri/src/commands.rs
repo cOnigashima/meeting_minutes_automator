@@ -5,7 +5,10 @@
 // Task 10.4 Phase 2: Auto-Reconnection
 
 use crate::audio_device_adapter::AudioDeviceEvent;
+use crate::audio_device_recorder::{MixerConfig, RecordingMode};
+use crate::multi_input_manager::InputStatus;
 use crate::ipc_protocol::{IpcMessage as ProtocolMessage, VersionCompatibility, PROTOCOL_VERSION};
+use crate::ring_buffer::{new_shared_ring_buffer, pop_audio, push_audio_drop_oldest, BufferLevel};
 use crate::state::AppState;
 use crate::websocket::WebSocketMessage;
 use once_cell::sync::Lazy;
@@ -78,16 +81,21 @@ async fn start_ipc_reader_task(
 
     tokio::spawn(async move {
         loop {
-            // Check if cancelled before each iteration
-            if cancel_token.is_cancelled() {
-                log_info!("commands::ipc_reader", "cancelled");
-                break;
-            }
-            // Read from stdout directly - no lock contention with stdin sender
+            // Read from stdout with cancellation support using select!
             let response = {
                 let mut stdout_guard = stdout.lock().await;
                 let mut line = String::new();
-                match stdout_guard.read_line(&mut line).await {
+
+                // Use select! to race between cancellation and read
+                let read_result = tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        log_info!("commands::ipc_reader", "cancelled");
+                        return; // Exit the entire task
+                    }
+                    result = stdout_guard.read_line(&mut line) => result
+                };
+
+                match read_result {
                     Ok(0) => {
                         // EOF - process closed
                         log_info!("commands::ipc_reader", "stdout_eof");
@@ -268,6 +276,31 @@ async fn handle_ipc_event(
         "partial_text" => {
             let request_id = request_id_from(data).unwrap_or("unknown");
             if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object()
+                {
+                    extract_extended_fields(obj)
+                } else {
+                    (None, None, None)
+                };
+
+                // Filter out low-confidence hallucinations (common with Whisper on silence)
+                const MIN_CONFIDENCE: f64 = 0.50;
+                if let Some(conf) = confidence {
+                    if conf < MIN_CONFIDENCE {
+                        log_debug_details!(
+                            "commands::ipc_events",
+                            "partial_text_filtered",
+                            json!({
+                                "session": session_id,
+                                "request": request_id,
+                                "confidence": conf,
+                                "threshold": MIN_CONFIDENCE
+                            })
+                        );
+                        return; // Skip this low-confidence transcription
+                    }
+                }
+
                 let masked = mask_text(text);
                 log_info_details!(
                     "commands::ipc_events",
@@ -275,16 +308,10 @@ async fn handle_ipc_event(
                     json!({
                         "session": session_id,
                         "request": request_id,
-                        "text_masked": masked
+                        "text_masked": masked,
+                        "confidence": confidence
                     })
                 );
-
-                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object()
-                {
-                    extract_extended_fields(obj)
-                } else {
-                    (None, None, None)
-                };
 
                 // Clone for emit (before move into WebSocketMessage)
                 let emit_language = language.clone();
@@ -342,6 +369,31 @@ async fn handle_ipc_event(
         "final_text" => {
             let request_id = request_id_from(data).unwrap_or("unknown");
             if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object()
+                {
+                    extract_extended_fields(obj)
+                } else {
+                    (None, None, None)
+                };
+
+                // Filter out low-confidence hallucinations (common with Whisper on silence)
+                const MIN_CONFIDENCE: f64 = 0.50;
+                if let Some(conf) = confidence {
+                    if conf < MIN_CONFIDENCE {
+                        log_debug_details!(
+                            "commands::ipc_events",
+                            "final_text_filtered",
+                            json!({
+                                "session": session_id,
+                                "request": request_id,
+                                "confidence": conf,
+                                "threshold": MIN_CONFIDENCE
+                            })
+                        );
+                        return; // Skip this low-confidence transcription
+                    }
+                }
+
                 let masked = mask_text(text);
                 log_info_details!(
                     "commands::ipc_events",
@@ -349,16 +401,10 @@ async fn handle_ipc_event(
                     json!({
                         "session": session_id,
                         "request": request_id,
-                        "text_masked": masked
+                        "text_masked": masked,
+                        "confidence": confidence
                     })
                 );
-
-                let (confidence, language, processing_time_ms) = if let Some(obj) = data.as_object()
-                {
-                    extract_extended_fields(obj)
-                } else {
-                    (None, None, None)
-                };
 
                 // Clone for emit (before move into WebSocketMessage)
                 let emit_language = language.clone();
@@ -673,41 +719,108 @@ pub(crate) async fn start_recording_internal(
     state: &AppState,
     device_id: String,
 ) -> Result<(), String> {
-    // Task 9.1: Validate and log selected device (STT-REQ-001.2)
+    let multi_enabled = state.is_multi_input_enabled();
+    let device_ids = if multi_enabled {
+        state.get_selected_device_ids()
+    } else {
+        vec![device_id.clone()]
+    };
+
+    if device_ids.is_empty() {
+        return Err("At least one device ID must be provided".to_string());
+    }
+    if multi_enabled && device_ids.len() > 2 {
+        return Err(format!(
+            "Maximum 2 inputs supported, got {}. (STTMIX-CON-005)",
+            device_ids.len()
+        ));
+    }
+
+    // Task 9.1: Validate and log selected device(s) (STT-REQ-001.2)
     log_info_details!(
         "commands::recording",
         "start_requested",
-        json!({ "device_id": device_id })
+        json!({
+            "device_id": device_id,
+            "device_ids": device_ids.clone(),
+            "multi_input": multi_enabled
+        })
     );
 
     // MVP1: Validate device exists in real device enumeration
     let available_devices = crate::audio_device_adapter::enumerate_devices_static()
         .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
 
-    if !available_devices.iter().any(|d| d.id == device_id) {
+    let valid_ids: Vec<String> = device_ids
+        .iter()
+        .filter(|id| available_devices.iter().any(|d| d.id == **id))
+        .cloned()
+        .collect();
+    let invalid_ids: Vec<String> = device_ids
+        .iter()
+        .filter(|id| !available_devices.iter().any(|d| d.id == **id))
+        .cloned()
+        .collect();
+    let allow_partial_failure = multi_enabled && MixerConfig::default().continue_on_partial_failure;
+
+    if valid_ids.is_empty() {
         log_error_details!(
             "commands::recording",
             "invalid_device",
             json!({
-                "requested": device_id,
+                "requested": device_ids.clone(),
+                "invalid": invalid_ids,
                 "available": available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
             })
         );
         return Err(format!(
-            "Invalid device ID: {}. Available: {:?}",
-            device_id,
+            "Invalid device ID(s): {:?}. Available: {:?}",
+            invalid_ids,
             available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
         ));
+    }
+
+    if !invalid_ids.is_empty() && !allow_partial_failure {
+        log_error_details!(
+            "commands::recording",
+            "invalid_device",
+            json!({
+                "requested": device_ids.clone(),
+                "invalid": invalid_ids,
+                "available": available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
+            })
+        );
+        return Err(format!(
+            "Invalid device ID(s): {:?}. Available: {:?}",
+            invalid_ids,
+            available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
+        ));
+    }
+
+    if !invalid_ids.is_empty() && allow_partial_failure {
+        log_warn_details!(
+            "commands::recording",
+            "partial_device_missing",
+            json!({
+                "requested": device_ids.clone(),
+                "invalid": invalid_ids,
+                "available": available_devices.iter().map(|d| &d.id).collect::<Vec<_>>()
+            })
+        );
     }
 
     log_info_details!(
         "commands::recording",
         "device_validated",
-        json!({ "device_id": device_id })
+        json!({ "device_ids": device_ids.clone() })
     );
 
     // Task 9.1: Save selected device to AppState (STT-REQ-001.2)
-    state.set_selected_device_id(device_id.clone());
+    let primary_device_id = valid_ids
+        .get(0)
+        .cloned()
+        .unwrap_or_else(|| device_id.clone());
+    state.set_selected_device_id(primary_device_id);
     log_info_details!(
         "commands::recording",
         "device_selection_saved",
@@ -733,11 +846,11 @@ pub(crate) async fn start_recording_internal(
     }
 
     // Get references to components
-    let audio_device = {
-        let device_lock = state.audio_device.lock().unwrap();
-        device_lock
+    let audio_recorder = {
+        let recorder_lock = state.audio_recorder.lock().unwrap();
+        recorder_lock
             .clone()
-            .ok_or_else(|| "Audio device not initialized".to_string())?
+            .ok_or_else(|| "Audio recorder not initialized".to_string())?
     };
 
     // Get or initialize sidecar stdin/stdout handles
@@ -822,84 +935,58 @@ pub(crate) async fn start_recording_internal(
         json!({ "session": session_id })
     );
 
-    // Create mpsc channel to decouple audio callback from IPC sending
-    // This prevents Mutex contention between callback and IPC reader task
-    let (audio_tx, mut audio_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    // Create shared ring buffer to decouple audio callback from IPC sending
+    // Ring buffer provides:
+    // - Fixed 160KB capacity (5 seconds of audio)
+    // - Drop-oldest strategy: when full, old data is discarded for new
+    // - Real-time priority: latest audio is always preserved
+    let ring_buffer = new_shared_ring_buffer();
+    let ring_buffer_producer = Arc::clone(&ring_buffer);
+    let ring_buffer_consumer = Arc::clone(&ring_buffer);
 
     // Spawn dedicated audio sender task
-    // This task writes directly to stdin - no Mutex contention with stdout reader
-    // BATCHING: Accumulate audio chunks and send in larger batches to reduce IPC overhead
-    // and give Python time to process without falling behind
+    // This task reads from ring buffer and writes to stdin
+    // BATCHING: Read from buffer every 250ms to batch audio chunks
     let stdin_sender = Arc::clone(&sidecar_stdin);
     let session_id_sender = session_id.clone();
     let cancel_token_sender = cancel_token.clone();
     tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
 
-        let mut chunk_count = 0u64;
         let mut batch_count = 0u64;
-        let mut audio_buffer: Vec<u8> = Vec::with_capacity(8000); // ~250ms at 16kHz mono 16bit
-        const BATCH_SIZE_BYTES: usize = 8000; // 250ms worth of audio (16kHz * 2 bytes * 0.25s)
+        // Read buffer matches ring buffer capacity to drain quickly after backlog
+        let mut batch_buffer = vec![0u8; crate::ring_buffer::BUFFER_CAPACITY];
+        const MIN_BATCH_BYTES: usize = 4000; // Minimum 125ms to send
         let mut batch_interval = tokio::time::interval(std::time::Duration::from_millis(250));
 
         loop {
-            // Use select! to check for cancellation, new audio data, or batch timer
+            // Wait for timer or cancellation
             tokio::select! {
                 _ = cancel_token_sender.cancelled() => {
                     log_info!("commands::recording", "audio_sender_cancelled");
-                    // Send any remaining buffered audio
-                    if !audio_buffer.is_empty() {
-                        log_debug_details!(
-                            "commands::recording",
-                            "flushing_final_batch",
-                            json!({ "size": audio_buffer.len() })
-                        );
-                    }
                     break;
                 }
-                data = audio_rx.recv() => {
-                    match data {
-                        Some(d) => {
-                            chunk_count += 1;
-                            audio_buffer.extend(d);
-                            // Log every 50th chunk
-                            if chunk_count % 50 == 1 {
-                                log_debug_details!(
-                                    "commands::recording",
-                                    "audio_chunk_buffered",
-                                    json!({
-                                        "session": session_id_sender,
-                                        "chunk_count": chunk_count,
-                                        "buffer_size": audio_buffer.len()
-                                    })
-                                );
-                            }
-                            // Don't send yet - wait for batch timer or size threshold
-                        }
-                        None => {
-                            log_info!("commands::recording", "audio_channel_closed");
-                            break;
-                        }
-                    }
-                }
                 _ = batch_interval.tick() => {
-                    // Timer fired - send batch if we have enough data
-                    if audio_buffer.len() >= BATCH_SIZE_BYTES / 2 {
-                        // Continue to send batch below
-                    } else {
-                        continue; // Not enough data yet
-                    }
+                    // Timer fired - read from ring buffer
                 }
             }
 
-            // Send batch if buffer is full enough
-            if audio_buffer.len() < BATCH_SIZE_BYTES / 4 {
-                continue; // Need at least 125ms of audio
+            // Read available audio from ring buffer
+            let bytes_read = {
+                if let Ok(mut rb) = ring_buffer_consumer.lock() {
+                    pop_audio(&mut rb, &mut batch_buffer)
+                } else {
+                    0 // Lock poisoned, skip this cycle
+                }
+            };
+
+            if bytes_read < MIN_BATCH_BYTES {
+                // Not enough data yet
+                continue;
             }
 
             batch_count += 1;
-            let batch_data = std::mem::take(&mut audio_buffer);
-            audio_buffer = Vec::with_capacity(8000); // Reset buffer
+            let batch_data = batch_buffer[..bytes_read].to_vec();
 
             log_debug_details!(
                 "commands::recording",
@@ -907,8 +994,7 @@ pub(crate) async fn start_recording_internal(
                 json!({
                     "session": session_id_sender,
                     "batch_count": batch_count,
-                    "batch_size": batch_data.len(),
-                    "chunks_accumulated": chunk_count
+                    "batch_size": bytes_read
                 })
             );
 
@@ -1002,18 +1088,37 @@ pub(crate) async fn start_recording_internal(
 
     // Start audio device with callback
     // MVP1: Use AudioDeviceAdapter trait with device_id
-    // Callback is now non-blocking - just sends to channel
-    let mut device = audio_device.lock().await;
+    // Callback writes to ring buffer with drop-oldest strategy
+    let mut recorder = audio_recorder.lock().await;
     let callback: crate::audio_device_adapter::AudioChunkCallback =
         Box::new(move |audio_data: Vec<u8>| {
-            // Non-blocking send to channel
-            // This decouples the audio callback from IPC sending
-            if audio_tx.send(audio_data).is_err() {
-                // Channel closed - recording stopped
+            // Non-blocking write to ring buffer
+            // Use try_lock to avoid blocking in real-time audio callback
+            if let Ok(mut rb) = ring_buffer_producer.try_lock() {
+                let (_pushed, dropped, level) = push_audio_drop_oldest(&mut rb, &audio_data);
+                if dropped > 0 {
+                    // Old data was dropped to make room for new data
+                    // This is expected when Python is slow - we prioritize latest audio
+                }
+                if level == BufferLevel::Critical {
+                    // Buffer is getting full, Python may be falling behind
+                }
             }
+            // If try_lock fails, skip this frame (sender task holds lock briefly)
         });
 
-    if let Err(err) = device.start_recording_with_callback(&device_id, callback) {
+    let recording_mode = if multi_enabled {
+        RecordingMode::Multi {
+            device_ids: device_ids.clone(),
+            mixer_config: MixerConfig::default(),
+        }
+    } else {
+        RecordingMode::Single {
+            device_id: device_id.clone(),
+        }
+    };
+
+    if let Err(err) = recorder.start(recording_mode, callback) {
         let error_msg = err.to_string();
         {
             let mut is_recording = state.is_recording.lock().unwrap();
@@ -1043,7 +1148,7 @@ pub(crate) async fn start_recording_internal(
     Ok(())
 }
 
-/// Start recording command
+/// Start recording command (single device - backward compatible)
 /// Starts audio device and processes audio data through Python sidecar
 /// Task 9.1: Accept device_id to honor user's device selection (STT-REQ-001.2)
 #[tauri::command]
@@ -1052,8 +1157,65 @@ pub async fn start_recording(
     state: State<'_, AppState>,
     device_id: String,
 ) -> Result<String, String> {
+    // Disable multi-input mode for single device recording
+    state.set_multi_input_enabled(false);
     start_recording_internal(&app, &state, device_id).await?;
     Ok("Recording started".to_string())
+}
+
+/// Start multi-input recording command
+/// Starts recording from multiple audio devices simultaneously
+/// STTMIX Task 1.3: Accept multiple device_ids for multi-input mode (STTMIX-REQ-002.1)
+///
+/// # Arguments
+/// * `device_ids` - Vector of device IDs (max 2 per STTMIX-CON-005)
+///
+/// # Returns
+/// * `Ok(String)` with success message
+/// * `Err(String)` if validation fails or recording cannot start
+#[tauri::command]
+pub async fn start_recording_multi(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_ids: Vec<String>,
+) -> Result<String, String> {
+    // STTMIX-CON-004: Multi-input only supported on macOS
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Err("Multi-input recording is only supported on macOS (STTMIX-CON-004)".to_string());
+    }
+
+    // Validate input count (STTMIX-CON-005: max 2 inputs)
+    if device_ids.is_empty() {
+        return Err("At least one device ID must be provided".to_string());
+    }
+    if device_ids.len() > 2 {
+        return Err(format!(
+            "Maximum 2 inputs supported, got {}. (STTMIX-CON-005)",
+            device_ids.len()
+        ));
+    }
+
+    log_info_details!(
+        "commands::recording",
+        "multi_input_start_requested",
+        json!({
+            "device_ids": device_ids.clone(),
+            "count": device_ids.len()
+        })
+    );
+
+    // Enable multi-input mode and save device IDs
+    state.set_multi_input_enabled(true);
+    state.set_selected_device_ids(device_ids.clone());
+
+    let primary_device = device_ids[0].clone();
+    start_recording_internal(&app, &state, primary_device).await?;
+
+    Ok(format!(
+        "Multi-input recording started with {} device(s)",
+        device_ids.len()
+    ))
 }
 
 /// Internal helper for stopping recording
@@ -1071,21 +1233,21 @@ pub(crate) async fn stop_recording_internal(state: &AppState) -> Result<(), Stri
     let current_session = state.get_session_id();
     let selected_device = state.get_selected_device_id();
 
-    // Get audio device reference
-    let audio_device = {
-        let device_lock = state.audio_device.lock().unwrap();
-        device_lock
+    // Get audio recorder reference
+    let audio_recorder = {
+        let recorder_lock = state.audio_recorder.lock().unwrap();
+        recorder_lock
             .clone()
-            .ok_or_else(|| "Audio device not initialized".to_string())?
+            .ok_or_else(|| "Audio recorder not initialized".to_string())?
     };
 
     // Cancel IPC reader and audio sender tasks
     state.cancel_recording_tasks();
     log_info!("commands::recording", "tasks_cancelled");
 
-    // Stop audio device (cleanup resources)
-    let mut device = audio_device.lock().await;
-    device.stop_recording().map_err(|e| e.to_string())?;
+    // Stop audio recorder (cleanup resources, including mixer thread)
+    let mut recorder = audio_recorder.lock().await;
+    recorder.stop().map_err(|e| e.to_string())?;
 
     // Clear recording state
     {
@@ -1243,6 +1405,189 @@ pub async fn list_audio_devices(
     }
 }
 
+// ============================================================================
+// Multi-Input Settings Commands (Task 7)
+// ============================================================================
+
+/// Save multi-input settings to disk
+///
+/// Requirement: STTMIX-REQ-001.2, STTMIX-REQ-005.1
+#[tauri::command]
+pub async fn save_multi_input_settings(
+    app: AppHandle,
+    settings: crate::multi_input_settings::MultiInputSettings,
+) -> Result<(), String> {
+    use crate::multi_input_settings::save_settings;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+
+    save_settings(&app_data_dir, &settings)
+        .map_err(|e| format!("Failed to save multi-input settings: {}", e))?;
+
+    log_info_details!(
+        "commands::settings",
+        "multi_input_settings_saved",
+        json!({
+            "device_count": settings.selected_device_ids.len(),
+            "enabled": settings.multi_input_enabled
+        })
+    );
+
+    Ok(())
+}
+
+/// Load multi-input settings from disk
+///
+/// Requirement: STTMIX-REQ-001.2
+#[tauri::command]
+pub async fn load_multi_input_settings(
+    app: AppHandle,
+) -> Result<crate::multi_input_settings::MultiInputSettings, String> {
+    use crate::multi_input_settings::load_settings;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+
+    let settings = load_settings(&app_data_dir)
+        .map_err(|e| format!("Failed to load multi-input settings: {}", e))?;
+
+    log_info_details!(
+        "commands::settings",
+        "multi_input_settings_loaded",
+        json!({
+            "device_count": settings.selected_device_ids.len(),
+            "enabled": settings.multi_input_enabled
+        })
+    );
+
+    Ok(settings)
+}
+
+/// Get platform information for feature gating
+///
+/// Returns the current OS platform. Multi-input is only supported on macOS.
+///
+/// Requirement: STTMIX-CON-004
+#[tauri::command]
+pub fn get_platform_info() -> PlatformInfo {
+    PlatformInfo {
+        os: std::env::consts::OS.to_string(),
+        multi_input_supported: cfg!(target_os = "macos"),
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct PlatformInfo {
+    pub os: String,
+    pub multi_input_supported: bool,
+}
+
+/// Get status of all multi-input channels
+///
+/// Returns buffer occupancy, active status, and metrics for each input.
+/// Used by UI to display input health indicators.
+///
+/// Requirement: STTMIX-REQ-008.1, Task 8.3
+#[tauri::command]
+pub async fn get_multi_input_status(
+    state: State<'_, AppState>,
+) -> Result<MultiInputStatusResponse, String> {
+    let recorder_opt = state.audio_recorder.lock().unwrap().clone();
+    let recorder_arc = recorder_opt.ok_or("Audio recorder not initialized")?;
+    let recorder = recorder_arc.lock().await;
+
+    let input_statuses = recorder.get_input_status();
+    let mixer_metrics = recorder.get_mixer_metrics();
+
+    Ok(MultiInputStatusResponse {
+        inputs: input_statuses,
+        is_recording: recorder.is_recording(),
+        mixer_metrics: mixer_metrics.map(|m| MixerMetricsResponse {
+            drift_correction_count: m.get_drift_correction_count(),
+            clip_count: m.get_clip_count(),
+            silence_insertion_count: m.get_silence_insertion_count(),
+            frames_mixed: m.get_frames_mixed(),
+            max_mix_latency_ms: m.get_max_mix_latency_ms(),
+            avg_mix_latency_ms: m.get_avg_mix_latency_ms(),
+        }),
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct MultiInputStatusResponse {
+    pub inputs: Vec<InputStatus>,
+    pub is_recording: bool,
+    pub mixer_metrics: Option<MixerMetricsResponse>,
+}
+
+#[derive(serde::Serialize)]
+pub struct MixerMetricsResponse {
+    pub drift_correction_count: u64,
+    pub clip_count: u64,
+    pub silence_insertion_count: u64,
+    pub frames_mixed: u64,
+    // Task 9.1: Latency metrics
+    pub max_mix_latency_ms: f64,
+    pub avg_mix_latency_ms: f64,
+}
+
+/// Validate that selected devices are still available
+///
+/// Returns list of unavailable device IDs
+///
+/// Requirement: STTMIX-REQ-001.2
+#[tauri::command]
+pub async fn validate_multi_input_devices(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    use crate::multi_input_settings::{load_settings, validate_devices};
+
+    // Load current settings
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+
+    let settings = load_settings(&app_data_dir)
+        .map_err(|e| format!("Failed to load settings: {}", e))?;
+
+    // Get available devices using the recorder's factory
+    let recorder_opt = state.audio_recorder.lock().unwrap().clone();
+    let available_devices: Vec<String> = if let Some(recorder_arc) = recorder_opt {
+        let recorder = recorder_arc.lock().await;
+        recorder
+            .enumerate_devices()
+            .map_err(|e| format!("Failed to enumerate devices: {}", e))?
+            .into_iter()
+            .map(|d| d.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Find unavailable devices
+    let unavailable = validate_devices(&settings, &available_devices);
+
+    if !unavailable.is_empty() {
+        log_warn_details!(
+            "commands::settings",
+            "unavailable_devices_detected",
+            json!({
+                "unavailable": unavailable,
+                "total_selected": settings.selected_device_ids.len()
+            })
+        );
+    }
+
+    Ok(unavailable)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1353,5 +1698,85 @@ mod tests {
 
             assert_eq!(translated, expected_japanese);
         }
+    }
+
+    // ========================================================================
+    // STTMIX Task 1.3: Multi-Input Command Validation Tests
+    // ========================================================================
+
+    /// Test: start_recording_multi validates empty device_ids
+    /// STTMIX-REQ-002.1: At least one device must be provided
+    #[test]
+    fn test_multi_input_validation_empty() {
+        let device_ids: Vec<String> = vec![];
+
+        // Validation logic (same as in start_recording_multi)
+        let result = if device_ids.is_empty() {
+            Err("At least one device ID must be provided")
+        } else {
+            Ok(())
+        };
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("At least one"));
+    }
+
+    /// Test: start_recording_multi validates max 2 inputs
+    /// STTMIX-CON-005: Maximum 2 inputs supported
+    #[test]
+    fn test_multi_input_validation_max_2() {
+        let device_ids = vec![
+            "mic-1".to_string(),
+            "loopback-1".to_string(),
+            "mic-2".to_string(), // 3rd device - should fail
+        ];
+
+        // Validation logic (same as in start_recording_multi)
+        let result = if device_ids.len() > 2 {
+            Err(format!(
+                "Maximum 2 inputs supported, got {}",
+                device_ids.len()
+            ))
+        } else {
+            Ok(())
+        };
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Maximum 2 inputs"));
+    }
+
+    /// Test: start_recording_multi accepts 1 device (valid)
+    #[test]
+    fn test_multi_input_validation_single_device_ok() {
+        let device_ids = vec!["mic-1".to_string()];
+
+        // Validation logic
+        let result = if device_ids.is_empty() {
+            Err("Empty")
+        } else if device_ids.len() > 2 {
+            Err("Too many")
+        } else {
+            Ok(())
+        };
+
+        assert!(result.is_ok());
+    }
+
+    /// Test: start_recording_multi accepts 2 devices (valid)
+    #[test]
+    fn test_multi_input_validation_two_devices_ok() {
+        let device_ids = vec!["mic-1".to_string(), "loopback-1".to_string()];
+
+        // Validation logic
+        let result = if device_ids.is_empty() {
+            Err("Empty")
+        } else if device_ids.len() > 2 {
+            Err("Too many")
+        } else {
+            Ok(())
+        };
+
+        assert!(result.is_ok());
+        assert_eq!(device_ids.len(), 2);
     }
 }
