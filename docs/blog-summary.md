@@ -143,7 +143,12 @@ MVP1: Real STT（2025年10月〜2026年1月）✅ 完了（でも実用レベル
   ├─ 音声デバイス管理
   └─ Multi-Input Mode（マイク + システム音声）
 
-MVP2: Google Docs同期 ❌ 未着手
+MVP2: Google Docs同期 ✅ 完了
+  ├─ OAuth 2.0認証（Chrome拡張のgetAuthToken）
+  ├─ Google Docs API連携（文書作成・更新・Named Range管理）
+  ├─ オフライン時のキュー管理・再同期
+  └─ STT結果→Docs書き込み動作確認済み
+
 MVP3: LLM要約 ❌ 未着手
 ```
 
